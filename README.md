@@ -39,40 +39,56 @@
 
 마이크로서비스 구조로 K8s에서 운영되며, 각 서비스는 독립적으로 배포·확장된다.
 
-```
-[외부망]                              [내부망(폐쇄망) — K8s Cluster]
+```mermaid
+flowchart TB
+    subgraph External["외부망"]
+        direction TB
+        AI["AI 도구들<br>(Claude Code, Codex, Cursor)"]
+        GitHub["GitHub"]
+        AI --> GitHub
+    end
 
- AI 도구들                             동기화된 Repo     ┌─ Ingress ────────────────┐
- ┌─ Claude Code ─┐                    (GitLab 미러)     │                           │
- ├─ Codex        ├→ GitHub ────→       (자동 미러링)    │  /view/*    → Viewer      │
- └─ Cursor       ┘                          │           │  /cdn/*     → CDN         │
-                                            │           │  /slides/*  → Slides      │
- 마크다운 문서                               ▼           │  /marp/*    → Marp        │
- 요건/설계/회의록                                        │  /drawio/*  → Draw.io     │
- Marp 슬라이드            ┌─────────────────┼───────────└────────────────────────────┘
- .drawio 다이어그램        │                 │                │
-                          ▼                 ▼                ▼
-                   ┌──────────┐ ┌──────────────┐ ┌──────────────────┐
-                   │  Viewer  │ │   Internal   │ │   Draw.io        │
-                   │ Service  │ │  CDN Service │ │   Service        │
-                   └──────────┘ └──────────────┘ │  (jgraph/drawio) │
-                         │                       └──────────────────┘
-                         │
-                   ┌──────────┐     ┌──────────────────┐
-                   │   Marp   │     │   Sync Engine    │  (CronJob)
-                   │  Service │     └────────┬─────────┘
-                   └────┬─────┘              │
-                        │             ┌──────┴──────┐
-                   ┌────┴────┐       XWiki    OpenProject
-                   ▼         ▼
-                PDF 생성   HTML 출판           Shared: PVC
-                           (Git commit)       (CDN 파일, 출판 HTML)
-                                │
-                                ▼
-                         ┌──────────┐
-                         │  Slides  │
-                         │  Server  │
-                         └──────────┘
+    subgraph Internal["내부망(폐쇄망) — K8s Cluster"]
+        direction TB
+        GitLab[("동기화된 Repo<br>(GitLab 미러)")]
+        GitHub -- "자동 미러링" --> GitLab
+
+        Ingress{"K8s Ingress"}
+        Viewer["Viewer Service"]
+        CDN["CDN Service"]
+        Drawio["Draw.io Service"]
+        Marp["Marp Service"]
+        Slides["Slides Server"]
+        SyncWebhook["Sync Webhook<br>Receiver"]
+        Sync["Sync Engine<br>(CronJob)"]
+
+        XWiki[("XWiki")]
+        OP[("OpenProject")]
+
+        GitLab -. "Push Event" .-> Ingress
+
+        Ingress -- "/view/*" --> Viewer
+        Ingress -- "/cdn/*" --> CDN
+        Ingress -- "/slides/*" --> Slides
+        Ingress -- "/marp/*" --> Marp
+        Ingress -- "/drawio/*" --> Drawio
+        Ingress -- "/api/sync/webhook/gitlab" --> SyncWebhook
+
+        GitLab --> Viewer
+        GitLab --> Marp
+        GitLab --> Sync
+
+        Viewer -. "JS/CSS 로딩" .-> CDN
+
+        Marp -- "PDF 생성" --> PDF["PDF 파일"]
+        Marp -- "HTML 출판<br>(Git commit)" --> GitLab
+
+        Slides -. "git pull (slides-sync)" .-> GitLab
+
+        SyncWebhook -- "K8s Job 즉시 생성" --> Sync
+        Sync --> XWiki
+        Sync --> OP
+    end
 ```
 
 ### 마이크로서비스 구성
@@ -83,6 +99,7 @@
 | **CDN Service** | 정적 라이브러리 서빙 + 파일 업로드 관리 | FastAPI + StaticFiles | Deployment + PVC |
 | **Marp Service** | 마크다운 → PDF/프레젠테이션 HTML 변환 + 출판 | FastAPI + @marp-team/marp-cli | Deployment |
 | **Draw.io Service** | 다이어그램 작성·편집 웹 도구 (셀프호스팅) | jgraph/drawio (Tomcat) | Deployment |
+| **Sync Webhook** | GitLab Push Event 수신 및 Sync Job 트리거 | Deployment |
 | **Sync Engine** | Git 변경 감지 → XWiki/OpenProject 동기화 | Python CLI + httpx | CronJob |
 | **Slides Server** | 출판된 프레젠테이션 HTML 정적 서빙 | Nginx | Deployment + PVC |
 
@@ -134,7 +151,7 @@
 
 ### Marp 마크다운 예시
 
-```markdown
+````markdown
 ---
 marp: true
 theme: gaia
@@ -165,27 +182,31 @@ graph LR
   C --> D[XWiki]
   C --> E[OpenProject]
 ```
-```
+````
 
 ### 출판 흐름
 
-```
-사용자: 뷰어에서 .md 파일 열람 → "출판" 클릭
-                │
-                ▼
-        Marp Service API 호출
-        POST /api/marp/publish
-                │
-                ├── 1. Marp CLI로 HTML 생성
-                ├── 2. Git 저장소의 출판 경로에 커밋
-                │      (예: _published/slides/제목.html)
-                └── 3. Slides Server에서 바로 접근 가능
-                       https://slides.internal/제목.html
+```mermaid
+sequenceDiagram
+    actor User as 사용자
+    participant Viewer as Viewer Service
+    participant Marp as Marp Service
+    participant Git as Git 저장소
+    participant Slides as Slides Server
+
+    User->>Viewer: .md 파일 열람 → "출판" 클릭
+    Viewer->>Marp: POST /api/marp/publish
+    Marp->>Marp: 1. Marp CLI로 HTML 생성
+    Marp->>Git: 2. 출판 경로에 커밋 (_published/slides/...)
+    Slides->>Git: 3. git pull (slides-sync sidecar)
+    Marp-->>Viewer: Slides Server URL 반환
+    Viewer-->>User: 출판 완료 및 URL 제공 (https://slides.internal/...)
 ```
 
 ## Sync Engine (동기화 엔진)
 
-Git 저장소의 마크다운과 메타데이터를 내부 협업 도구에 자동 반영하는 배치 서비스.
+Git 저장소의 마크다운과 메타데이터를 내부 협업 도구에 자동 반영하는 서비스.
+기본적으로 5분 주기의 **CronJob**으로 동작하며, Git 커밋 시 즉각적인 반영을 위해 GitLab 웹훅을 수신하여 동기화를 즉시 트리거하는 **Webhook Receiver**가 함께 구성된다.
 
 ### 동기화 대상
 

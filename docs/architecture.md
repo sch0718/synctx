@@ -13,50 +13,49 @@ synctx는 마이크로서비스 아키텍처로 구성되며, K8s 클러스터�
 | **CDN Service** | 정적 라이브러리 서빙 + 파일 업로드 | Deployment + PVC |
 | **Marp Service** | 마크다운 → PDF/슬라이드 HTML 변환 + 출판 | Deployment |
 | **Draw.io Service** | 다이어그램 작성·편집 (셀프호스팅) | Deployment |
+| **Sync Webhook** | GitLab Push Event 수신 및 Sync Job 트리거 | Deployment |
 | **Sync Engine** | Git → XWiki/OpenProject 동기화 | CronJob |
 | **Slides Server** | 출판된 프레젠테이션 HTML 서빙 | Deployment + PVC |
 
-```
-                    ┌─── K8s Ingress ─────────────────────────┐
-                    │                                          │
-  Git 저장소         │  /view/*    → Viewer Service            │
-  (GitLab 미러) ─────│  /cdn/*     → CDN Service               │
-        │           │  /slides/*  → Slides Server             │
-        │           │  /marp/*    → Marp Service              │
-        │           │  /drawio/*  → Draw.io Service           │
-        │           └──────────────────────────────────────────┘
-        │                    │           │           │
-        │                    ▼           ▼           ▼
-        │             ┌──────────┐ ┌──────────┐ ┌──────────┐
-        ├────────────→│  Viewer  │ │   CDN    │ │ Draw.io  │
-        │             │ Service  │ │ Service  │ │ Service  │
-        │             └────┬─────┘ └──────────┘ └──────────┘
-        │                  │
-        │                  │  JS/CSS 로딩
-        │                  └──────────→ CDN
-        │
-        │             ┌──────────┐
-        ├────────────→│   Marp   │
-        │             │ Service  │
-        │             └────┬─────┘
-        │                  │
-        │           ┌──────┴──────┐
-        │           ▼             ▼
-        │        PDF 생성     HTML 출판 → Git 커밋
-        │                              │
-        │                              ▼
-        │                       ┌──────────┐
-        │                       │  Slides  │
-        │                       │  Server  │
-        │                       └──────────┘
-        │
-        ▼
- ┌──────────────┐
- │ Sync Engine  │  (CronJob)
- └──────┬───────┘
-        │
-   ┌────┴────┐
-  XWiki  OpenProject
+```mermaid
+flowchart TB
+    GitLab[("Git 저장소<br>(GitLab 미러)")]
+    Ingress{"K8s Ingress"}
+
+    Viewer["Viewer Service"]
+    CDN["CDN Service"]
+    Drawio["Draw.io Service"]
+    Marp["Marp Service"]
+    Slides["Slides Server"]
+    SyncWebhook["Sync Webhook<br>Receiver"]
+    Sync["Sync Engine<br>(CronJob)"]
+
+    XWiki[("XWiki")]
+    OP[("OpenProject")]
+
+    GitLab -. "Push Event" .-> Ingress
+
+    Ingress -- "/view/*" --> Viewer
+    Ingress -- "/cdn/*" --> CDN
+    Ingress -- "/slides/*" --> Slides
+    Ingress -- "/marp/*" --> Marp
+    Ingress -- "/drawio/*" --> Drawio
+    Ingress -- "/api/sync/webhook/gitlab" --> SyncWebhook
+
+    GitLab --> Viewer
+    GitLab --> Marp
+    GitLab --> Sync
+
+    Viewer -. "JS/CSS 로딩" .-> CDN
+
+    Marp -- "PDF 생성" --> PDF["PDF 파일"]
+    Marp -- "HTML 출판<br>(Git 커밋)" --> GitLab
+
+    Slides -. "git pull (slides-sync)" .-> GitLab
+
+    SyncWebhook -- "K8s Job 즉시 생성" --> Sync
+    Sync --> XWiki
+    Sync --> OP
 ```
 
 ## 2. 핵심 설계 결정
@@ -91,7 +90,7 @@ git diff --name-status -M <last-successful-sha>..HEAD -- <watch-paths>
 ```
 
 - 마지막 성공 커밋 SHA는 내부 PVC의 repo별 상태 파일에 기록
-- 중복 실행 방지를 위해 CronJob `concurrencyPolicy: Forbid`와 Kubernetes Lease lock을 함께 사용
+- 중복 실행 방지를 위해 CronJob 간 중복은 `concurrencyPolicy: Forbid`로, Webhook과 CronJob 간의 중복은 Kubernetes Lease lock으로 제어
 - Added/Modified/Deleted 구분하여 처리
 - Rename은 기존 리소스 마킹 후 새 리소스 upsert로 처리
 - 삭제 시 대상 도구 반영은 설정으로 제어 (기본: 마킹)
@@ -191,23 +190,31 @@ synctx:
 
 ### 3.1 렌더링 파이프라인
 
-```
-마크다운 파일 (Git 저장소)
-        │
-        ▼
-  서버사이드 렌더링 (python-markdown)
-  ├── front matter 파싱 + 제거
-  ├── 테이블 전처리 (빈 줄 삽입)
-  ├── Markdown → HTML 변환
-  ├── heading ID 재작성 (GitHub 스타일)
-  ├── Mermaid 코드 블록 → <div class="mermaid"> 변환
-  └── 상대 경로 링크/이미지 재작성
-        │
-        ▼
-  클라이언트 렌더링 (브라우저)
-  ├── Mermaid 다이어그램 (mermaid.js ← CDN Service)
-  ├── 코드 구문 강조 (highlight.js ← CDN Service)
-  └── 테마 CSS 적용
+```mermaid
+flowchart TD
+    MD["마크다운 파일 (Git 저장소)"]
+
+    subgraph Server["서버사이드 렌더링 (python-markdown)"]
+        direction TB
+        S1["front matter 파싱 + 제거"]
+        S2["테이블 전처리 (빈 줄 삽입)"]
+        S3["Markdown → HTML 변환"]
+        S4["heading ID 재작성 (GitHub 스타일)"]
+        S5["Mermaid 코드 블록 → div class='mermaid' 변환"]
+        S6["상대 경로 링크/이미지 재작성"]
+        S1 --> S2 --> S3 --> S4 --> S5 --> S6
+    end
+
+    subgraph Client["클라이언트 렌더링 (브라우저)"]
+        direction TB
+        C1["Mermaid 다이어그램 (mermaid.js ← CDN Service)"]
+        C2["코드 구문 강조 (highlight.js ← CDN Service)"]
+        C3["테마 CSS 적용"]
+        C1 --> C2 --> C3
+    end
+
+    MD --> Server
+    Server --> Client
 ```
 
 ### 3.2 API
@@ -334,18 +341,21 @@ marp --pdf --allow-local-files --html \
 
 ### 5.5 HTML 출판 흐름
 
-```
-POST /api/marp/publish
-  Body: { repo_id, file_path, ref, publish_path? }
+```mermaid
+sequenceDiagram
+    actor User as 사용자
+    participant Viewer as Viewer Service
+    participant Marp as Marp Service
+    participant Git as Git 저장소
+    participant Slides as Slides Server
 
-  1. Git 저장소에서 .md 파일 읽기
-  2. front matter에서 publish_path 추출 (또는 요청에서 지정)
-  3. marp --html input.md -o output.html
-  4. HTML 내 외부 리소스를 인라인으로 포함 (자체 완결형)
-  5. Git 저장소의 출판 경로에 커밋
-     예: _published/slides/{publish_path}/{제목}.html
-  6. Slides Server URL 반환
-     예: https://slides.internal/{repo}/{publish_path}/{제목}.html
+    User->>Viewer: .md 파일 열람 → "출판" 클릭
+    Viewer->>Marp: POST /api/marp/publish
+    Marp->>Marp: 1. Marp CLI로 HTML 생성
+    Marp->>Git: 2. 출판 경로에 커밋 (_published/slides/...)
+    Slides->>Git: 3. git pull (slides-sync sidecar)
+    Marp-->>Viewer: Slides Server URL 반환
+    Viewer-->>User: 출판 완료 및 URL 제공 (https://slides.internal/...)
 ```
 
 ### 5.6 Git 출판 모듈 (`git_publisher.py`)
@@ -434,19 +444,19 @@ server {
 
 ### 6.3 데이터 흐름
 
-```
-Marp Service                  Slides Server
-    │                              │
-    ├── HTML 생성                   │
-    ├── Git 저장소에 커밋            │
-    │                              │
-    └── (Git clone/pull 주기적) ───→│
-                                   ├── /data/published/
-                                   │   ├── repo-a/slides/아키텍처.html
-                                   │   ├── repo-a/slides/설계리뷰.html
-                                   │   └── repo-b/발표/킥오프.html
-                                   │
-                                   └── 정적 서빙
+```mermaid
+sequenceDiagram
+    participant Marp as Marp Service
+    participant Git as Git 저장소
+    participant Slides as Slides Server
+
+    Marp->>Marp: 1. HTML 생성
+    Marp->>Git: 2. Git 저장소에 커밋
+    loop 주기적 동기화
+        Slides->>Git: 3. git pull (또는 internal refresh trigger 수신 시)
+        Slides->>Slides: /data/published/ 갱신
+    end
+    Note over Slides: 4. 정적 서빙 (repo-a/slides/아키텍처.html 등)
 ```
 
 Slides Server는 `slides-sync` sidecar를 통해 출판 저장소를 주기적으로 `git pull`한다.
@@ -502,14 +512,16 @@ env:
 
 Viewer Service에서 `.drawio` 파일을 감지하면 draw.io 편집 링크를 제공한다:
 
-```
-사용자: Viewer에서 Git 트리 탐색 → architecture.drawio 클릭
-        │
-        ├── 1. Viewer가 .drawio 확장자 감지
-        ├── 2. "Draw.io에서 열기" 링크 표시
-        └── 3. 클릭 시 Draw.io Service URL로 이동
-               https://synctx.internal/drawio/
-               (사용자가 파일을 직접 열기)
+```mermaid
+sequenceDiagram
+    actor User as 사용자
+    participant Viewer as Viewer Service
+    participant Drawio as Draw.io Service
+
+    User->>Viewer: Git 트리 탐색 → .drawio 파일 클릭
+    Viewer->>Viewer: 1. .drawio 확장자 감지
+    Viewer-->>User: 2. "Draw.io에서 열기" 링크 표시
+    User->>Drawio: 3. 링크 클릭 시 Draw.io Service로 이동<br>(https://synctx.internal/drawio/)
 ```
 
 `.drawio` 파일은 XML 기반이므로 Viewer에서 직접 렌더링하지 않고, Draw.io Service로 안내한다.
@@ -729,6 +741,7 @@ helm/synctx/
     ├── drawio-service.yaml
     │
     ├── sync-cronjob.yaml           # 동기화 CronJob
+    ├── sync-webhook.yaml           # 즉시 실행 트리거용 Webhook Receiver
     │
     ├── slides-deployment.yaml
     ├── slides-service.yaml

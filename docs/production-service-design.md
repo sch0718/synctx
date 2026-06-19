@@ -60,10 +60,12 @@ Sync Engine 상태는 내부 PVC에 저장한다.
 
 ### 2.3 실행 잠금
 
-중복 실행은 두 겹으로 막는다.
+중복 실행은 세 단계로 막는다.
 
-- K8s CronJob: `concurrencyPolicy: Forbid`
+- K8s CronJob: `concurrencyPolicy: Forbid` (CronJob 스케줄 간의 중복 실행 방지)
+- Webhook Receiver: 별도의 경량 **Deployment**로 동작하며, GitLab Push Event 수신 시 Kubernetes API를 호출하여 `synctx-sync` CronJob 기반의 일회성 Job을 즉시 생성한다. (최소 권한 원칙에 따라 Job 생성/조회 권한만 가진 **Webhook 전용 ServiceAccount**를 사용)
 - Sync Engine: Kubernetes Lease 기반 per-repo lock
+  - **상호작용 (안전망)**: Webhook이 생성한 수동 Job과 CronJob이 생성한 스케줄 Job은 서로 다른 주체에 의해 생성되므로 `concurrencyPolicy: Forbid`가 상호 간의 중복을 막아주지 못한다. 따라서 Webhook Job과 CronJob Job이 동시에 실행되더라도, **최종적으로 Kubernetes Lease를 획득한 하나의 Pod만 동기화를 수행**하고 나머지는 대기 후 종료된다. CronJob은 Webhook이 놓친 변경을 주기적으로 처리하는 안전망(Safety Net) 역할을 한다.
 
 Lease 이름은 `synctx-sync-{repo_id}`다. 수동 실행, CronJob, 재시작 상황이 겹쳐도 같은 repo는 동시에 처리하지 않는다.
 Lease 권한이 없는 로컬 개발 환경에서는 파일 lock으로 fallback한다.
@@ -142,6 +144,7 @@ authz:
 |--------|--------|------|
 | `GIT_READ_TOKEN` | Viewer, Sync Engine, Marp | source repo read |
 | `GIT_PUBLISH_TOKEN` | Marp, slides-sync | publish repo write/read |
+| `GITLAB_WEBHOOK_SECRET` | Sync Webhook Receiver | GitLab push event 검증 |
 | `XWIKI_CREDENTIAL` | Sync Engine | page/attachment write |
 | `OPENPROJECT_API_KEY` | Sync Engine | work package write |
 | `SYNCTX_SERVICE_TOKEN` | internal API | service-to-service |
@@ -390,20 +393,24 @@ _published/slides/{repo_id}/{publish_path}
 
 ### 6.1 실행 흐름
 
-```
-1. config 로드 및 schema 검증
-2. repo별 Lease 획득
-3. repo fetch
-4. state.json 로드
-5. 변경 범위 계산
-6. 파일별 front matter 검증
-7. 대상 리소스 계획 생성
-8. dry-run이면 plan 출력 후 종료
-9. XWiki/OpenProject 호출
-10. 파일별 결과 기록
-11. critical failure가 없으면 last_successful_sha 갱신
-12. run report 저장 및 metrics 발행
-13. Lease 반납
+```mermaid
+flowchart TD
+    A["1. config 로드 및 schema 검증"] --> B["2. repo별 Lease 획득"]
+    B --> C["3. repo fetch"]
+    C --> D["4. state.json 로드"]
+    D --> E["5. 변경 범위 계산"]
+    E --> F["6. 파일별 front matter 검증"]
+    F --> G["7. 대상 리소스 계획 생성"]
+    G --> H{"8. dry-run?"}
+    H -- Yes --> I["plan 출력 후 종료"]
+    H -- No --> J["9. XWiki/OpenProject 호출"]
+    J --> K["10. 파일별 결과 기록"]
+    K --> L{"11. critical failure?"}
+    L -- No --> M["last_successful_sha 갱신"]
+    L -- Yes --> N["12. run report 저장 및 metrics 발행"]
+    M --> N
+    I --> O["13. Lease 반납"]
+    N --> O
 ```
 
 ### 6.2 변경 감지
@@ -429,18 +436,38 @@ git diff --name-status -M <last_successful_sha>..HEAD -- <watch_paths>
 
 XWiki:
 
-1. external marker로 기존 페이지 확인
-2. 없으면 mapping된 URL로 GET
-3. PUT으로 page upsert
-4. 첨부파일은 SHA-256이 다를 때만 PUT
+```mermaid
+sequenceDiagram
+    participant Sync as Sync Engine
+    participant XWiki as XWiki API
+
+    Sync->>XWiki: 1. external marker로 기존 페이지 확인
+    alt 페이지 없음
+        Sync->>XWiki: 2. mapping된 URL로 GET 확인
+    end
+    Sync->>XWiki: 3. PUT으로 page upsert
+    Sync->>Sync: 4. 첨부파일 SHA-256 비교
+    opt SHA-256 다름
+        Sync->>XWiki: PUT으로 첨부파일 업로드
+    end
+```
 
 OpenProject:
 
-1. custom field `synctx_external_key`로 Work Package 검색
-2. 없으면 새 Work Package 생성
-3. 있으면 mapped fields만 PATCH
-4. 내부에서 수정한 필드는 다음 sync에서 덮어쓴다. 단, `protected_fields`에 등록된 필드는 덮어쓰지 않는다.
-5. Work Package의 version 연결은 Task 문서의 `synctx.version` 값만 사용한다. Version 문서의 `issues` 목록은 생성/수정 대상 관계가 아니라 검증 입력이다.
+```mermaid
+sequenceDiagram
+    participant Sync as Sync Engine
+    participant OP as OpenProject API
+
+    Sync->>OP: 1. custom field 'synctx_external_key'로 검색
+    alt Work Package 없음
+        Sync->>OP: 2. 새 Work Package 생성
+    else Work Package 있음
+        Sync->>OP: 3. mapped fields만 PATCH 업데이트
+    end
+    Note over Sync, OP: 4. 내부 수정 필드는 다음 sync에서 덮어씀 (protected_fields 제외)
+    Note over Sync, OP: 5. Version 연결은 Task 문서의 synctx.version 값만 사용
+```
 
 `protected_fields`는 `.synctx.yaml`의 `targets.openproject.protected_fields`에 정의한다.
 예를 들어 `assignee`가 protected이면 최초 생성 때만 설정하고 이후 내부 OpenProject 변경을 덮어쓰지 않는다.
@@ -583,9 +610,21 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - push 실패가 non-fast-forward이면 fetch/rebase 후 1회 재시도한다.
 - 같은 `publish_path`는 새 commit으로 갱신한다.
 
-### 7.5 Sync Admin API
+### 7.5 Sync Webhook & Admin API
 
-첫 운영 버전에서는 API 대신 CLI와 CronJob을 기본으로 한다.
+Sync Engine은 기본적으로 CLI와 CronJob으로 동작하며, 즉시 동기화를 위한 Webhook Receiver를 별도로 운영한다.
+
+| Method | Path | 권한 | 설명 |
+|--------|------|------|------|
+| POST | `/api/sync/webhook/gitlab` | service | GitLab Push Event 수신 및 Sync Job 생성 |
+
+Webhook Receiver 정책:
+
+- 별도의 경량 Deployment로 동작하며, 최소 권한 원칙(Least Privilege)에 따라 Job 생성/조회 권한만 가진 Webhook 전용 ServiceAccount를 사용한다.
+- GitLab `X-Gitlab-Token` 헤더를 `GITLAB_WEBHOOK_SECRET`과 비교하여 검증한다.
+- Push 이벤트 수신 시 Kubernetes API를 호출하여 `synctx-sync` CronJob 기반의 일회성 Job을 생성한다.
+- 이미 실행 중인 Sync Job이 있으면 새 Job을 생성하지 않고 200 OK(Ignored)를 반환한다.
+
 수동 실행이 필요하면 `kubectl create job --from=cronjob/synctx-sync`를 사용한다.
 운영 UI/API는 Phase 4 이후 추가한다.
 
