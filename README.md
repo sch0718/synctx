@@ -214,8 +214,8 @@ Git 저장소의 마크다운과 메타데이터를 내부 협업 도구에 자�
 별도 개발 없이 공식 Docker 이미지를 K8s에 배포한다:
 
 ```yaml
-# jgraph/drawio 이미지를 내부 레지스트리에 미러링 후 사용
-image: registry.internal/jgraph/drawio:latest
+# 검증한 jgraph/drawio 버전을 내부 레지스트리에 미러링 후 사용
+image: registry.internal/jgraph/drawio:<pinned-version>
 ```
 
 ## Slides Server (프레젠테이션 서버)
@@ -359,5 +359,6 @@ synctx/
 | 문서 | 설명 |
 |------|------|
 | [아키텍처 설계](docs/architecture.md) | 마이크로서비스 설계, Marp, CDN, Helm Chart, 설정 체계 |
+| [운영 서비스 설계](docs/production-service-design.md) | 실제 서비스 운영을 위한 보안, 상태 관리, 배포, 체크리스트 |
 | [재활용 자산 목록](docs/reusable-assets.md) | 기존 저장소에서 가져올 코드와 활용 방안 |
 | [XWiki API 레퍼런스](docs/xwiki-api-reference.md) | XWiki REST API 사용법과 제약 사항 |

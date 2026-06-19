@@ -1,5 +1,8 @@
 # 아키텍처 설계
 
+이 문서는 synctx의 기본 시스템 구조와 서비스별 책임을 정의한다.
+실제 운영 가능한 서비스 수준의 상세 정책, 보안, 상태 관리, 배포 기준, 단계별 체크리스트는 [production-service-design.md](production-service-design.md)를 기준으로 한다.
+
 ## 1. 시스템 개요
 
 synctx는 마이크로서비스 아키텍처로 구성되며, K8s 클러스터에서 운영된다.
@@ -84,12 +87,15 @@ synctx는 마이크로서비스 아키텍처로 구성되며, K8s 클러스터�
 전체 문서를 매번 동기화하지 않고, 마지막 동기화 이후 변경된 파일만 처리한다.
 
 ```bash
-git diff --name-only <last-sync-sha>..HEAD -- '*.md'
+git diff --name-status -M <last-successful-sha>..HEAD -- <watch-paths>
 ```
 
-- 마지막 동기화 커밋 SHA는 상태 파일(`.synctx-state.json`)에 기록
+- 마지막 성공 커밋 SHA는 내부 PVC의 repo별 상태 파일에 기록
+- 중복 실행 방지를 위해 CronJob `concurrencyPolicy: Forbid`와 Kubernetes Lease lock을 함께 사용
 - Added/Modified/Deleted 구분하여 처리
+- Rename은 기존 리소스 마킹 후 새 리소스 upsert로 처리
 - 삭제 시 대상 도구 반영은 설정으로 제어 (기본: 마킹)
+- 부분 실패가 있으면 마지막 성공 SHA를 전진하지 않고 다음 실행에서 재시도
 
 ### 2.4 목적 기반 지능형 라우팅 (OpenProject vs XWiki)
 
@@ -157,6 +163,9 @@ synctx:
     - "issues/TASK-002.md"
 ---
 ```
+
+OpenProject Work Package의 Version 연결은 각 Task 문서의 `synctx.version` 필드를 기준으로 한다.
+Version 문서의 `issues` 목록은 Viewer 보드 렌더링과 dry-run 검증용 manifest로 사용한다.
 
 Marp 프레젠테이션:
 
@@ -353,7 +362,8 @@ GitPublisher
 ```
 
 출판된 HTML은 Git 저장소에 커밋되므로 이력 관리가 가능하다.
-Slides Server는 해당 저장소의 `_published/` 디렉토리를 마운트하여 정적 서빙한다.
+운영 기준에서 출판 데이터의 단일 원천은 `publish_repo` Git 저장소다.
+Slides Server는 PVC에 직접 쓰지 않고, `slides-sync` sidecar가 `publish_repo`를 pull한 working tree를 읽기 전용으로 서빙한다.
 
 ### 5.7 Marp 테마
 
@@ -439,7 +449,8 @@ Marp Service                  Slides Server
                                    └── 정적 서빙
 ```
 
-Slides Server는 주기적으로 출판 저장소를 `git pull`하거나, Marp Service로부터 webhook을 받아 갱신한다.
+Slides Server는 `slides-sync` sidecar를 통해 출판 저장소를 주기적으로 `git pull`한다.
+Marp Service는 push 성공 후 내부 refresh API를 호출하며, refresh 실패 시에도 polling으로 최종 반영된다.
 
 ## 7. Draw.io Service 설계
 
@@ -463,14 +474,14 @@ Slides Server는 주기적으로 출판 저장소를 `git pull`하거나, Marp S
 별도 개발 없이 공식 이미지를 내부 레지스트리에 미러링하여 배포한다:
 
 ```bash
-# 외부 네트워크에서 이미지 가져오기
-docker pull jgraph/drawio:latest
-docker tag jgraph/drawio:latest registry.internal/jgraph/drawio:latest
-docker save registry.internal/jgraph/drawio:latest -o drawio.tar
+# 외부 네트워크에서 검증한 버전의 이미지 가져오기
+docker pull jgraph/drawio:<pinned-version>
+docker tag jgraph/drawio:<pinned-version> registry.internal/jgraph/drawio:<pinned-version>
+docker save registry.internal/jgraph/drawio:<pinned-version> -o drawio.tar
 
 # 내부망에서 로딩
 docker load -i drawio.tar
-docker push registry.internal/jgraph/drawio:latest
+docker push registry.internal/jgraph/drawio:<pinned-version>
 ```
 
 ### 7.4 환경 변수 설정
@@ -567,7 +578,8 @@ synctx:
     max_upload_size: 50_000_000
     allowed_extensions: [.js, .css, .woff, .woff2, .ttf, .svg, .png, .map]
     upload_auth:
-      enabled: false
+      enabled: true
+      required_role: cdn-admin
 
   # Marp 설정
   marp:
@@ -582,7 +594,8 @@ synctx:
   sync:
     on_delete: mark
     dry_run: false
-    state_file: .synctx-state.json
+    state_path: /data/sync-state
+    lease_namespace: synctx
 
   # 변환 설정
   converters:
@@ -592,22 +605,28 @@ synctx:
       theme: default
 ```
 
-### 8.2 상태 파일 (`.synctx-state.json`)
+### 8.2 상태 파일
 
 ```json
 {
-  "last_sync_sha": "abc1234",
-  "last_sync_at": "2026-06-19T10:30:00Z",
+  "schema_version": 1,
+  "repo_id": "project-docs",
+  "last_successful_sha": "abc1234",
+  "last_run_id": "2026-06-19T10-30-00Z",
   "synced_files": {
     "docs/아키텍처/시스템-설계.md": {
-      "sha": "def5678",
+      "content_sha": "sha256:...",
       "target": "xwiki",
+      "external_key": "project-docs:docs/아키텍처/시스템-설계.md",
       "resource_id": "아키텍처.시스템-설계",
-      "synced_at": "2026-06-19T10:30:00Z"
+      "last_synced_sha": "def5678",
+      "last_synced_at": "2026-06-19T10:30:00Z"
     }
   }
 }
 ```
+
+운영 환경의 상세 상태 모델은 [production-service-design.md](production-service-design.md)의 Sync Engine 설계를 따른다.
 
 ## 9. 모듈 설계
 
@@ -730,7 +749,7 @@ viewer:
   replicaCount: 2
   image:
     repository: synctx/viewer
-    tag: latest
+    tag: "0.1.0-<git-sha>"
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }
@@ -739,7 +758,7 @@ cdn:
   replicaCount: 1
   image:
     repository: synctx/cdn
-    tag: latest
+    tag: "0.1.0-<git-sha>"
   persistence:
     enabled: true
     size: 10Gi
@@ -751,7 +770,7 @@ marp:
   replicaCount: 1
   image:
     repository: synctx/marp
-    tag: latest
+    tag: "0.1.0-<git-sha>"
   resources:
     requests: { cpu: 200m, memory: 512Mi }
     limits: { cpu: 1000m, memory: 1Gi }  # Chromium 사용으로 리소스 다소 필요
@@ -760,7 +779,7 @@ sync:
   schedule: "*/5 * * * *"
   image:
     repository: synctx/sync
-    tag: latest
+    tag: "0.1.0-<git-sha>"
   resources:
     requests: { cpu: 50m, memory: 128Mi }
 
@@ -768,7 +787,7 @@ drawio:
   replicaCount: 1
   image:
     repository: jgraph/drawio
-    tag: latest
+    tag: "<pinned-version>"
   env:
     DRAWIO_SELF_CONTAINED: "1"
   resources:
@@ -955,7 +974,15 @@ helm upgrade synctx ./helm/synctx \
 2. Front matter → Work Package 매핑
 3. 이슈 생성/업데이트 로직
 
-### Phase 5: 하네스 엔지니어링 및 스크럼 보드 (OKF)
+### Phase 5: 운영 준비
+
+1. Production values 작성 및 Secret 참조 방식 확정
+2. 이미지/벤더 artifact SHA-256 manifest 작성
+3. Offline build 및 폐쇄망 반입 검증
+4. Metrics, alert, runbook, 백업/복구 절차 작성
+5. 운영 권한 매핑 검토
+
+### Phase 6: 하네스 엔지니어링 및 스크럼 보드 (OKF)
 
 1. **LLM 컨텍스트 하네스**: `.context/` 디렉토리 구조 설계 및 서로 다른 LLM(Cursor, Claude 등) 간 컨텍스트 공유 포맷(YAML/Markdown) 정의
 2. **스크럼 보드 뷰어**: Viewer Service에 마크다운 이슈 목록을 칸반(Kanban) 보드로 렌더링하는 프론트엔드 기능 추가
