@@ -233,7 +233,7 @@ POST /api/repos/{id}/webhook        Git push 알림
 |------|------|-----------------|
 | Git 저장소 탐색 | 다중 저장소, 브랜치, 트리 | 있음 (재활용) |
 | 마크다운 렌더링 | python-markdown 기반 HTML 변환 | 있음 (재활용) |
-| 스크럼 보드 렌더링 | 이슈 마크다운 목록을 Trello 형태의 칸반 보드로 시각화 | **신규 (Phase 5)** |
+| 스크럼 보드 렌더링 | 이슈 마크다운 목록을 Trello 형태의 칸반 보드로 시각화 | **신규 (Phase 6)** |
 | 테마 | 7개 테마 CSS | 있음 (재활용) |
 | Mermaid | 클라이언트 사이드 렌더링 | CDN 방식으로 변경 |
 | 코드 하이라이팅 | highlight.js 구문 강조 | CDN 방식으로 변경 |
@@ -253,7 +253,7 @@ Viewer에서 마크다운 파일을 열람할 때, `marp: true` front matter가 
 웹에서 보여지는 레이아웃과 디자인은 사용자 경험(UX)에 매우 중요한 요소이다. 일관성 있고 완성도 높은 UI를 제공하기 위해 기존 사내 프로젝트의 디자인 자산을 적극 재활용한다.
 
 - **디자인 레퍼런스**: 사내 example-fe 디자인 시스템 자산을 참조하여 색상 팔레트, 타이포그래피, 레이아웃 구조를 차용한다. (상세 내용은 `docs/reusable-assets.md` 참조)
-- **일관된 사용자 경험**: 기존 사내 서비스에 익숙한 사용자가 synctx Viewer 및 스크럼 보드(Kanban)를 사용할 때 이질감을 느끼지 않도록 시각적 스타일을 통일한다. 단, React 컴포넌트를 직접 재사용하지 않고 CSS 변수, 레이아웃 패턴, CSS 스타일시트만 추출하여 서버사이드 렌더링 환경(FastAPI)에 맞게 적용한다.
+- **일관된 사용자 경험**: 기존 사내 서비스에 익숙한 사용자가 synctx Viewer 및 스크럼 보드(Kanban)를 사용할 때 이질감을 느끼지 않도록 시각적 스타일을 통일한다. 단, React 컴포넌트를 직접 재사용하지 않고 CSS 변수, 레이아웃 패턴, CSS 스타일시트만 추출하여 서버사이드 렌더링 환경(FastAPI)에 맞게 적용한다. (Phase 1~4의 Viewer는 순수 서버 렌더링 + Vanilla JS/CSS로 구현하며, 향후 Phase 6의 스크럼 보드 등 고도의 인터랙션이 필요한 기능 개발 시에만 `example-fe`의 React/Vite 스택을 별도 번들로 도입하는 것을 원칙으로 하여 프론트엔드의 이중 구조화를 방지한다.)
 - **반응형 웹 및 접근성**: 데스크탑 및 태블릿 환경에 최적화된 반응형 레이아웃을 구성하며, 마크다운 렌더링 결과물(테이블, 코드 블록, 인용구 등)이 기존 디자인 시스템 내에서 조화롭게 표시되도록 CSS를 세밀하게 조정한다.
 
 ## 4. CDN Service 설계
@@ -266,10 +266,7 @@ cdn-data/
 ├── highlight.js/11.9.0/
 │   ├── highlight.min.js
 │   └── styles/github.min.css
-├── chart.js/4.4.4/chart.umd.min.js
-├── htmx/2.0.2/htmx.min.js
-├── alpine.js/3.14.1/alpine.min.js
-└── vue/3.4.31/vue.global.prod.js
+└── chart.js/4.4.4/chart.umd.min.js
 ```
 
 ### 4.2 API

@@ -134,9 +134,6 @@ flowchart TB
 | mermaid | 10.9.1 | 다이어그램 렌더링 |
 | highlight.js | — | 코드 구문 강조 |
 | Chart.js | 4.4.4 | 차트/그래프 |
-| htmx | 2.0.2 | HTML 기반 인터랙션 |
-| Alpine.js | 3.14.1 | 경량 프론트엔드 |
-| Vue | 3.4.31 | 프론트엔드 프레임워크 |
 
 ## Marp Service (프레젠테이션)
 
@@ -351,6 +348,7 @@ synctx/
 | 영역 | 기술 |
 |------|------|
 | 언어 | Python 3.10+, Node.js (Marp CLI) |
+| 프론트엔드 | HTML/CSS/Vanilla JS (서버 렌더링 기반, Phase 6 고인터랙션 기능에 한해 React/Vite 별도 번들로 선택 도입) |
 | 웹 서버 | FastAPI + Uvicorn |
 | Markdown 렌더링 | `markdown` 라이브러리 (서버사이드) |
 | 프레젠테이션 | `@marp-team/marp-cli` |

@@ -131,15 +131,11 @@
 
 - **소스**: `example-infra` feature/docsify 브랜치 `docs/cdn/`
 - **포함 내용**:
-  - docsify 4.13.1 (JS + 5개 테마 CSS)
   - mermaid 10.9.1
   - chart.js 4.4.4
-  - htmx 2.0.2
-  - Alpine.js 3.14.1
-  - Vue 3.4.31
-  - docsify 플러그인 (search, copy-code, tabs, pagination, zoom-image)
+  - (참고용) docsify 4.13.1 및 플러그인
 - **대상 서비스**: CDN Service의 초기 데이터 (`cdn-data/` 디렉토리)
-- **활용**: `cdn-data/{library}/{version}/` 구조에 맞게 재배치
+- **활용**: `cdn-data/{library}/{version}/` 구조에 맞게 재배치. 단, **docsify 관련 파일은 synctx가 서버사이드 렌더링을 사용하므로 기본 반입 대상에서 제외**한다.
 - **관련 스크립트**: `20. Helm/scripts/download-cdn-vendor.sh` → `scripts/download-cdn-vendor.sh`
 - **추가 필요 라이브러리**: highlight.js (코드 구문 강조) — 기존 CDN에 미포함이므로 다운로드 스크립트에 추가 필요
 
@@ -267,7 +263,7 @@ cp "example-infra/10. 문서/문서변환/convert_to_pdf.py"  synctx/services/vi
 
 # CDN 초기 데이터 (docsify 브랜치에서)
 # feature/docsify 브랜치의 docs/cdn/ → synctx/cdn-data/
-# ※ {library}/{version}/ 구조에 맞게 재배치 필요
+# ※ mermaid/chart.js만 선별 반입, docsify 제외, highlight.js 추가 다운로드 및 {library}/{version}/ 구조에 맞게 재배치 필요
 
 # Helm Chart / Nginx 참고 (docsify 브랜치에서)
 # 20. Helm/docs-site/ → synctx/helm/synctx/ 구조 참고
