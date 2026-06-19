@@ -108,13 +108,26 @@
 - **대상 서비스**: Viewer Service
 - **비고**: 테마 CSS를 별도 파일로 분리하여 CDN Service에서 관리하는 것도 고려
 
-### 1.8 pyproject.toml
+### 1.8 사내 example-fe 디자인 시스템 자산
+
+- **소스**: `~/workspace/example-fe`
+- **기능**: UI/UX 일관성을 위한 디자인 토큰 및 레이아웃 구조
+- **포함 내용**:
+  - GNB, LNB, Content Area 등 기본 레이아웃 패턴
+  - 색상 팔레트, 타이포그래피, 여백 등 디자인 토큰
+  - 버튼, 모달, 카드, 폼 등 공통 컴포넌트의 시각적 스타일 (CSS)
+- **대상 서비스**: Viewer Service (및 스크럼 보드)
+- **수정 필요 사항**:
+  - Viewer Service는 FastAPI 기반 서버사이드 렌더링이므로, React 컴포넌트 코드를 직접 가져오지 않고 CSS 변수 및 스타일시트만 추출하여 적용
+  - 마크다운 렌더링 결과물(테이블, 코드 블록 등)과 조화롭게 어울리도록 CSS 조정
+
+### 1.9 pyproject.toml
 
 - **소스**: `markdown_converter/pyproject.toml`
 - **활용**: 각 서비스의 `pyproject.toml` 베이스. 의존성 목록 참고.
 - **주요 의존성**: fastapi, uvicorn, markdown, pyyaml, pypdf, httpx
 
-### 1.9 내부 CDN 벤더 파일
+### 1.10 내부 CDN 벤더 파일
 
 - **소스**: `example-infra` feature/docsify 브랜치 `docs/cdn/`
 - **포함 내용**:
@@ -130,7 +143,7 @@
 - **관련 스크립트**: `20. Helm/scripts/download-cdn-vendor.sh` → `scripts/download-cdn-vendor.sh`
 - **추가 필요 라이브러리**: highlight.js (코드 구문 강조) — 기존 CDN에 미포함이므로 다운로드 스크립트에 추가 필요
 
-### 1.10 Nginx 설정 + Helm Chart
+### 1.11 Nginx 설정 + Helm Chart
 
 - **소스**: `example-infra` feature/docsify 브랜치
   - `docs/nginx.conf` — Docsify 정적 서빙용 Nginx 설정
