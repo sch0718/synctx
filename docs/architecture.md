@@ -91,19 +91,29 @@ git diff --name-only <last-sync-sha>..HEAD -- '*.md'
 - Added/Modified/Deleted 구분하여 처리
 - 삭제 시 대상 도구 반영은 설정으로 제어 (기본: 마킹)
 
-### 2.4 파일 경로 → 도구 리소스 매핑
+### 2.4 목적 기반 지능형 라우팅 (OpenProject vs XWiki)
 
-```
-docs/
-├── 아키텍처/
-│   └── 시스템-설계.md        → XWiki: Space=아키텍처, Page=시스템-설계
-├── 요건/
-│   └── REQ-001.md            → OpenProject: Work Package
-└── 회의록/
-    └── 2026-06-19-킥오프.md  → XWiki: Space=회의록, Page=2026-06-19-킥오프
+마크다운 파일의 용도에 따라 동기화 대상이 자동으로 결정됩니다. 이는 파일 경로 또는 Front Matter의 `type` 속성으로 구분됩니다.
+
+- **프로젝트 관리 및 이슈 트래킹 (OpenProject)**: 요건, 버그, 태스크 등 진행 상태 트래킹이 필요한 문서. 외부망에서는 이를 모아 **마크다운 기반 스크럼 보드(Kanban)** 로 활용합니다.
+- **지식 공유 및 설계 (XWiki)**: 아키텍처 설계, API 규격, 회의록 등 영구적인 지식 자산.
+
+```text
+workspace/
+├── .context/                 → LLM 간 공유되는 시스템 프롬프트 및 글로벌 컨텍스트 (동기화 제외)
+│   ├── system_prompt.md      → AI 에이전트의 역할, 코딩 컨벤션, 제약사항
+│   ├── project_state.yaml    → 현재 프로젝트 진행 단계, 주요 마일스톤
+│   └── memory/               → LLM이 남기는 작업 로그 및 트러블슈팅 기록
+├── board/
+│   └── sprint-1.md           → Viewer에서 칸반 보드로 렌더링, OpenProject 버전/스프린트로 매핑
+├── issues/
+│   └── TASK-001.md           → OpenProject: Work Package (상태, 담당자 동기화)
+└── docs/
+    └── 아키텍처/
+        └── 시스템-설계.md        → XWiki: Space=아키텍처, Page=시스템-설계
 ```
 
-### 2.5 Front Matter 기반 메타데이터
+### 2.5 Front Matter 기반 메타데이터 및 하네스 규격
 
 마크다운 파일 상단의 YAML front matter로 동기화 대상과 메타데이터를 지정한다.
 
@@ -127,6 +137,24 @@ synctx:
   type: task
   status: in_progress
   assignee: "홍길동"
+---
+```
+
+스크럼 보드 (스프린트/버전 관리):
+
+```yaml
+---
+synctx:
+  target: openproject
+  project: example-project
+  type: version
+  name: "Sprint 1"
+  start_date: "2026-06-20"
+  end_date: "2026-07-04"
+  status: open
+  issues:
+    - "issues/TASK-001.md"
+    - "issues/TASK-002.md"
 ---
 ```
 
@@ -189,6 +217,7 @@ POST /api/repos/{id}/webhook        Git push 알림
 |------|------|-----------------|
 | Git 저장소 탐색 | 다중 저장소, 브랜치, 트리 | 있음 (재활용) |
 | 마크다운 렌더링 | python-markdown 기반 HTML 변환 | 있음 (재활용) |
+| 스크럼 보드 렌더링 | 이슈 마크다운 목록을 Trello 형태의 칸반 보드로 시각화 | **신규 (Phase 5)** |
 | 테마 | 7개 테마 CSS | 있음 (재활용) |
 | Mermaid | 클라이언트 사이드 렌더링 | CDN 방식으로 변경 |
 | 코드 하이라이팅 | highlight.js 구문 강조 | CDN 방식으로 변경 |
@@ -926,8 +955,8 @@ helm upgrade synctx ./helm/synctx \
 2. Front matter → Work Package 매핑
 3. 이슈 생성/업데이트 로직
 
-### Phase 5: 컨텍스트 하네스
+### Phase 5: 하네스 엔지니어링 및 스크럼 보드 (OKF)
 
-1. AI 도구 간 컨텍스트 공유 포맷 정의
-2. `.context/` 디렉토리 구조 설계
-3. 컨텍스트 동기화 엔진
+1. **LLM 컨텍스트 하네스**: `.context/` 디렉토리 구조 설계 및 서로 다른 LLM(Cursor, Claude 등) 간 컨텍스트 공유 포맷(YAML/Markdown) 정의
+2. **스크럼 보드 뷰어**: Viewer Service에 마크다운 이슈 목록을 칸반(Kanban) 보드로 렌더링하는 프론트엔드 기능 추가
+3. **상태 변환 매핑 규칙 (단방향)**: 마크다운의 `status: in_progress` 값을 OpenProject의 내부 상태 코드로 변환하는 단방향 매핑 로직 고도화

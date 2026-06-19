@@ -27,9 +27,10 @@
 
 ### 핵심 가치
 
-- **AI 생산성의 내부 확장**: 외부에서 AI로 작성한 문서와 이슈가 내부 도구에 자동 반영
-- **컨텍스트 연속성**: 여러 AI 도구(Claude Code, Codex, Cursor) 간 컨텍스트를 Git 기반으로 유지
-- **현업 접근성**: 현업 팀이 익숙한 내부 도구(XWiki, OpenProject)에서 최신 정보에 접근
+- **Human-AI Collaboration (사람-AI 협업)**: AI는 마크다운을 통해 지식을 생성/공유하고, 사람은 웹 뷰어와 내부 도구를 통해 이를 소비·관리하는 완벽한 협업 체계 구축
+- **Harness Engineering & OKF**: 서로 다른 LLM(Cursor, Claude 등)이 마크다운을 공통 컨텍스트(메모리)로 사용하여 지식의 흐름(Orchestrated Knowledge Flow)을 끊김 없이 유지
+- **Markdown 기반 스크럼/대시보드**: 외부망에서는 마크다운 기반의 칸반(Kanban)/대시보드로 프로젝트를 관리하고, 이는 내부망의 OpenProject로 자동 연동
+- **지능형 라우팅**: 마크다운의 목적(프로젝트 관리 vs 지식 공유)에 따라 OpenProject와 XWiki로 자동 분기되어 동기화
 - **오프라인 독립성**: 외부 CDN 없이 모든 렌더링 라이브러리를 내부 CDN에서 서빙
 - **문서→발표 전환**: 마크다운으로 작성한 문서를 바로 프레젠테이션으로 변환·출판
 - **다이어그램 자급자족**: draw.io를 내부에서 운영하여 인터넷 없이 다이어그램 작성
@@ -225,11 +226,13 @@ Marp Service가 출판한 프레젠테이션 HTML 파일을 정적으로 서빙�
 - 출판된 HTML 파일을 PVC에서 읽어 서빙
 - URL 패턴: `https://slides.internal/{repo}/{path}/{제목}.html`
 
-## 주요 개념
+## 주요 개념 (Harness Engineering & OKF)
 
-- **OKF (Orchestrated Knowledge Flow)**: Google이 제안한 개념으로, 지식의 흐름을 체계적으로 오케스트레이션하는 프레임워크
-- **Harness**: AI 도구들의 입출력과 컨텍스트를 구조화하고 관리하는 계층
-- **Context Sync**: 요건, 문서, 코드, 이슈 등 개발 산출물의 컨텍스트를 Git 기반으로 동기화
+synctx는 단순한 동기화 도구를 넘어, **AI와 사람이 지식을 공유하는 하네스(Harness)** 역할을 합니다.
+
+- **OKF (Orchestrated Knowledge Flow)**: 지식의 생성(AI/사람) → 저장(Git/Markdown) → 소비(XWiki/OpenProject/Viewer)로 이어지는 흐름을 체계적으로 오케스트레이션합니다. 서로 다른 LLM 간에도 마크다운 문서를 통해 컨텍스트가 끊김 없이 흐릅니다.
+- **Harness Engineering**: AI가 쉽게 읽고 쓸 수 있도록 마크다운 문서의 구조(Front Matter, Task List 등)를 규격화합니다. 이 규격화된 문서는 AI에게는 '프롬프트 컨텍스트'가 되고, 사람에게는 '스크럼 보드'나 '기술 문서'가 됩니다.
+- **Context Routing**: 마크다운 파일의 메타데이터(Front Matter)를 분석하여, 이슈 트래킹 용도면 **OpenProject**로, 지식 공유 및 설계 용도면 **XWiki**로 자동 라우팅하여 동기화합니다.
 
 ## 프로젝트 구조 (계획)
 
