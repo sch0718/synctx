@@ -16,8 +16,8 @@
 
 ### 해결 방향
 
-내부에서 외부로 데이터를 반출할 수는 없지만, **외부에서 내부로의 반입은 Git 동기화로 거의 자동화**되어 있다.
-이 단방향 경로를 활용하여 다섯 가지 문제를 해결한다:
+일반적인 내부→외부 데이터 반출은 제한되지만, **외부에서 내부로의 반입은 Git 동기화로 거의 자동화**되어 있다.
+기본적으로 이 단방향 경로를 활용하여 다섯 가지 문제를 해결하며, 승인된 메일 게이트웨이가 있는 환경에서는 OpenProject의 제한된 메타데이터 변경만 외부 PR 생성 이벤트로 전달할 수 있다:
 
 1. **문서 열람**: 외부에서 작성된 마크다운 문서를 내부에서 웹 기반으로 열람
 2. **프레젠테이션**: 마크다운 문서를 Marp로 PDF/슬라이드 HTML로 변환하여 발표 자료로 활용
@@ -31,6 +31,7 @@
 - **Harness Engineering & OKF**: 서로 다른 LLM(Cursor, Claude 등)이 마크다운을 공통 컨텍스트(메모리)로 사용하여 지식의 흐름(Orchestrated Knowledge Flow)을 끊김 없이 유지
 - **Markdown 기반 스크럼/대시보드**: 외부망에서는 마크다운 기반의 칸반(Kanban)/대시보드로 프로젝트를 관리하고, 이는 내부망의 OpenProject로 자동 연동
 - **지능형 라우팅**: 마크다운의 목적(프로젝트 관리 vs 지식 공유)에 따라 OpenProject와 XWiki로 자동 분기되어 동기화
+- **제한적 피드백 반출**: OpenProject 상태 등 허용된 메타데이터만 서명된 메일 이벤트로 외부 PR 흐름에 전달
 - **오프라인 독립성**: 외부 CDN 없이 모든 렌더링 라이브러리를 내부 CDN에서 서빙
 - **문서→발표 전환**: 마크다운으로 작성한 문서를 바로 프레젠테이션으로 변환·출판
 - **다이어그램 자급자족**: draw.io를 내부에서 운영하여 인터넷 없이 다이어그램 작성
@@ -45,7 +46,12 @@ flowchart TB
         direction TB
         AI["AI 도구들<br>(Claude Code, Codex, Cursor)"]
         GitHub["GitHub"]
+        ExternalInbox[("External Mailbox<br>/ Importer")]
+        PR["Markdown Update PR"]
+
         AI --> GitHub
+        ExternalInbox -. "PR 생성" .-> PR
+        PR --> GitHub
     end
 
     subgraph Internal["내부망(폐쇄망) — K8s Cluster"]
@@ -61,6 +67,8 @@ flowchart TB
         Slides["Slides Server"]
         SyncWebhook["Sync Webhook<br>Receiver"]
         Sync["Sync Engine<br>(CronJob)"]
+        Feedback["Outbound Feedback<br>Exporter (optional)"]
+        MailGateway[("Approved<br>Mail Gateway")]
 
         XWiki[("XWiki")]
         OP[("OpenProject")]
@@ -88,7 +96,12 @@ flowchart TB
         SyncWebhook -- "K8s Job 즉시 생성" --> Sync
         Sync --> XWiki
         Sync --> OP
+
+        OP -. "허용 필드 변경" .-> Feedback
+        Feedback -. "redacted + signed email" .-> MailGateway
     end
+
+    MailGateway -. "mail" .-> ExternalInbox
 ```
 
 ### 마이크로서비스 구성
@@ -102,6 +115,7 @@ flowchart TB
 | **Sync Webhook** | GitLab Push Event 수신 및 Sync Job 트리거 | Deployment |
 | **Sync Engine** | Git 변경 감지 → XWiki/OpenProject 동기화 | Python CLI + httpx | CronJob |
 | **Slides Server** | 출판된 프레젠테이션 HTML 정적 서빙 | Nginx | Deployment + PVC |
+| **Outbound Feedback Exporter** | OpenProject 제한 필드 변경 → 서명된 메일 이벤트 반출 (선택) | Python CLI + SMTP | CronJob 또는 Deployment |
 
 ## Viewer Service (마크다운 뷰어)
 
@@ -303,6 +317,17 @@ synctx/
 │   │           ├── xwiki.py
 │   │           └── openproject.py
 │   │
+│   ├── feedback/                      # Outbound Feedback Exporter (Phase 7 선택)
+│   │   ├── Dockerfile
+│   │   ├── pyproject.toml
+│   │   └── src/
+│   │       ├── cli.py                 # polling/exporter 엔트리포인트
+│   │       ├── exporter.py            # OpenProject 변경 감지
+│   │       ├── redactor.py            # allowlist/redaction
+│   │       ├── signer.py              # HMAC 서명
+│   │       ├── mailer.py              # approved SMTP 발송
+│   │       └── event_store.py         # event_id 중복 방지와 재전송 상태
+│   │
 │   ├── drawio/                        # Draw.io Service
 │   │   └── values-override.yaml      # jgraph/drawio 이미지 설정
 │   │
@@ -328,6 +353,7 @@ synctx/
 │           ├── marp-deployment.yaml
 │           ├── drawio-deployment.yaml
 │           ├── sync-cronjob.yaml
+│           ├── feedback-cronjob.yaml  # Phase 7 선택
 │           ├── slides-deployment.yaml
 │           ├── ingress.yaml
 │           ├── pvc.yaml

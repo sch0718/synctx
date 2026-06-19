@@ -16,6 +16,7 @@ synctx는 마이크로서비스 아키텍처로 구성되며, K8s 클러스터�
 | **Sync Webhook** | GitLab Push Event 수신 및 Sync Job 트리거 | Deployment |
 | **Sync Engine** | Git → XWiki/OpenProject 동기화 | CronJob |
 | **Slides Server** | 출판된 프레젠테이션 HTML 서빙 | Deployment + PVC |
+| **Outbound Feedback Exporter** | OpenProject 제한 필드 변경을 서명된 메일 이벤트로 반출 (선택 기능) | CronJob 또는 Deployment |
 
 ```mermaid
 flowchart TB
@@ -29,6 +30,11 @@ flowchart TB
     Slides["Slides Server"]
     SyncWebhook["Sync Webhook<br>Receiver"]
     Sync["Sync Engine<br>(CronJob)"]
+    Feedback["Outbound Feedback<br>Exporter (optional)"]
+    MailGateway[("Approved<br>Mail Gateway")]
+    ExternalInbox[("External Mailbox<br>/ Importer")]
+    PR["Markdown Update PR"]
+    ExternalGit[("External Git<br>Repository")]
 
     XWiki[("XWiki")]
     OP[("OpenProject")]
@@ -56,6 +62,13 @@ flowchart TB
     SyncWebhook -- "K8s Job 즉시 생성" --> Sync
     Sync --> XWiki
     Sync --> OP
+
+    OP -. "허용 필드 변경" .-> Feedback
+    Feedback -. "redacted + signed email" .-> MailGateway
+    MailGateway -. "mail" .-> ExternalInbox
+    ExternalInbox -. "PR 생성" .-> PR
+    PR -. "review + merge" .-> ExternalGit
+    ExternalGit -. "mirror" .-> GitLab
 ```
 
 ## 2. 핵심 설계 결정
@@ -75,11 +88,23 @@ flowchart TB
 
 ### 2.2 단방향 동기화 (외부→내부)
 
-양방향 동기화는 충돌 해결이 복잡하고, 내부→외부 반출이 보안 정책상 불가능하므로 단방향으로 한정한다.
+양방향 동기화는 충돌 해결이 복잡하고, 일반적인 내부→외부 반출이 보안 정책상 제한되므로 기본 동기화는 단방향으로 한정한다.
 
 - **소스 오브 트루스**: Git 저장소 (외부에서 작성, 내부 GitLab에 미러링)
 - **파생 데이터**: XWiki 페이지, OpenProject 이슈, 출판된 프레젠테이션 HTML
 - 내부에서 직접 수정하면 다음 동기화 시 덮어써짐
+
+#### 2.2.1 제한적 Outbound Feedback 예외
+
+운영 정책상 승인된 메일 게이트웨이를 통해 내부에서 외부로 메일 발송이 가능한 경우, OpenProject의 일부 상태 변경을 외부 개발 흐름에 전달하는 선택 기능을 둘 수 있다.
+이 기능은 양방향 동기화가 아니라 **서명된 이벤트 반출 + 외부 PR 생성**으로 한정한다.
+
+- 대상은 `synctx_external_key`가 있는 OpenProject Work Package로 제한한다.
+- 반출 필드는 allowlist 방식으로 `status`, `priority`, `version`, `due_date` 등 메타데이터만 허용한다.
+- 제목, 본문, 댓글, 첨부파일, 개인정보는 기본 반출 금지다.
+- 내부 Exporter는 redaction과 HMAC 서명을 적용한 JSON payload를 전용 외부 메일 계정으로 전송한다.
+- 외부 Importer는 서명과 중복 이벤트를 검증한 뒤 Markdown 변경 PR만 생성한다. main branch 직접 push는 금지한다.
+- PR merge 후 기존 외부→내부 Git 동기화가 다시 OpenProject에 반영되므로 최종 source of truth는 여전히 Git/Markdown이다.
 
 ### 2.3 Git diff 기반 증분 동기화
 
@@ -719,6 +744,18 @@ sync/src/
     └── openproject.py  # OpenProject REST API 클라이언트
 ```
 
+### 9.6 Outbound Feedback 모듈 (Phase 7 선택)
+
+```
+feedback/src/
+├── cli.py              # polling/exporter 실행 엔트리포인트
+├── exporter.py         # OpenProject 변경 감지 + 이벤트 생성
+├── redactor.py         # allowlist 필드 추출 및 금지 필드 제거
+├── signer.py           # HMAC 서명과 key_id 처리
+├── mailer.py           # approved SMTP relay 발송
+└── event_store.py      # event_id 중복 방지와 재전송 상태
+```
+
 ## 10. Helm Chart 설계
 
 ### 10.1 Chart 구조
@@ -747,6 +784,8 @@ helm/synctx/
     │
     ├── sync-cronjob.yaml           # 동기화 CronJob
     ├── sync-webhook.yaml           # 즉시 실행 트리거용 Webhook Receiver
+    │
+    ├── feedback-cronjob.yaml       # Phase 7 선택: Outbound Feedback Exporter
     │
     ├── slides-deployment.yaml
     ├── slides-service.yaml
@@ -950,7 +989,7 @@ helm upgrade synctx ./helm/synctx \
 | Marp CLI Chromium | 필요 | Marp PDF 변환 시 headless Chromium 사용, 이미지에 번들 |
 | XWiki Incoming Webhook | 미제공 | pull 모델(CronJob) 사용 |
 | XWiki 배치 API | 미제공 | 단건 PUT 병렬 실행 (`asyncio` + `httpx`) |
-| 양방향 동기화 | 미지원 | 보안 정책상 내부→외부 반출 불가 |
+| 양방향 동기화 | 미지원 | 단, 승인된 메일 게이트웨이를 통한 allowlist 기반 Outbound Feedback 이벤트 반출은 선택 기능으로 허용 가능 |
 | 한글 파일명 | 지원 | `git -c core.quotepath=false` |
 | 삭제 동기화 | 선택적 | 기본: 마킹 |
 | CDN/Slides 영속성 | PVC 필수 | NFS StorageClass 권장 (ReadWriteMany) |
@@ -1005,3 +1044,10 @@ helm upgrade synctx ./helm/synctx \
 1. **LLM 컨텍스트 하네스**: `.context/` 디렉토리 구조 설계 및 서로 다른 LLM(Cursor, Claude 등) 간 컨텍스트 공유 포맷(YAML/Markdown) 정의
 2. **스크럼 보드 뷰어**: Viewer Service에 마크다운 이슈 목록을 칸반(Kanban) 보드로 렌더링하는 프론트엔드 기능 추가
 3. **상태 변환 매핑 규칙 (단방향)**: 마크다운의 `status: in_progress` 값을 OpenProject의 내부 상태 코드로 변환하는 단방향 매핑 로직 고도화
+
+### Phase 7: 제한적 Outbound Feedback (선택)
+
+1. OpenProject 변경 이벤트 중 반출 허용 필드 allowlist 정의
+2. 내부 Exporter: 변경 감지, redaction, HMAC 서명, 메일 발송 구현
+3. 외부 Importer: 메일 수신, 서명 검증, replay 방지, Markdown 변경 PR 생성 구현
+4. PR 리뷰와 merge 후 기존 외부→내부 동기화로 재반영되는 폐루프 검증

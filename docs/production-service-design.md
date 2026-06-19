@@ -12,6 +12,7 @@
 - 내부 GitLab 미러의 Markdown 저장소를 웹에서 안정적으로 탐색하고 렌더링한다.
 - Mermaid, highlight.js, Marp, draw.io를 외부 인터넷 없이 사용할 수 있다.
 - Markdown 문서를 XWiki로, 이슈 문서를 OpenProject로 단방향 동기화한다.
+- 선택 기능으로 OpenProject의 허용된 메타데이터 변경만 서명된 메일 이벤트로 외부에 전달할 수 있다.
 - 동기화 실패가 일부 파일에만 영향을 주며, 다음 실행에서 안전하게 재시도된다.
 - 사용자, 관리자, 서비스 계정 권한이 분리된다.
 - 모든 외부 의존성은 버전과 해시가 고정되어 폐쇄망 반입이 재현 가능하다.
@@ -20,11 +21,14 @@
 
 다음은 첫 운영 버전에서 제외한다.
 
-- 내부 도구(XWiki/OpenProject)에서 GitHub 또는 외부망으로의 역동기화
+- 내부 도구(XWiki/OpenProject)에서 GitHub 또는 외부망으로의 일반 역동기화
 - 브라우저 기반 Markdown 편집기
 - draw.io 파일의 서버사이드 저장
 - 다중 테넌트 과금/조직 관리
 - XWiki/OpenProject의 모든 필드 자동 발견과 자동 매핑
+
+제한적 Outbound Feedback은 이 비목표의 예외이지만, Markdown을 직접 수정하거나 외부 저장소에 직접 push하지 않는다.
+외부에서는 검증된 메일 이벤트를 기반으로 PR만 생성한다.
 
 ## 2. 운영 아키텍처 결정
 
@@ -89,6 +93,38 @@ synctx_external_key = "{repo_id}:{normalized_path}"
 - OpenProject: 전용 custom field `synctx_external_key`를 우선 사용한다. custom field를 만들 수 없는 환경에서는 description marker를 fallback으로 사용한다.
 - Slides: published HTML에 `meta name="synctx:source"` 값을 기록한다.
 
+### 2.6 제한적 Outbound Feedback
+
+내부 OpenProject에서 티켓 상태가 바뀌었거나 제한된 메타데이터가 변경된 경우, 승인된 메일 게이트웨이를 통해 외부 개발 환경에 변경 이벤트를 전달할 수 있다.
+이 기능은 기본 비활성화이며, 운영 보안 검토 후 저장소별로 활성화한다.
+
+데이터 흐름:
+
+```mermaid
+sequenceDiagram
+    participant OP as OpenProject
+    participant Exporter as Outbound Feedback Exporter
+    participant Mail as Approved Mail Gateway
+    participant Importer as External Mail Importer
+    participant Git as External Git Repository
+
+    OP-->>Exporter: 1. webhook 또는 polling으로 변경 감지
+    Exporter->>Exporter: 2. synctx_external_key와 allowlist 필드 검증
+    Exporter->>Exporter: 3. PII/본문/댓글/첨부 제거 및 HMAC 서명
+    Exporter->>Mail: 4. signed JSON event 메일 발송
+    Mail-->>Importer: 5. 외부 메일함 수신
+    Importer->>Importer: 6. 서명, schema, replay 검증
+    Importer->>Git: 7. Markdown 변경 branch/PR 생성
+```
+
+원칙:
+
+- OpenProject의 전체 역동기화가 아니라 allowlist 필드의 변경 제안만 반출한다.
+- 외부 Importer는 main branch에 직접 push하지 않고 PR만 생성한다.
+- PR이 merge된 뒤 기존 외부→내부 Git 동기화가 OpenProject를 다시 갱신한다.
+- 제목, description, comment, attachment, 사용자 실명/메일은 기본 반출 금지다.
+- 상태 변경 사유가 필요하면 자유 텍스트가 아니라 사전 정의된 reason code만 보낸다.
+
 ## 3. 보안 설계
 
 ### 3.1 인증 경계
@@ -113,6 +149,7 @@ Ingress 우회 접근은 NetworkPolicy로 차단한다.
 | `publisher` | Marp PDF/HTML 변환, 슬라이드 출판 |
 | `cdn-admin` | CDN 파일 업로드, 삭제, manifest 갱신 |
 | `sync-admin` | dry-run 실행, 수동 sync 실행, 실패 재처리 |
+| `feedback-admin` | Outbound Feedback dry-run, 재전송, allowlist 검토 |
 | `platform-admin` | 설정 변경, Secret 연결, 배포 관리 |
 | `service` | 내부 서비스 간 refresh/webhook 호출 |
 
@@ -126,6 +163,7 @@ authz:
     publisher: ["dev-team"]
     cdn-admin: ["platform-team"]
     sync-admin: ["platform-team"]
+    feedback-admin: ["platform-team"]
     platform-admin: ["platform-admin"]
 ```
 
@@ -147,6 +185,9 @@ authz:
 | `GITLAB_WEBHOOK_SECRET` | Sync Webhook Receiver | GitLab push event 검증 |
 | `XWIKI_CREDENTIAL` | Sync Engine | page/attachment write |
 | `OPENPROJECT_API_KEY` | Sync Engine | work package write |
+| `OUTBOUND_SMTP_CREDENTIAL` | Outbound Feedback Exporter | approved mail gateway send |
+| `OUTBOUND_FEEDBACK_HMAC_KEY` | Outbound Feedback Exporter, External Importer | event signature |
+| `OUTBOUND_FEEDBACK_HASH_SALT` | Outbound Feedback Exporter | changed_by pseudonymization |
 | `SYNCTX_SERVICE_TOKEN` | internal API | service-to-service |
 
 모든 Secret은 env 또는 mounted file로만 전달한다. 로그에는 credential 값과 credential이 포함된 URL을 출력하지 않는다.
@@ -184,6 +225,7 @@ authz:
     publisher: ["dev-team"]
     cdn-admin: ["platform-team"]
     sync-admin: ["platform-team"]
+    feedback-admin: ["platform-team"]
     platform-admin: ["platform-admin"]
 
 repositories:
@@ -286,6 +328,28 @@ sync:
   on_delete: mark
   force_push_policy: full_rescan
   dry_run: false
+
+outbound_feedback:
+  enabled: false
+  transport: email
+  mode: pr_only
+  change_detection: polling
+  polling_interval_seconds: 300
+  allowed_targets: [openproject]
+  allowed_fields: [status, priority, version, due_date]
+  include_subject: false
+  include_description: false
+  include_comments: false
+  include_attachments: false
+  user_identity: hashed
+  require_hmac_signature: true
+  replay_window_minutes: 1440
+  outbound_mail:
+    smtp_host: "smtp-relay.internal"
+    smtp_port: 587
+    credential_env: OUTBOUND_SMTP_CREDENTIAL
+    from: "synctx-feedback@internal"
+    to: "synctx-feedback-import@example.com"
 ```
 
 `force_push_policy` 값은 다음 중 하나다.
@@ -295,6 +359,22 @@ sync:
 | `full_rescan` | `last_successful_sha`가 현재 HEAD의 ancestor가 아니면 watch path 전체를 재평가한다. 운영 기본값 |
 | `fail` | force-push를 감지하면 run을 실패 처리하고 운영자 개입을 요구한다 |
 | `ignore` | force-push를 무시하고 현재 state 기준으로 계속 진행한다. 운영 사용 금지 |
+
+`outbound_feedback`은 운영 기본값이 `enabled: false`다.
+활성화 시 `allowed_fields`에 없는 필드는 메일 payload에 포함하지 않고, `include_description/comments/attachments`는 운영에서 `false`만 허용한다.
+`change_detection`은 `polling` 또는 `webhook` 중 하나다. OpenProject webhook 사용 가능 여부를 운영 환경에서 검증하기 전까지 기본값은 `polling`이다.
+
+외부 Importer는 외부망에서 동작하는 별도 서비스이므로 내부 `.synctx.yaml`의 실행 설정에 포함하지 않는다.
+다만 외부 Importer에는 다음 권장 정책을 별도 설정으로 적용한다.
+
+```yaml
+external_importer_policy:
+  create_pr: true
+  direct_push: false
+  branch_prefix: "synctx-feedback/"
+  reject_unsigned_event: true
+  reject_duplicate_event_id: true
+```
 
 ## 5. Front Matter 스키마
 
@@ -628,6 +708,74 @@ Webhook Receiver 정책:
 수동 실행이 필요하면 `kubectl create job --from=cronjob/synctx-sync`를 사용한다.
 운영 UI/API는 Phase 4 이후 추가한다.
 
+### 7.6 Outbound Feedback Exporter
+
+Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전달해도 되는 메타데이터만 메일 이벤트로 내보내는 선택 서비스다.
+기본 배포는 비활성화하며, 활성화 시에도 저장소별 allowlist를 요구한다.
+
+| Method | Path | 권한 | 설명 |
+|--------|------|------|------|
+| GET | `/api/feedback/events?repo_id=&since=` | feedback-admin | 최근 outbound event 조회 |
+| POST | `/api/feedback/dry-run` | feedback-admin | 반출 대상 변경과 redaction 결과 미리보기 |
+| POST | `/api/feedback/resend/{event_id}` | feedback-admin | 실패한 이벤트 재전송 |
+
+운영 정책:
+
+- `synctx_external_key`가 없는 Work Package는 반출하지 않는다.
+- `allowed_fields` 외 변경은 event summary에 `ignored_fields`로만 기록하고 값은 제거한다.
+- 메일 제목은 고정 prefix와 `event_id`만 포함한다.
+- 메일 본문은 JSON payload와 detached HMAC signature만 포함한다.
+- 동일 `event_id`는 한 번만 처리한다. 외부 Importer는 처리한 `event_id`를 저장해 replay를 차단한다.
+- 외부 Importer는 Markdown 수정 branch와 PR을 생성하고, PR 본문에 원본 메일 event id와 검증 결과를 기록한다.
+- HMAC key는 `key_id`로 식별한다. Exporter와 외부 Importer는 active key와 previous key를 동시에 보관하며, key rotation 기간에는 previous key로 서명된 이벤트도 검증만 허용한다.
+- key rotation overlap은 `replay_window_minutes`보다 길어야 한다. 예를 들어 replay window가 1440분이면 previous key는 최소 24시간 이상 검증 가능 상태로 유지한다.
+- 외부 Importer 쪽 HMAC secret은 운영자가 승인된 외부 secret store에 수동 주입한다. 메일 본문이나 Git 저장소에는 key material을 절대 포함하지 않는다.
+- `changed_by`는 OpenProject 사용자 ID 또는 login을 그대로 보내지 않고, `OUTBOUND_FEEDBACK_HMAC_KEY`와 별도의 `OUTBOUND_FEEDBACK_HASH_SALT`로 HMAC-SHA256 처리한 pseudonymous identifier로 기록한다. salt 없이 단순 SHA-256을 사용하지 않는다.
+
+이벤트 payload 예시:
+
+```json
+{
+  "schema_version": 1,
+  "event_id": "op-feedback-20260619-000123",
+  "repo_id": "project-docs",
+  "external_key": "project-docs:issues/TASK-001.md",
+  "source": "openproject",
+  "event_type": "work_package.updated",
+  "changed_at": "2026-06-19T10:30:00+09:00",
+  "changed_by": "sha256:...",
+  "allowed_changes": {
+    "status": {
+      "from": "in_progress",
+      "to": "done"
+    },
+    "priority": {
+      "from": "normal",
+      "to": "high"
+    }
+  },
+  "ignored_fields": ["description", "comments"],
+  "redaction": {
+    "subject_included": false,
+    "description_included": false,
+    "comments_included": false,
+    "attachments_included": false
+  },
+  "signature": {
+    "alg": "HMAC-SHA256",
+    "key_id": "feedback-key-2026-06",
+    "value": "base64url:..."
+  }
+}
+```
+
+외부 Importer의 Markdown 반영 규칙:
+
+- `external_key`로 대상 Markdown 파일을 찾는다.
+- front matter의 `status`, `priority`, `version`, `due_date`만 수정한다.
+- 대상 파일이 없거나 현재 front matter와 event의 `from` 값이 다르면 PR에 `synctx-feedback-conflict` label을 붙이고 자동 수정하지 않는다.
+- 자유 텍스트 요건 변경은 PR 본문에 "내부에서 요건 변경 요청 감지"만 표시하고, 실제 상세 내용은 내부 OpenProject 링크를 참조하도록 한다.
+
 ## 8. 배포 설계
 
 ### 8.1 이미지와 의존성 고정
@@ -738,6 +886,10 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `synctx_sync_failures_total`
 - `synctx_sync_last_success_timestamp`
 - `synctx_cdn_bytes_served_total`
+- `synctx_feedback_events_total`
+- `synctx_feedback_redacted_fields_total`
+- `synctx_feedback_mail_failures_total`
+- `synctx_feedback_last_success_timestamp`
 
 ### 9.3 Alert
 
@@ -748,6 +900,8 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - XWiki/OpenProject auth error 발생
 - Marp publish push 실패
 - Slides Server sidecar pull 실패 또는 worktree 손상
+- Outbound Feedback mail send failure 3회 이상
+- Outbound Feedback redaction failure 발생
 - PVC 사용량 80% 초과
 - readiness failure 5분 지속
 
@@ -762,6 +916,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 | Integration | local Git repo + FastAPI TestClient | API 정상/오류 흐름 검증 |
 | E2E | Kind 또는 dev cluster | Viewer 렌더링, Marp publish, Sync dry-run |
 | Security | path traversal, upload validation, authz | 권한 없는 요청 403 |
+| Outbound Feedback | fake OpenProject + fake SMTP + fake importer | redaction, signature, replay, PR 생성 검증 |
 | Offline build | vendor artifact only | 외부 네트워크 없이 이미지 빌드 |
 
 ### 10.2 운영 전 수용 기준
@@ -773,6 +928,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `latest` 태그가 values-production에 존재하지 않는다.
 - CDN 업로드 권한 없는 사용자는 업로드할 수 없다.
 - Marp publish 결과가 Git repo commit과 Slides URL에서 동일하게 확인된다.
+- Outbound Feedback 활성화 시 allowlist 밖 필드와 본문/댓글/첨부가 메일 payload에 포함되지 않는다.
 
 ## 11. 단계별 개발 체크리스트
 
@@ -893,6 +1049,27 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - Version 문서의 `issues` 목록으로 Viewer 보드가 렌더링된다.
 - Task version과 Version manifest 불일치가 dry-run report에 표시된다.
 
+### Phase 7: 제한적 Outbound Feedback (선택)
+
+- [ ] 반출 허용 필드 allowlist와 금지 필드 정책 확정
+- [ ] OpenProject webhook 지원 여부 검증 및 변경 감지 방식 확정. 기본 구현은 polling(CronJob)
+- [ ] Outbound Feedback Exporter redaction 구현
+- [ ] HMAC signature와 key rotation 구현
+- [ ] `changed_by` pseudonymization용 salt 관리 구현
+- [ ] approved SMTP relay 연동 구현
+- [ ] outbound event store와 replay 방지 구현
+- [ ] External Mail Importer 수신/검증 구현
+- [ ] Markdown front matter 변경 PR 생성 구현
+- [ ] conflict label과 수동 리뷰 흐름 구현
+- [ ] 감사 로그와 운영 runbook 작성
+
+완료 기준:
+
+- description/comment/attachment가 포함된 OpenProject 변경 이벤트에서도 메일 payload에는 허용 필드만 포함된다.
+- HMAC signature가 틀리거나 중복 `event_id`인 메일은 외부 Importer가 거부한다.
+- 외부 Importer는 main branch에 직접 push하지 않고 PR만 생성한다.
+- PR merge 후 기존 외부→내부 sync로 OpenProject가 idempotent하게 갱신된다.
+
 ## 12. Runbook 초안
 
 ### 12.1 Sync 실패
@@ -925,6 +1102,16 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 4. worktree 손상이 의심되면 pod를 재시작하여 clean clone으로 복구
 5. 특정 publish path만 404이면 Marp publish commit에 해당 파일이 포함되었는지 확인
 
+### 12.5 Outbound Feedback 장애
+
+1. `synctx_feedback_last_success_timestamp`와 `synctx_feedback_mail_failures_total` 확인
+2. SMTP 실패면 approved mail gateway 접속, 계정 잠금, `OUTBOUND_SMTP_CREDENTIAL` 만료 여부 확인
+3. redaction failure면 실패 event의 `ignored_fields`와 allowlist 설정을 확인하고, 본문/댓글/첨부가 payload에 포함되지 않았는지 검증
+4. HMAC 검증 실패가 외부 Importer에서 발생하면 `key_id`, active/previous key 배포 상태, key rotation overlap이 `replay_window_minutes` 이상인지 확인
+5. replay reject가 증가하면 중복 메일 발송 또는 Importer event store 손상 여부 확인
+6. `changed_by`가 평문 또는 단순 SHA-256으로 기록되면 즉시 발송을 중단하고 `OUTBOUND_FEEDBACK_HASH_SALT` 설정과 redaction 테스트를 재검증
+7. 복구 후 `/api/feedback/resend/{event_id}`는 redaction dry-run 결과를 확인한 뒤 `feedback-admin` 권한으로만 실행
+
 ## 13. 남은 외부 검증 항목
 
 다음은 구현 전에 실제 운영 환경에서 확인해야 한다.
@@ -934,6 +1121,9 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - OpenProject API token 권한 범위
 - OpenProject status/type/priority id
 - OpenProject custom field 생성 권한
+- OpenProject webhook 지원 여부와 Work Package update event payload 형식. webhook 미지원 또는 payload 부족 시 Outbound Feedback은 polling(CronJob)으로 구현
 - GitLab mirror 지연 시간과 webhook 사용 가능 여부
+- approved SMTP relay의 첨부/본문 필터링 정책, 발신 계정 감사 로그 제공 여부
+- 외부 Importer가 사용할 Git provider API 권한, PR 생성 권한, branch protection 정책
 - K8s StorageClass의 RWX/RWO 지원과 NFS flock/Lease 정책
 - 사내 Ingress 인증 헤더와 그룹 포맷
