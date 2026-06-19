@@ -133,11 +133,16 @@ workspace/
 ├── .context/                 → LLM 간 공유되는 시스템 프롬프트 및 글로벌 컨텍스트 (동기화 제외)
 │   ├── system_prompt.md      → AI 에이전트의 역할, 코딩 컨벤션, 제약사항
 │   ├── project_state.yaml    → 현재 프로젝트 진행 단계, 주요 마일스톤
+│   ├── glossary.md           → 도메인 용어와 금지/권장 표현
+│   ├── decision-log.md       → 주요 의사결정과 근거
+│   ├── blueprints/           → 문서/요건/작업 작성 표준 템플릿
 │   └── memory/               → LLM이 남기는 작업 로그 및 트러블슈팅 기록
 ├── board/
 │   └── sprint-1.md           → Viewer에서 칸반 보드로 렌더링, OpenProject 버전/스프린트로 매핑
 ├── issues/
 │   └── TASK-001.md           → OpenProject: Work Package (상태, 담당자 동기화)
+├── reports/
+│   └── harness/              → Harness Validator 결과(JSON/Markdown)
 └── docs/
     └── 아키텍처/
         └── 시스템-설계.md        → XWiki: Space=아키텍처, Page=시스템-설계
@@ -201,6 +206,34 @@ paginate: true
 synctx:
   publish_path: "slides/아키텍처"    # 출판 경로 (선택)
 ---
+```
+
+#### 2.5.1 Harness Validator와 agent-readiness
+
+하네스 엔지니어링은 문서 규격을 만드는 것에서 끝나지 않고, AI가 만든 산출물이 실제로 사람과 내부 도구가 소비할 수 있는지 검증해야 한다.
+이를 위해 Sync Engine과 별도로 실행 가능한 `synctx validate-harness` 명령을 제공한다.
+
+검증 대상:
+
+- `.context/` 필수 파일 존재와 YAML/Markdown 형식
+- Front Matter schema와 필수 필드
+- `issues/` Task 문서와 `board/` Version manifest의 관계
+- `synctx.version`과 Version 문서 `issues` 목록의 불일치
+- OpenProject/XWiki routing 가능성
+- 문서 제목, 요약, 결정 사항, TODO, 출처 링크 등 agent-readiness 품질
+- Mermaid, 링크, 이미지, 첨부 경로의 유효성
+
+Hermes류 multi-agent 문서 진단 프레임워크의 아이디어는 여기서 **외부 런타임 의존성**이 아니라 검증 패턴으로만 차용한다.
+즉, synctx의 핵심 동기화 경로는 LLM 추론에 의존하지 않고, 필요 시 하네스 검증 리포트에 AI 수정 제안만 추가한다.
+
+출력:
+
+```text
+reports/harness/
+├── latest.json                 # 기계 처리용 결과
+├── latest.md                   # 사람 검토용 요약
+└── fixes/
+    └── suggested-patches.md    # AI 또는 사람이 적용할 수정 제안
 ```
 
 ### 2.6 내부 CDN을 통한 라이브러리 서빙
@@ -738,6 +771,13 @@ sync/src/
 │   ├── convert()
 │   ├── sync_to_targets()
 │   └── update_state()
+├── harness_validator.py # synctx validate-harness
+├── harness/
+│   ├── context_schema.py
+│   ├── blueprint_linter.py
+│   ├── board_checker.py
+│   ├── agent_readiness.py
+│   └── report_writer.py
 ├── path_mapper.py      # 경로 → 도구 리소스 매핑
 └── targets/
     ├── xwiki.py        # XWiki REST API 클라이언트
@@ -1042,8 +1082,10 @@ helm upgrade synctx ./helm/synctx \
 ### Phase 6: 하네스 엔지니어링 및 스크럼 보드 (OKF)
 
 1. **LLM 컨텍스트 하네스**: `.context/` 디렉토리 구조 설계 및 서로 다른 LLM(Cursor, Claude 등) 간 컨텍스트 공유 포맷(YAML/Markdown) 정의
-2. **스크럼 보드 뷰어**: Viewer Service에 마크다운 이슈 목록을 칸반(Kanban) 보드로 렌더링하는 프론트엔드 기능 추가
-3. **상태 변환 매핑 규칙 (단방향)**: 마크다운의 `status: in_progress` 값을 OpenProject의 내부 상태 코드로 변환하는 단방향 매핑 로직 고도화
+2. **Harness Validator**: `.context`, Front Matter, board/issue 관계, agent-readiness를 검사하는 `synctx validate-harness` CLI 구현
+3. **Hermes-style 진단 패턴**: 외부 Hermes 런타임을 의존하지 않고 문서 smell/agent-readiness linter 규칙으로 선택 적용
+4. **스크럼 보드 뷰어**: Viewer Service에 마크다운 이슈 목록을 칸반(Kanban) 보드로 렌더링하는 프론트엔드 기능 추가
+5. **상태 변환 매핑 규칙 (단방향)**: 마크다운의 `status: in_progress` 값을 OpenProject의 내부 상태 코드로 변환하는 단방향 매핑 로직 고도화
 
 ### Phase 7: 제한적 Outbound Feedback (선택)
 

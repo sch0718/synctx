@@ -265,8 +265,11 @@ synctx는 단순한 동기화 도구를 넘어, **AI와 사람이 지식을 공�
 - **OKF (Orchestrated Knowledge Flow)**: 지식의 생성(AI/사람) → 저장(Git/Markdown) → 소비(XWiki/OpenProject/Viewer)로 이어지는 흐름을 체계적으로 오케스트레이션합니다. 서로 다른 LLM 간에도 마크다운 문서를 통해 컨텍스트가 끊김 없이 흐릅니다.
 - **Harness Engineering**: AI가 쉽게 읽고 쓸 수 있도록 마크다운 문서의 구조(Front Matter, Task List 등)를 규격화합니다. 이 규격화된 문서는 AI에게는 '프롬프트 컨텍스트'가 되고, 사람에게는 '스크럼 보드'나 '기술 문서'가 됩니다.
 - **Context Routing**: 마크다운 파일의 메타데이터(Front Matter)를 분석하여, 이슈 트래킹 용도면 **OpenProject**로, 지식 공유 및 설계 용도면 **XWiki**로 자동 라우팅하여 동기화합니다.
+- **Harness Validator**: `.context/`, Front Matter, board/issue 관계, 문서 agent-readiness를 검사하여 AI가 만든 산출물이 사람과 내부 도구 모두에서 소비 가능한지 검증합니다.
 
 ## 프로젝트 구조 (계획)
+
+### synctx 구현 저장소
 
 ```
 synctx/
@@ -311,6 +314,13 @@ synctx/
 │   │   └── src/
 │   │       ├── cli.py                 # CLI 엔트리포인트
 │   │       ├── sync_engine.py         # 동기화 오케스트레이션
+│   │       ├── harness_validator.py   # 하네스 규격/agent-readiness 검증
+│   │       ├── harness/
+│   │       │   ├── context_schema.py
+│   │       │   ├── blueprint_linter.py
+│   │       │   ├── board_checker.py
+│   │       │   ├── agent_readiness.py
+│   │       │   └── report_writer.py
 │   │       ├── path_mapper.py         # 경로 매핑
 │   │       ├── git_manager.py         # Git 변경 감지
 │   │       └── targets/               # 동기화 대상
@@ -367,6 +377,23 @@ synctx/
 └── scripts/
     ├── download-cdn-vendor.sh         # CDN 벤더 파일 다운로드
     └── pull-and-save-images.sh        # Docker 이미지 오프라인 반입
+```
+
+### 사용자 workspace 하네스 규격
+
+```text
+workspace/
+├── .context/                          # LLM 공유 하네스 컨텍스트
+│   ├── system_prompt.md
+│   ├── project_state.yaml
+│   ├── glossary.md
+│   ├── decision-log.md
+│   └── blueprints/                    # 작업/문서/요건 작성 표준
+├── board/                             # 스프린트/버전 manifest
+├── issues/                            # OpenProject Work Package source
+├── docs/                              # XWiki source
+└── reports/
+    └── harness/                       # validate-harness 결과
 ```
 
 ## 기술 스택

@@ -329,6 +329,23 @@ sync:
   force_push_policy: full_rescan
   dry_run: false
 
+harness:
+  context_path: ".context"
+  reports_path: "reports/harness"
+  required_context_files:
+    - system_prompt.md
+    - project_state.yaml
+    - glossary.md
+    - decision-log.md
+  blueprint_path: ".context/blueprints"
+  agent_readiness:
+    require_title: true
+    require_summary: true
+    require_decisions_section: true
+    require_todo_owner: true
+    check_links: true
+    check_mermaid: true
+
 outbound_feedback:
   enabled: false
   transport: email
@@ -916,6 +933,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 | Integration | local Git repo + FastAPI TestClient | API 정상/오류 흐름 검증 |
 | E2E | Kind 또는 dev cluster | Viewer 렌더링, Marp publish, Sync dry-run |
 | Security | path traversal, upload validation, authz | 권한 없는 요청 403 |
+| Harness | sample `.context` + issues/board/docs | context schema, blueprint, agent-readiness, board 관계 검증 |
 | Outbound Feedback | fake OpenProject + fake SMTP + fake importer | redaction, signature, replay, PR 생성 검증 |
 | Offline build | vendor artifact only | 외부 네트워크 없이 이미지 빌드 |
 
@@ -928,6 +946,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `latest` 태그가 values-production에 존재하지 않는다.
 - CDN 업로드 권한 없는 사용자는 업로드할 수 없다.
 - Marp publish 결과가 Git repo commit과 Slides URL에서 동일하게 확인된다.
+- `synctx validate-harness`가 sample workspace의 오류를 JSON/Markdown report로 재현 가능하게 출력한다.
 - Outbound Feedback 활성화 시 allowlist 밖 필드와 본문/댓글/첨부가 메일 payload에 포함되지 않는다.
 
 ## 11. 단계별 개발 체크리스트
@@ -1038,6 +1057,11 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 - [ ] `.context/` 디렉토리 규격 작성
 - [ ] LLM 간 공유 컨텍스트 YAML/Markdown 포맷 작성
+- [ ] `.context/blueprints/`에 문서/요건/작업 작성 표준 템플릿 작성
+- [ ] Harness Validator CLI(`synctx validate-harness`) 구현
+- [ ] agent-readiness 검사 구현(제목, 요약, 결정사항, TODO owner, 링크, Mermaid)
+- [ ] Hermes-style 문서 진단 패턴을 외부 런타임 의존성 없이 linter 규칙으로 구현
+- [ ] `reports/harness/latest.json`과 `latest.md` 출력 구현
 - [ ] Viewer Service 칸반 보드 렌더링 구현
 - [ ] Version 문서의 `issues` 목록 검증 구현
 - [ ] Task `version` 필드와 Version 문서 `issues` 목록 불일치 리포트 구현
@@ -1045,6 +1069,8 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 완료 기준:
 
+- `.context` 필수 파일이 누락되면 Harness Validator가 실패하고 수정 가능한 report를 남긴다.
+- 문서가 agent-readiness 기준을 만족하지 못하면 파일 경로, 규칙 ID, 수정 제안이 report에 기록된다.
 - Task의 `synctx.version`을 기준으로 OpenProject version 연결이 동기화된다.
 - Version 문서의 `issues` 목록으로 Viewer 보드가 렌더링된다.
 - Task version과 Version manifest 불일치가 dry-run report에 표시된다.
