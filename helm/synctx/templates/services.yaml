@@ -5,6 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/name: viewer
     app.kubernetes.io/instance: {{ .Release.Name }}
+    synctx/metrics: "true"
 spec:
   type: ClusterIP
   selector:
@@ -22,6 +23,7 @@ metadata:
   labels:
     app.kubernetes.io/name: cdn
     app.kubernetes.io/instance: {{ .Release.Name }}
+    synctx/metrics: "true"
 spec:
   type: ClusterIP
   selector:
@@ -39,6 +41,7 @@ metadata:
   labels:
     app.kubernetes.io/name: marp
     app.kubernetes.io/instance: {{ .Release.Name }}
+    synctx/metrics: "true"
 spec:
   type: ClusterIP
   selector:
