@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="ko" data-color-scheme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>synctx Viewer</title>
+    <style>
+        /* ── Design Tokens (example-fe 기반) ── */
+        :root {
+            --primary: #6950E8;
+            --primary-light: #A996F8;
+            --primary-lighter: #E4DCFD;
+            --primary-dark: #3828A7;
+
+            --grey-50: #FCFDFD;
+            --grey-100: #F4F6F8;
+            --grey-200: #E9ECEF;
+            --grey-300: #DFE3E8;
+            --grey-400: #C4CDD5;
+            --grey-500: #919EAB;
+            --grey-600: #637381;
+            --grey-700: #454F5B;
+            --grey-800: #1C252E;
+            --grey-900: #141A21;
+
+            --bg-default: #FFFFFF;
+            --bg-neutral: #F4F6F8;
+            --bg-paper: #FFFFFF;
+            --text-primary: #1C252E;
+            --text-secondary: #637381;
+            --text-disabled: #919EAB;
+
+            --success: #22C55E;
+            --warning: #FFAB00;
+            --error: #FF5630;
+            --info: #00B8D9;
+
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+            --shadow-dropdown: 0 0 2px 0 rgba(145,158,171,0.24), 0 20px 40px -4px rgba(145,158,171,0.24);
+
+            --font-primary: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --font-mono: 'D2Coding', 'SF Mono', 'Fira Code', monospace;
+
+            --nav-width: 320px;
+            --header-height: 64px;
+            --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        [data-color-scheme="dark"] {
+            --bg-default: #141A21;
+            --bg-neutral: #1C252E;
+            --bg-paper: #1C252E;
+            --text-primary: #FFFFFF;
+            --text-secondary: #919EAB;
+            --text-disabled: #637381;
+            --shadow-card: 0 0 2px 0 rgba(0,0,0,0.2), 0 12px 24px -4px rgba(0,0,0,0.12);
+        }
+
+        /* ── Reset & Base ── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-primary);
+            background: var(--bg-default);
+            color: var(--text-primary);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Header ── */
+        .header {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: var(--header-height);
+            background: var(--bg-paper);
+            border-bottom: 1px solid var(--grey-200);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 24px;
+            z-index: 100;
+            backdrop-filter: blur(6px);
+        }
+
+        [data-color-scheme="dark"] .header {
+            border-bottom-color: var(--grey-700);
+        }
+
+        .header-left {
+            display: flex; align-items: center; gap: 12px;
+        }
+
+        .header-logo {
+            font-size: 18px; font-weight: 700;
+            color: var(--primary);
+            letter-spacing: -0.5px;
+        }
+
+        .header-logo span {
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        .header-actions {
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        .btn-icon {
+            width: 40px; height: 40px;
+            border: none; border-radius: 50%;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: background var(--transition);
+            font-size: 18px;
+        }
+
+        .btn-icon:hover {
+            background: var(--grey-100);
+        }
+
+        [data-color-scheme="dark"] .btn-icon:hover {
+            background: var(--grey-700);
+        }
+
+        /* ── Layout ── */
+        .layout {
+            display: flex;
+            padding-top: var(--header-height);
+            min-height: 100vh;
+        }
+
+        /* ── Sidebar (Repo List) ── */
+        .sidebar {
+            width: var(--nav-width);
+            background: var(--bg-paper);
+            border-right: 1px solid var(--grey-200);
+            position: fixed;
+            top: var(--header-height);
+            bottom: 0;
+            left: 0;
+            overflow-y: auto;
+            padding: 16px 0;
+            z-index: 50;
+        }
+
+        [data-color-scheme="dark"] .sidebar {
+            border-right-color: var(--grey-700);
+        }
+
+        .sidebar-section {
+            padding: 0 16px;
+            margin-bottom: 8px;
+        }
+
+        .sidebar-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.1px;
+            color: var(--text-disabled);
+            padding: 8px 16px;
+        }
+
+        .repo-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 16px;
+            margin: 2px 8px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: all var(--transition);
+            text-decoration: none;
+            color: var(--text-primary);
+        }
+
+        .repo-item:hover {
+            background: var(--grey-100);
+        }
+
+        [data-color-scheme="dark"] .repo-item:hover {
+            background: var(--grey-700);
+        }
+
+        .repo-item.active {
+            background: var(--primary-lighter);
+            color: var(--primary-dark);
+        }
+
+        [data-color-scheme="dark"] .repo-item.active {
+            background: rgba(105, 80, 232, 0.16);
+            color: var(--primary-light);
+        }
+
+        .repo-icon {
+            width: 36px; height: 36px;
+            border-radius: var(--radius-sm);
+            background: var(--primary-lighter);
+            color: var(--primary);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px; font-weight: 700;
+            flex-shrink: 0;
+        }
+
+        .repo-item.active .repo-icon {
+            background: var(--primary);
+            color: white;
+        }
+
+        .repo-info {
+            min-width: 0; flex: 1;
+        }
+
+        .repo-name {
+            font-size: 14px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .repo-url {
+            font-size: 12px;
+            color: var(--text-disabled);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ── Main Content ── */
+        .main {
+            flex: 1;
+            margin-left: var(--nav-width);
+            padding: 24px;
+        }
+
+        /* ── Breadcrumb ── */
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+        }
+
+        .breadcrumb a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color var(--transition);
+        }
+
+        .breadcrumb a:hover {
+            color: var(--primary);
+        }
+
+        .breadcrumb .current {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .breadcrumb .sep {
+            color: var(--text-disabled);
+            font-size: 12px;
+        }
+
+        /* ── Repo Header Card ── */
+        .repo-header {
+            background: var(--bg-paper);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-card);
+            padding: 24px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .repo-header-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .repo-header-icon {
+            width: 48px; height: 48px;
+            border-radius: var(--radius-md);
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px; font-weight: 700;
+        }
+
+        .repo-header-title {
+            font-size: 20px; font-weight: 700;
+        }
+
+        .repo-header-meta {
+            font-size: 13px; color: var(--text-secondary);
+            margin-top: 2px;
+            font-family: var(--font-mono);
+        }
+
+        .repo-stats {
+            display: flex; gap: 16px;
+        }
+
+        .stat {
+            text-align: center;
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-neutral);
+        }
+
+        .stat-value {
+            font-size: 20px; font-weight: 700; color: var(--primary);
+        }
+
+        .stat-label {
+            font-size: 11px; color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* ── File Tree Card ── */
+        .tree-card {
+            background: var(--bg-paper);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-card);
+            overflow: hidden;
+        }
+
+        .tree-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--grey-200);
+        }
+
+        [data-color-scheme="dark"] .tree-toolbar {
+            border-bottom-color: var(--grey-700);
+        }
+
+        .tree-toolbar-left {
+            display: flex; align-items: center; gap: 12px;
+        }
+
+        .tree-toolbar-title {
+            font-size: 14px; font-weight: 600;
+        }
+
+        .search-box {
+            display: flex; align-items: center; gap: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            border: 1px solid var(--grey-300);
+            background: var(--bg-neutral);
+            transition: all var(--transition);
+            width: 240px;
+        }
+
+        .search-box:focus-within {
+            border-color: var(--primary);
+            background: var(--bg-paper);
+            box-shadow: 0 0 0 2px var(--primary-lighter);
+        }
+
+        .search-box input {
+            border: none; outline: none;
+            background: transparent;
+            font-size: 13px;
+            color: var(--text-primary);
+            width: 100%;
+            font-family: var(--font-primary);
+        }
+
+        .search-box input::placeholder {
+            color: var(--text-disabled);
+        }
+
+        .search-icon {
+            color: var(--text-disabled);
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        /* ── file-tree 스타일 오버라이드 ── */
+        .tree-container {
+            padding: 8px 0;
+        }
+
+        .tree-container file-tree {
+            --ft-bg: var(--bg-paper);
+            --ft-color: var(--text-primary);
+            --ft-hover: var(--grey-100);
+            --ft-selected: var(--primary-lighter);
+            font-family: var(--font-primary);
+            font-size: 14px;
+        }
+
+        [data-color-scheme="dark"] .tree-container file-tree {
+            --ft-hover: var(--grey-700);
+            --ft-selected: rgba(105, 80, 232, 0.16);
+        }
+
+        /* file-tree가 로드되지 않았을 때의 폴백 트리 */
+        .fallback-tree {
+            padding: 8px 16px;
+            list-style: none;
+        }
+
+        .fallback-tree ul {
+            list-style: none;
+            padding-left: 20px;
+        }
+
+        .fallback-tree li {
+            position: relative;
+        }
+
+        .tree-node {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 12px;
+            margin: 1px 4px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background var(--transition);
+            font-size: 14px;
+            text-decoration: none;
+            color: var(--text-primary);
+            user-select: none;
+        }
+
+        .tree-node:hover {
+            background: var(--grey-100);
+        }
+
+        [data-color-scheme="dark"] .tree-node:hover {
+            background: var(--grey-700);
+        }
+
+        .tree-node.selected {
+            background: var(--primary-lighter);
+            color: var(--primary-dark);
+        }
+
+        .node-icon {
+            width: 20px;
+            text-align: center;
+            flex-shrink: 0;
+            font-size: 14px;
+        }
+
+        .node-icon.folder { color: var(--primary); }
+        .node-icon.file { color: var(--text-disabled); }
+        .node-icon.md { color: var(--info); }
+        .node-icon.yaml { color: var(--warning); }
+        .node-icon.py { color: #3572A5; }
+
+        .node-name {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .node-size {
+            font-size: 12px;
+            color: var(--text-disabled);
+            font-family: var(--font-mono);
+            flex-shrink: 0;
+        }
+
+        .tree-toggle {
+            width: 16px; height: 16px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            color: var(--text-disabled);
+            transition: transform var(--transition);
+            flex-shrink: 0;
+            font-size: 10px;
+        }
+
+        .tree-toggle.open {
+            transform: rotate(90deg);
+        }
+
+        details > summary { list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
+
+        details > ul {
+            border-left: 1px solid var(--grey-200);
+            margin-left: 26px;
+        }
+
+        [data-color-scheme="dark"] details > ul {
+            border-left-color: var(--grey-700);
+        }
+
+        /* ── Empty State ── */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 80px 40px;
+            text-align: center;
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-title {
+            font-size: 18px; font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .empty-desc {
+            font-size: 14px; color: var(--text-secondary);
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main { margin-left: 0; }
+            .repo-header { flex-direction: column; gap: 16px; }
+            .repo-stats { width: 100%; justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="header-logo">synctx <span>viewer</span></div>
+        </div>
+        <div class="header-actions">
+            <button class="btn-icon" onclick="toggleSearch()" title="Search">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </button>
+            <button class="btn-icon" onclick="toggleTheme()" title="Toggle theme" id="theme-toggle">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <div class="layout">
+        <!-- Sidebar: Repo List -->
+        <nav class="sidebar">
+            <div class="sidebar-title">Repositories</div>
+
+            <a class="repo-item active" data-repo="synctx-docs" onclick="selectRepo(this)">
+                <div class="repo-icon">S</div>
+                <div class="repo-info">
+                    <div class="repo-name">synctx docs</div>
+                    <div class="repo-url">github.com/sch0718/synctx</div>
+                </div>
+            </a>
+
+            <a class="repo-item" data-repo="example-system" onclick="selectRepo(this)">
+                <div class="repo-icon">R</div>
+                <div class="repo-info">
+                    <div class="repo-name">example system</div>
+                    <div class="repo-url">gitlab.internal/team/example-system</div>
+                </div>
+            </a>
+
+            <a class="repo-item" data-repo="api-gateway" onclick="selectRepo(this)">
+                <div class="repo-icon">A</div>
+                <div class="repo-info">
+                    <div class="repo-name">api gateway</div>
+                    <div class="repo-url">gitlab.internal/team/api-gateway</div>
+                </div>
+            </a>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Breadcrumb -->
+            <div class="breadcrumb">
+                <a href="/view">Repositories</a>
+                <span class="sep">›</span>
+                <span class="current">synctx docs</span>
+            </div>
+
+            <!-- Repo Header -->
+            <div class="repo-header">
+                <div class="repo-header-info">
+                    <div class="repo-header-icon">S</div>
+                    <div>
+                        <div class="repo-header-title">synctx docs</div>
+                        <div class="repo-header-meta">github.com/sch0718/synctx</div>
+                    </div>
+                </div>
+                <div class="repo-stats">
+                    <div class="stat">
+                        <div class="stat-value">24</div>
+                        <div class="stat-label">Files</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value">6</div>
+                        <div class="stat-label">Folders</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Tree -->
+            <div class="tree-card">
+                <div class="tree-toolbar">
+                    <div class="tree-toolbar-left">
+                        <span class="tree-toolbar-title">Files</span>
+                    </div>
+                    <div class="search-box">
+                        <span class="search-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                        </span>
+                        <input type="text" placeholder="Filter files..." id="file-search" oninput="filterTree(this.value)">
+                    </div>
+                </div>
+
+                <div class="tree-container">
+                    <ul class="fallback-tree" id="file-tree">
+                        <!-- docs/ -->
+                        <li>
+                            <details open>
+                                <summary>
+                                    <div class="tree-node">
+                                        <span class="tree-toggle open">▶</span>
+                                        <span class="node-icon folder">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                                        </span>
+                                        <span class="node-name">docs</span>
+                                    </div>
+                                </summary>
+                                <ul>
+                                    <li><a class="tree-node" href="/view/synctx-docs/docs/architecture.md">
+                                        <span style="width:16px"></span>
+                                        <span class="node-icon md">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                        </span>
+                                        <span class="node-name">architecture.md</span>
+                                        <span class="node-size">12.4 KB</span>
+                                    </a></li>
+                                    <li><a class="tree-node" href="/view/synctx-docs/docs/local-development.md">
+                                        <span style="width:16px"></span>
+                                        <span class="node-icon md">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                        </span>
+                                        <span class="node-name">local-development.md</span>
+                                        <span class="node-size">8.2 KB</span>
+                                    </a></li>
+                                    <li><a class="tree-node" href="/view/synctx-docs/docs/production-service-design.md">
+                                        <span style="width:16px"></span>
+                                        <span class="node-icon md">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                        </span>
+                                        <span class="node-name">production-service-design.md</span>
+                                        <span class="node-size">15.1 KB</span>
+                                    </a></li>
+                                    <li><a class="tree-node" href="/view/synctx-docs/docs/reusable-assets.md">
+                                        <span style="width:16px"></span>
+                                        <span class="node-icon md">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                        </span>
+                                        <span class="node-name">reusable-assets.md</span>
+                                        <span class="node-size">3.6 KB</span>
+                                    </a></li>
+                                </ul>
+                            </details>
+                        </li>
+
+                        <!-- services/ -->
+                        <li>
+                            <details>
+                                <summary>
+                                    <div class="tree-node">
+                                        <span class="tree-toggle">▶</span>
+                                        <span class="node-icon folder">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                                        </span>
+                                        <span class="node-name">services</span>
+                                    </div>
+                                </summary>
+                                <ul>
+                                    <li>
+                                        <details>
+                                            <summary>
+                                                <div class="tree-node">
+                                                    <span class="tree-toggle">▶</span>
+                                                    <span class="node-icon folder">
+                                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                                                    </span>
+                                                    <span class="node-name">viewer</span>
+                                                </div>
+                                            </summary>
+                                            <ul>
+                                                <li><a class="tree-node" href="/view/synctx-docs/services/viewer/pyproject.toml">
+                                                    <span style="width:16px"></span>
+                                                    <span class="node-icon yaml">
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                                    </span>
+                                                    <span class="node-name">pyproject.toml</span>
+                                                    <span class="node-size">1.2 KB</span>
+                                                </a></li>
+                                            </ul>
+                                        </details>
+                                    </li>
+                                    <li>
+                                        <details>
+                                            <summary>
+                                                <div class="tree-node">
+                                                    <span class="tree-toggle">▶</span>
+                                                    <span class="node-icon folder">
+                                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                                                    </span>
+                                                    <span class="node-name">sync</span>
+                                                </div>
+                                            </summary>
+                                            <ul>
+                                                <li><a class="tree-node" href="/view/synctx-docs/services/sync/pyproject.toml">
+                                                    <span style="width:16px"></span>
+                                                    <span class="node-icon yaml">
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                                    </span>
+                                                    <span class="node-name">pyproject.toml</span>
+                                                    <span class="node-size">0.9 KB</span>
+                                                </a></li>
+                                            </ul>
+                                        </details>
+                                    </li>
+                                </ul>
+                            </details>
+                        </li>
+
+                        <!-- helm/ -->
+                        <li>
+                            <details>
+                                <summary>
+                                    <div class="tree-node">
+                                        <span class="tree-toggle">▶</span>
+                                        <span class="node-icon folder">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                                        </span>
+                                        <span class="node-name">helm</span>
+                                    </div>
+                                </summary>
+                                <ul>
+                                    <li><a class="tree-node" href="/view/synctx-docs/helm/synctx/values.yaml">
+                                        <span style="width:16px"></span>
+                                        <span class="node-icon yaml">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                        </span>
+                                        <span class="node-name">values.yaml</span>
+                                        <span class="node-size">4.3 KB</span>
+                                    </a></li>
+                                </ul>
+                            </details>
+                        </li>
+
+                        <!-- Root files -->
+                        <li><a class="tree-node" href="/view/synctx-docs/README.md">
+                            <span style="width:16px"></span>
+                            <span class="node-icon md">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                            </span>
+                            <span class="node-name">README.md</span>
+                            <span class="node-size">5.8 KB</span>
+                        </a></li>
+
+                        <li><a class="tree-node" href="/view/synctx-docs/.synctx.yaml">
+                            <span style="width:16px"></span>
+                            <span class="node-icon yaml">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                            </span>
+                            <span class="node-name">.synctx.yaml</span>
+                            <span class="node-size">0.4 KB</span>
+                        </a></li>
+
+                        <li><a class="tree-node" href="/view/synctx-docs/pyproject.toml">
+                            <span style="width:16px"></span>
+                            <span class="node-icon file">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                            </span>
+                            <span class="node-name">pyproject.toml</span>
+                            <span class="node-size">0.3 KB</span>
+                        </a></li>
+                    </ul>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        /* ── Theme Toggle ── */
+        function toggleTheme() {
+            const html = document.documentElement;
+            const current = html.getAttribute('data-color-scheme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            html.setAttribute('data-color-scheme', next);
+            localStorage.setItem('theme-mode', next);
+        }
+
+        (function initTheme() {
+            const saved = localStorage.getItem('theme-mode');
+            if (saved) document.documentElement.setAttribute('data-color-scheme', saved);
+        })();
+
+        /* ── Repo Selection ── */
+        function selectRepo(el) {
+            document.querySelectorAll('.repo-item').forEach(r => r.classList.remove('active'));
+            el.classList.add('active');
+            const repoId = el.dataset.repo;
+            loadTree(repoId);
+        }
+
+        /* ── File tree toggle ── */
+        document.querySelectorAll('details').forEach(d => {
+            const toggle = d.querySelector('.tree-toggle');
+            if (!toggle) return;
+            d.addEventListener('toggle', () => {
+                toggle.classList.toggle('open', d.open);
+            });
+        });
+
+        /* ── Filter ── */
+        function filterTree(query) {
+            const q = query.toLowerCase();
+            document.querySelectorAll('#file-tree .tree-node').forEach(node => {
+                const name = node.querySelector('.node-name')?.textContent.toLowerCase() || '';
+                const li = node.closest('li');
+                if (!li) return;
+                if (!q || name.includes(q)) {
+                    li.style.display = '';
+                    let parent = li.parentElement?.closest('details');
+                    while (parent) {
+                        parent.open = true;
+                        const t = parent.querySelector('.tree-toggle');
+                        if (t) t.classList.add('open');
+                        parent = parent.parentElement?.closest('details');
+                    }
+                } else {
+                    if (!node.closest('summary')) li.style.display = 'none';
+                }
+            });
+        }
+
+        /* ── API Integration (실제 구현 시) ── */
+        async function loadTree(repoId) {
+            // 실제 구현에서는:
+            // 1. GET /view/api/repos/{repoId}/tree 호출
+            // 2. 응답 JSON을 file-tree 또는 fallback-tree로 렌더링
+            // const res = await fetch(`/view/api/repos/${repoId}/tree`);
+            // const data = await res.json();
+            // renderTree(data.entries);
+            console.log('Load tree for:', repoId);
+        }
+
+        // @webreflection/file-tree 사용 시:
+        // CDN 서비스에서 로드: /cdn/file-tree/1.0.0/prod.js
+        // import { Tree, Folder, File } from '/cdn/file-tree/1.0.0/prod.js';
+    </script>
+</body>
+</html>

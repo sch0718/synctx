@@ -81,6 +81,7 @@ feedback:
     hashSalt: "local-dev-hash-salt"
     smtpCredential: "mailhog.synctx-deps.svc.cluster.local:1025"
     opApiKey: "local-openproject-api-key"
+    xwikiCredential: "admin:admin"
 
 # ── Ingress (minikube, TLS via cert-manager) ──
 ingress:
@@ -134,9 +135,19 @@ synctxConfig:
         url: "https://github.com/sch0718/synctx.git"
         default_ref: main
         auth:
-          type: none
+          type: token
+          credential_env: GIT_READ_TOKEN
         watch_paths:
           - "docs/**/*.md"
+      - id: example-infra
+        name: "example infra"
+        url: "https://github.com/example-org/example-infra.git"
+        default_ref: main
+        auth:
+          type: token
+          credential_env: GIT_READ_TOKEN
+        watch_paths:
+          - "10. 문서/**/*.md"
 
     mappings:
       - match:
@@ -194,3 +205,14 @@ synctxConfig:
 # ── 관측성 (기존 monitoring 네임스페이스의 Prometheus/Grafana 활용) ──
 metrics:
   enabled: false
+
+# ── Git 인증 정보 (로컬 개발용) ──
+# readToken → 환경변수 GIT_READ_TOKEN 으로 주입됨
+# publishToken → 환경변수 GIT_PUBLISH_TOKEN 으로 주입됨
+# .synctx.yaml의 repositories[].auth.credential_env 와 매칭
+# 기본: credential_env: GIT_READ_TOKEN (별도 지정 시 개별 repo마다 다른 토큰 사용 가능)
+git:
+  secrets:
+    create: true
+    readToken: "ghp_REPLACE_WITH_YOUR_GITHUB_PAT"
+    publishToken: "ghp_REPLACE_WITH_YOUR_GITHUB_PAT"

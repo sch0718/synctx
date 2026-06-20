@@ -25,11 +25,34 @@ spec:
               image: "{{ .Values.sync.image.repository }}:{{ .Values.sync.image.tag }}"
               imagePullPolicy: {{ .Values.sync.image.pullPolicy }}
               command: ["synctx-sync"]
-              {{- if .Values.synctxConfig.create }}
               env:
+                {{- if .Values.synctxConfig.create }}
                 - name: SYNCTX_CONFIG_PATH
                   value: /etc/synctx/.synctx.yaml
-              {{- end }}
+                {{- end }}
+                {{- if or .Values.git.secrets.create .Values.git.secrets.existingSecret }}
+                - name: GIT_READ_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.git.secrets.existingSecret | default (printf "%s-git-secrets" (include "synctx.fullname" .)) }}
+                      key: read-token
+                {{- end }}
+                {{- if or .Values.feedback.secrets.create .Values.feedback.secrets.existingSecret }}
+                {{- if .Values.feedback.secrets.opApiKey }}
+                - name: OPENPROJECT_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
+                      key: openproject-api-key
+                {{- end }}
+                {{- if .Values.feedback.secrets.xwikiCredential }}
+                - name: XWIKI_CREDENTIAL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
+                      key: xwiki-credential
+                {{- end }}
+                {{- end }}
               {{- if or .Values.synctxConfig.create .Values.sync.persistence.enabled }}
               volumeMounts:
                 {{- if .Values.synctxConfig.create }}
