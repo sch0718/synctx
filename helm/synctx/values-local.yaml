@@ -2,6 +2,10 @@
 #
 # 사용법: helm upgrade --install synctx helm/synctx -f helm/synctx/values-local.yaml
 
+# ── Pod 보안 (로컬: 3rd-party 이미지 root 실행 허용) ──
+podSecurityContext:
+  runAsNonRoot: false
+
 # ── synctx 서비스 이미지 (로컬 빌드) ──
 viewer:
   image:
@@ -19,6 +23,8 @@ cdn:
   persistence:
     enabled: true
     size: 1Gi
+    storageClass: "standard"
+    accessMode: ReadWriteOnce
 
 sync:
   image:
@@ -29,6 +35,7 @@ sync:
   persistence:
     enabled: true
     size: 1Gi
+    storageClass: "standard"
 
 marp:
   image:
@@ -90,19 +97,19 @@ ingress:
   hosts:
     - host: synctx.synctx.local
       paths:
-        - path: /view(/.*)?
+        - path: /view(/(.*))?
           pathType: ImplementationSpecific
           backend: viewer
-        - path: /cdn(/.*)?
+        - path: /cdn(/(.*))?
           pathType: ImplementationSpecific
           backend: cdn
-        - path: /marp(/.*)?
+        - path: /marp(/(.*))?
           pathType: ImplementationSpecific
           backend: marp
-        - path: /slides(/.*)?
+        - path: /slides(/(.*))?
           pathType: ImplementationSpecific
           backend: slides
-        - path: /drawio(/.*)?
+        - path: /drawio(/(.*))?
           pathType: ImplementationSpecific
           backend: drawio
 
@@ -186,4 +193,4 @@ synctxConfig:
 
 # ── 관측성 (기존 monitoring 네임스페이스의 Prometheus/Grafana 활용) ──
 metrics:
-  enabled: true
+  enabled: false

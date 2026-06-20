@@ -1,5 +1,8 @@
 # Default values for synctx.
 
+podSecurityContext:
+  runAsNonRoot: true
+
 metrics:
   enabled: true
 
@@ -89,19 +92,19 @@ ingress:
   hosts:
     - host: synctx.internal
       paths:
-        - path: /view(/.*)?
+        - path: /view(/(.*))?
           pathType: ImplementationSpecific
           backend: viewer
-        - path: /cdn(/.*)?
+        - path: /cdn(/(.*))?
           pathType: ImplementationSpecific
           backend: cdn
-        - path: /marp(/.*)?
+        - path: /marp(/(.*))?
           pathType: ImplementationSpecific
           backend: marp
-        - path: /slides(/.*)?
+        - path: /slides(/(.*))?
           pathType: ImplementationSpecific
           backend: slides
-        - path: /drawio(/.*)?
+        - path: /drawio(/(.*))?
           pathType: ImplementationSpecific
           backend: drawio
 

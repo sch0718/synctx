@@ -18,7 +18,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       securityContext:
-        runAsNonRoot: true
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: marp
           image: "{{ .Values.marp.image.repository }}:{{ .Values.marp.image.tag }}"
@@ -34,6 +34,12 @@ spec:
             - name: SYNCTX_CONFIG_PATH
               value: /etc/synctx/.synctx.yaml
             {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /healthz

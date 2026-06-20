@@ -22,7 +22,7 @@ spec:
         spec:
           restartPolicy: OnFailure
           securityContext:
-            runAsNonRoot: true
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
           containers:
             - name: feedback
               image: "{{ .Values.feedback.image.repository }}:{{ .Values.feedback.image.tag }}"

@@ -19,7 +19,7 @@ spec:
           serviceAccountName: {{ include "synctx.fullname" . }}-sync
           restartPolicy: OnFailure
           securityContext:
-            runAsNonRoot: true
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
           containers:
             - name: sync
               image: "{{ .Values.sync.image.repository }}:{{ .Values.sync.image.tag }}"
