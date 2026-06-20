@@ -82,6 +82,8 @@ feedback:
     hmacKey: ""
     hashSalt: ""
     smtpCredential: ""
+    opApiKey: ""
+    xwikiCredential: ""
 
 ingress:
   enabled: true
@@ -161,3 +163,10 @@ drawio:
     limits:
       cpu: 1000m
       memory: 1Gi
+
+git:
+  secrets:
+    create: false
+    existingSecret: ""
+    readToken: ""
+    publishToken: ""

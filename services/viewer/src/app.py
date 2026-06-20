@@ -1,18 +1,18 @@
 import os
 from contextlib import asynccontextmanager
-from typing import Optional
+from pathlib import PurePosixPath
 
-from fastapi import FastAPI, HTTPException, Request, Depends, Header
+from fastapi import FastAPI, HTTPException, Request, Depends, Header, Query
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from synctx_common.config import load_config
 from synctx_common.git_manager import GitRepoManager
 from synctx_common.observability import register_observability_routes
-from renderer import render_markdown, rewrite_links
+from renderer import render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
 
 __version__ = "0.1.0"
+VIEW_PREFIX = "/view"
 
 config = load_config()
 
@@ -32,31 +32,35 @@ app = FastAPI(title="synctx-viewer", description="Viewer Service for synctx", ve
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 register_observability_routes(app, version=__version__)
 
-# RepoManager 캐시
 repo_managers = {}
+
 
 def get_repo_manager(repo_id: str) -> GitRepoManager:
     if repo_id in repo_managers:
         return repo_managers[repo_id]
-        
     for repo in config.repositories:
         if repo.id == repo_id:
             base_dir = config.viewer.repo_cache_path
             manager = GitRepoManager(repo, base_dir)
             repo_managers[repo_id] = manager
             return manager
-            
     raise HTTPException(status_code=404, detail=f"Repository not found: {repo_id}")
+
 
 def verify_viewer_access(x_forwarded_groups: str = Header(default="")):
     if not config.authz.enabled:
         return
-    
     groups = [g.strip() for g in x_forwarded_groups.split(",") if g.strip()]
     allowed_roles = config.authz.role_mappings.viewer + config.authz.role_mappings.platform_admin
-    
     if not any(role in groups for role in allowed_roles):
         raise HTTPException(status_code=403, detail="Forbidden: viewer role required")
+
+
+def _view_url(path=""):
+    return f"{VIEW_PREFIX}/{path}" if path else VIEW_PREFIX
+
+
+# ── API Routes ──
 
 @app.get("/api/repos", dependencies=[Depends(verify_viewer_access)])
 def list_repos():
@@ -67,14 +71,26 @@ def list_repos():
         ]
     }
 
+
 @app.get("/api/repos/{repo_id}/tree", dependencies=[Depends(verify_viewer_access)])
 def get_tree(repo_id: str, path: str = ""):
     manager = get_repo_manager(repo_id)
     try:
         entries = manager.list_tree(path)
-        return {"path": path, "entries": [e.__dict__ for e in entries]}
+        result = []
+        for e in entries:
+            entry = e.__dict__.copy()
+            if e.type == "file":
+                entry["viewable"] = is_viewable(e.path)
+                entry["icon_type"] = _file_icon_type(e.path)
+            else:
+                entry["viewable"] = True
+                entry["icon_type"] = "dir"
+            result.append(entry)
+        return {"path": path, "entries": result}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
 
 @app.get("/api/repos/{repo_id}/download", dependencies=[Depends(verify_viewer_access)])
 def download_file(repo_id: str, path: str):
@@ -90,6 +106,7 @@ def download_file(repo_id: str, path: str):
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
 
+
 @app.get("/raw/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
 def raw_file(repo_id: str, path: str):
     manager = get_repo_manager(repo_id)
@@ -97,6 +114,7 @@ def raw_file(repo_id: str, path: str):
         return Response(content=manager.read_file(path), media_type="application/octet-stream")
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
+
 
 @app.post("/api/repos/{repo_id}/webhook", dependencies=[Depends(verify_viewer_access)])
 async def repo_webhook(repo_id: str, request: Request):
@@ -109,191 +127,345 @@ async def repo_webhook(repo_id: str, request: Request):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Repository refresh failed: {e}")
 
+
+# ── File Type Detection ──
+
+CODE_LANGUAGE_MAP = {
+    ".py": "python", ".pyi": "python",
+    ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript", ".jsx": "javascript",
+    ".ts": "typescript", ".tsx": "typescript",
+    ".go": "go", ".java": "java", ".kt": "kotlin", ".kts": "kotlin",
+    ".rs": "rust", ".rb": "ruby", ".php": "php", ".cs": "csharp",
+    ".swift": "swift", ".scala": "scala",
+    ".c": "c", ".h": "c", ".cpp": "cpp", ".cc": "cpp", ".cxx": "cpp", ".hpp": "cpp",
+    ".m": "objectivec", ".mm": "objectivec",
+    ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".ps1": "powershell", ".bat": "dos", ".cmd": "dos",
+    ".sql": "sql",
+    ".yaml": "yaml", ".yml": "yaml",
+    ".json": "json", ".jsonc": "json",
+    ".toml": "toml", ".ini": "ini", ".cfg": "ini", ".conf": "ini",
+    ".xml": "xml", ".html": "html", ".htm": "html",
+    ".css": "css", ".scss": "scss", ".less": "less",
+    ".vue": "xml", ".lua": "lua", ".r": "r", ".pl": "perl",
+    ".dart": "dart", ".groovy": "groovy", ".gradle": "groovy",
+    ".tf": "hcl", ".hcl": "hcl", ".dockerfile": "dockerfile",
+    ".env": "bash", ".txt": "plaintext", ".log": "plaintext",
+    ".csv": "plaintext", ".tsv": "plaintext",
+    ".properties": "ini", ".makefile": "makefile", ".mk": "makefile",
+}
+
+CODE_FILENAME_MAP = {
+    "dockerfile": "dockerfile", "makefile": "makefile", "gnumakefile": "makefile",
+    "jenkinsfile": "groovy", "vagrantfile": "ruby", "gemfile": "ruby",
+    "rakefile": "ruby", "podfile": "ruby",
+    ".gitignore": "bash", ".gitattributes": "bash", ".dockerignore": "bash",
+    ".editorconfig": "ini",
+}
+
+MARKDOWN_EXTENSIONS = {".md", ".markdown"}
+
+
+def get_code_language(path: str):
+    pure = PurePosixPath(path)
+    name = pure.name.lower()
+    if name in CODE_FILENAME_MAP:
+        return CODE_FILENAME_MAP[name]
+    return CODE_LANGUAGE_MAP.get(pure.suffix.lower())
+
+
+def is_viewable(path: str) -> bool:
+    suffix = PurePosixPath(path).suffix.lower()
+    return suffix in MARKDOWN_EXTENSIONS or get_code_language(path) is not None
+
+
+def _file_icon_type(path: str) -> str:
+    suffix = PurePosixPath(path).suffix.lower()
+    if suffix in MARKDOWN_EXTENSIONS:
+        return "markdown"
+    if get_code_language(path) is not None:
+        return "code"
+    return "binary"
+
+
+def _file_icon_svg(path: str) -> str:
+    t = _file_icon_type(path)
+    if t == "markdown":
+        return '<svg class="icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>'
+    if t == "code":
+        return '<svg class="icon-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m10 13-2 2 2 2"/><path d="m14 13 2 2-2 2"/></svg>'
+    return '<svg class="icon-binary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
+
+
+def _wrap_code_as_markdown(path: str, content: str, language: str) -> str:
+    filename = PurePosixPath(path).name
+    fence = "```"
+    while fence in content:
+        fence += "`"
+    return f"# {filename}\n\n{fence}{language}\n{content}\n{fence}\n"
+
+
+# ── Theme Helpers ──
+
+THEME_NAMES = {
+    "github-light": "GitHub Light",
+    "github-dark": "GitHub Dark",
+    "cayman": "Cayman",
+    "minimal": "Minimal",
+    "hacker": "Hacker",
+    "modernist": "Modernist",
+    "corporate": "Corporate",
+}
+
+
+THEME_VARS_CSS = """
+[data-theme="github-light"] {
+    --primary: #0969da; --primary-light: #4493f8; --primary-lighter: #ddf4ff; --primary-dark: #0550ae;
+    --bg-default: #ffffff; --bg-neutral: #f6f8fa; --bg-card: #ffffff;
+    --text-primary: #1f2328; --text-secondary: #57606a; --text-disabled: #8b949e;
+    --border-color: rgba(208,215,222,0.5);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+[data-theme="github-dark"] {
+    --primary: #58a6ff; --primary-light: #79c0ff; --primary-lighter: #0d1117; --primary-dark: #388bfd;
+    --bg-default: #0d1117; --bg-neutral: #161b22; --bg-card: #161b22;
+    --text-primary: #e6edf3; --text-secondary: #8b949e; --text-disabled: #484f58;
+    --border-color: rgba(48,54,61,0.6);
+    --shadow-card: 0 0 2px 0 rgba(0,0,0,0.4), 0 12px 24px -4px rgba(0,0,0,0.3);
+    --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
+}
+[data-theme="cayman"] {
+    --primary: #159957; --primary-light: #1e9b52; --primary-lighter: #e6f9ef; --primary-dark: #0e7a42;
+    --bg-default: #ffffff; --bg-neutral: #f3f6fa; --bg-card: #ffffff;
+    --text-primary: #606c71; --text-secondary: #819198; --text-disabled: #9aa6ac;
+    --border-color: rgba(220,230,240,0.5);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+[data-theme="minimal"] {
+    --primary: #4183c4; --primary-light: #6ba4d9; --primary-lighter: #e8f0fa; --primary-dark: #2e6da4;
+    --bg-default: #ffffff; --bg-neutral: #f8f8f8; --bg-card: #ffffff;
+    --text-primary: #333333; --text-secondary: #777777; --text-disabled: #999999;
+    --border-color: rgba(222,222,222,0.5);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+[data-theme="hacker"] {
+    --primary: #b5e853; --primary-light: #c4ee7e; --primary-lighter: #1a2a1a; --primary-dark: #8fc43e;
+    --bg-default: #151515; --bg-neutral: #1a1a1a; --bg-card: #1a1a1a;
+    --text-primary: #b0b0b0; --text-secondary: #888888; --text-disabled: #666666;
+    --border-color: rgba(51,51,51,0.6);
+    --shadow-card: 0 0 2px 0 rgba(0,0,0,0.4), 0 12px 24px -4px rgba(0,0,0,0.3);
+    --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
+}
+[data-theme="modernist"] {
+    --primary: #4276b6; --primary-light: #6694c8; --primary-lighter: #e8f0fa; --primary-dark: #325fa0;
+    --bg-default: #f1f1f1; --bg-neutral: #e8f0fa; --bg-card: #ffffff;
+    --text-primary: #474747; --text-secondary: #7a8a96; --text-disabled: #9aa6ac;
+    --border-color: rgba(197,209,219,0.5);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+[data-theme="corporate"] {
+    --primary: #E01E1F; --primary-light: #E84A4B; --primary-lighter: #FDE8E8; --primary-dark: #B01819;
+    --bg-default: #ffffff; --bg-neutral: #F4F6F8; --bg-card: #ffffff;
+    --text-primary: #1C252E; --text-secondary: #637381; --text-disabled: #919EAB;
+    --border-color: rgba(145,158,171,0.2);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+"""
+
+
+def _build_theme_options(current="github-light"):
+    html = ""
+    for key, label in THEME_NAMES.items():
+        sel = " selected" if key == current else ""
+        html += f'<option value="{key}"{sel}>{label}</option>'
+    return html
+
+
+def _build_repo_options(repos, active_id=None):
+    html = '<option value="">-- Select Repository --</option>'
+    for r in repos:
+        sel = " selected" if r.id == active_id else ""
+        html += f'<option value="{r.id}"{sel}>{r.name}</option>'
+    return html
+
+
+# ── VIEWER_TEMPLATE ──
+
 VIEWER_TEMPLATE = """<!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-theme="{active_theme}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title} - synctx Viewer</title>
+    <script>
+        (function() {{
+            if (!new URL(window.location).searchParams.has('theme')) {{
+                var s = localStorage.getItem('synctx-theme');
+                if (s) {{
+                    var u = new URL(window.location);
+                    u.searchParams.set('theme', s);
+                    window.location.replace(u.toString());
+                }}
+            }} else {{
+                var t = new URL(window.location).searchParams.get('theme');
+                if (t) document.documentElement.setAttribute('data-theme', t);
+            }}
+        }})();
+    </script>
+    <style>{theme_vars_css}</style>
+    <style>{theme_css}</style>
+    <link rel="stylesheet" href="{view_prefix}/static/vendor/hljs/{hljs_theme}.min.css">
     <style>
-        body {{ font-family: sans-serif; margin: 0; padding: 0; display: flex; }}
-        .sidebar {{ width: 250px; background: #f4f4f4; padding: 20px; height: 100vh; overflow-y: auto; position: fixed; }}
-        .content {{ margin-left: 290px; padding: 40px; max-width: 800px; width: 100%; }}
-        .toolbar {{ margin-bottom: 20px; padding: 10px; background: #e9ecef; border-radius: 4px; display: flex; gap: 10px; }}
-        .btn {{ padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; background: #007bff; color: white; text-decoration: none; font-size: 14px; }}
-        .btn:hover {{ background: #0056b3; }}
-        .btn-secondary {{ background: #6c757d; }}
-        .btn-secondary:hover {{ background: #5a6268; }}
-        .markdown-body {{ line-height: 1.6; }}
-        pre {{ background: #f8f9fa; padding: 15px; border-radius: 4px; overflow-x: auto; }}
-        img {{ max-width: 100%; }}
+        body {{ margin: 0; padding: 0; }}
+        .viewer-sidebar {{
+            width: 250px; min-width: 250px; padding: 20px; height: 100vh; overflow-y: auto;
+            position: fixed; top: 0; left: 0; bottom: 0;
+            background: var(--bg-neutral); border-right: 1px solid var(--border-color);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: var(--text-primary); font-size: 14px; line-height: 1.5;
+        }}
+        .viewer-sidebar h3 {{ margin: 0 0 12px; font-size: 15px; font-weight: 700; }}
+        .viewer-sidebar h3 a {{ color: inherit; text-decoration: none; }}
+        .viewer-sidebar .path-info {{ font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; word-break: break-all; }}
+        .viewer-sidebar .path-info a {{ color: var(--primary); text-decoration: none; }}
+        .viewer-sidebar hr {{ border: none; border-top: 1px solid var(--border-color); margin: 0 0 16px; }}
+        .viewer-sidebar .toc-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-disabled); margin-bottom: 8px; }}
+        .viewer-sidebar .toc ul {{ list-style: none; padding-left: 14px; margin: 0; }}
+        .viewer-sidebar .toc > ul {{ padding-left: 0; }}
+        .viewer-sidebar .toc li {{ margin: 3px 0; }}
+        .viewer-sidebar .toc a {{ color: var(--text-secondary); text-decoration: none; font-size: 13px; }}
+        .viewer-sidebar .toc a:hover {{ color: var(--primary); }}
+        .viewer-content {{ margin-left: 290px; }}
+        .viewer-toolbar {{
+            position: sticky; top: 0; z-index: 10; padding: 10px 45px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+            background: var(--bg-default);
+        }}
+        .viewer-toolbar .breadcrumb {{ font-size: 13px; color: var(--text-secondary); }}
+        .viewer-toolbar .breadcrumb a {{ color: var(--text-secondary); text-decoration: none; }}
+        .viewer-toolbar .breadcrumb a:hover {{ color: var(--primary); }}
+        .viewer-toolbar .actions {{ display: flex; gap: 8px; align-items: center; }}
+        .viewer-toolbar select {{
+            padding: 5px 10px; border: 1px solid var(--border-color); border-radius: 6px;
+            font-size: 12px; background: var(--bg-card); cursor: pointer; color: var(--text-primary);
+        }}
+        .viewer-toolbar .btn {{
+            padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
+            background: var(--primary); color: white; text-decoration: none; font-size: 13px;
+        }}
+        .viewer-toolbar .btn:hover {{ background: var(--primary-dark); }}
+        .viewer-toolbar .btn-secondary {{ background: #6c757d; }}
+        .viewer-toolbar .btn-secondary:hover {{ background: #5a6268; }}
+        @media (max-width: 768px) {{
+            .viewer-sidebar {{ display: none; }}
+            .viewer-content {{ margin-left: 0; }}
+            .viewer-toolbar {{ padding: 10px 15px; }}
+        }}
     </style>
-    <!-- CDN 연동 -->
-    <link rel="stylesheet" href="/cdn/highlight.js/11.9.0/styles/github.min.css">
-    <script src="/cdn/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="/cdn/mermaid/10.9.1/mermaid.min.js"></script>
 </head>
 <body>
-    <div class="sidebar">
-        <h3>synctx Viewer</h3>
-        <p>Repo: {repo_id}</p>
-        <p>Path: {path}</p>
+    <div class="viewer-sidebar">
+        <h3><a href="{view_prefix}">synctx</a></h3>
+        <div class="path-info">
+            <a href="{view_prefix}/{repo_id}">{repo_id}</a> / {path}
+        </div>
         <hr>
-        <h4>목차</h4>
-        <ul>
-            {toc_html}
-        </ul>
+        <div class="toc-title">목차</div>
+        <div class="toc"><ul>{toc_html}</ul></div>
     </div>
-    <div class="content">
-        <div class="toolbar">
-            {toolbar_buttons}
+    <div class="viewer-content">
+        <div class="viewer-toolbar">
+            <div class="breadcrumb">
+                <a href="{view_prefix}">synctx</a> &rsaquo;
+                <a href="{view_prefix}/{repo_id}">{repo_id}</a> &rsaquo; {path}
+            </div>
+            <div class="actions">
+                <select id="theme-select" onchange="changeTheme(this.value)">{theme_options}</select>
+                {toolbar_buttons}
+            </div>
         </div>
-        <div class="markdown-body">
-            {html_body}
-        </div>
+        <article class="markdown-body">{html_body}</article>
     </div>
 
     <script type="text/markdown" id="raw-markdown">{raw_markdown}</script>
+    <script src="{view_prefix}/static/vendor/highlight.min.js"></script>
+    {mermaid_scripts}
     <script>
+        hljs.highlightAll();
+
+        function changeTheme(theme) {{
+            localStorage.setItem('synctx-theme', theme);
+            var u = new URL(window.location);
+            u.searchParams.set('theme', theme);
+            window.location.href = u.toString();
+        }}
+
         async function convertMarpPdf() {{
-            const md = document.getElementById('raw-markdown').textContent;
+            var md = document.getElementById('raw-markdown').textContent;
             try {{
-                const res = await fetch('/marp/api/marp/convert', {{
+                var res = await fetch('/marp/api/marp/convert', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{ markdown: md }})
                 }});
                 if (!res.ok) throw new Error('변환 실패');
-                
-                const blob = await res.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'presentation.pdf';
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-            }} catch (e) {{
-                alert(e.message);
-            }}
+                var blob = await res.blob();
+                var url = window.URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url; a.download = 'presentation.pdf';
+                document.body.appendChild(a); a.click(); a.remove();
+            }} catch (e) {{ alert(e.message); }}
         }}
 
         async function publishMarpSlide() {{
-            const md = document.getElementById('raw-markdown').textContent;
-            const filename = '{path}'.split('/').pop().replace('.md', '');
+            var md = document.getElementById('raw-markdown').textContent;
+            var filename = '{path}'.split('/').pop().replace('.md', '');
             try {{
-                const res = await fetch('/marp/api/marp/publish', {{
+                var res = await fetch('/marp/api/marp/publish', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{ markdown: md, filename: filename }})
                 }});
                 if (!res.ok) throw new Error('출판 실패');
-                
-                const data = await res.json();
+                var data = await res.json();
                 alert('출판 성공! URL: ' + data.url);
-            }} catch (e) {{
-                alert(e.message);
-            }}
+            }} catch (e) {{ alert(e.message); }}
         }}
     </script>
 </body>
 </html>"""
 
-def generate_toc_html(toc_tokens):
-    html = ""
-    for token in toc_tokens:
-        html += f'<li><a href="#{token["id"]}">{token["name"]}</a>'
-        if token.get("children"):
-            html += "<ul>" + generate_toc_html(token["children"]) + "</ul>"
-        html += "</li>"
-    return html
 
-@app.get("/api/repos/{repo_id}/render", dependencies=[Depends(verify_viewer_access)])
-def render_file(repo_id: str, path: str):
-    manager = get_repo_manager(repo_id)
-    try:
-        content = manager.read_file_text(path)
-        rendered = render_markdown(content)
-        rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path)
-
-        toc_html = generate_toc_html(rendered.get("toc", []))
-
-        toolbar_buttons = ""
-        from synctx_common.frontmatter import parse_frontmatter
-        fm, _ = parse_frontmatter(content)
-        is_marp = fm.get("marp", False) if fm else False
-        is_drawio = path.endswith(".drawio")
-        if is_marp:
-            toolbar_buttons += '<button class="btn" onclick="convertMarpPdf()">PDF 다운로드 (Marp)</button>'
-            toolbar_buttons += '<button class="btn btn-secondary" onclick="publishMarpSlide()">슬라이드 출판 (Marp)</button>'
-        if is_drawio:
-            toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io 열기</a>'
-        if not toolbar_buttons:
-            toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}">다운로드</a>'
-
-        html = VIEWER_TEMPLATE.format(
-            title=rendered.get("title", "Document"),
-            repo_id=repo_id,
-            path=path,
-            toc_html=toc_html,
-            toolbar_buttons=toolbar_buttons,
-            html_body=rendered.get("html", ""),
-            raw_markdown=content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        )
-        return HTMLResponse(content=html)
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
+# ── INDEX_TEMPLATE ──
 
 INDEX_TEMPLATE = """<!DOCTYPE html>
-<html lang="ko" data-color-scheme="light">
+<html lang="ko" data-theme="{active_theme}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>synctx Viewer</title>
-    <link rel="stylesheet" href="/cdn/highlight.js/11.9.0/styles/github.min.css">
+    <script>
+        (function() {{
+            var saved = localStorage.getItem('synctx-theme');
+            if (saved) document.documentElement.setAttribute('data-theme', saved);
+        }})();
+    </script>
+    <style>{theme_vars_css}</style>
     <style>
         :root {{
-            --primary: #6950E8;
-            --primary-light: #A996F8;
-            --primary-lighter: #E4DCFD;
-            --primary-dark: #3828A7;
-            --grey-50: #FCFDFD;
-            --grey-100: #F4F6F8;
-            --grey-200: #E9ECEF;
-            --grey-300: #DFE3E8;
-            --grey-400: #C4CDD5;
-            --grey-500: #919EAB;
-            --grey-600: #637381;
-            --grey-700: #454F5B;
-            --grey-800: #1C252E;
-            --grey-900: #141A21;
-            --bg-default: #FFFFFF;
-            --bg-neutral: #F4F6F8;
-            --bg-card: #FFFFFF;
-            --text-primary: #1C252E;
-            --text-secondary: #637381;
-            --text-disabled: #919EAB;
-            --border-color: rgba(145,158,171,0.2);
             --radius-sm: 8px;
             --radius-md: 12px;
             --radius-lg: 16px;
-            --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
-            --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
             --font-primary: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
             --font-mono: 'D2Coding', ui-monospace, monospace;
             --header-height: 64px;
             --sidebar-width: 320px;
-        }}
-        [data-color-scheme="dark"] {{
-            --bg-default: #141A21;
-            --bg-neutral: #1C252E;
-            --bg-card: #1C252E;
-            --text-primary: #FFFFFF;
-            --text-secondary: #919EAB;
-            --text-disabled: #637381;
-            --border-color: rgba(145,158,171,0.24);
-            --shadow-card: 0 0 2px 0 rgba(0,0,0,0.4), 0 12px 24px -4px rgba(0,0,0,0.3);
-            --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
         }}
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: var(--font-primary); background: var(--bg-default); color: var(--text-primary); }}
@@ -305,13 +477,13 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         }}
         .header-logo {{ font-size: 18px; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }}
         .header-logo svg {{ width: 28px; height: 28px; }}
-        .header-actions {{ margin-left: auto; display: flex; gap: 8px; }}
-        .icon-btn {{
-            width: 40px; height: 40px; border-radius: var(--radius-sm); border: none;
-            background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center;
-            color: var(--text-secondary); transition: background .2s;
+        .header-actions {{ margin-left: auto; display: flex; gap: 8px; align-items: center; }}
+        .theme-select {{
+            padding: 6px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+            background: var(--bg-card); color: var(--text-primary); font-size: 13px;
+            font-family: var(--font-primary); cursor: pointer;
         }}
-        .icon-btn:hover {{ background: var(--bg-neutral); }}
+        .theme-select:focus {{ outline: 2px solid var(--primary); outline-offset: -2px; }}
 
         .layout {{ display: flex; margin-top: var(--header-height); min-height: calc(100vh - var(--header-height)); }}
 
@@ -320,18 +492,15 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             border-right: 1px solid var(--border-color); padding: 24px 16px; overflow-y: auto;
             position: fixed; top: var(--header-height); bottom: 0; left: 0;
         }}
-        .sidebar-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-disabled); margin-bottom: 16px; padding: 0 8px; }}
-        .repo-item {{
-            display: flex; align-items: center; gap: 12px; padding: 10px 12px;
-            border-radius: var(--radius-sm); cursor: pointer; transition: background .15s;
-            text-decoration: none; color: var(--text-primary);
+        .sidebar-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-disabled); margin-bottom: 12px; padding: 0 8px; }}
+
+        .repo-select {{
+            width: 100%; padding: 10px 12px; border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text-primary);
+            font-size: 14px; font-weight: 600; font-family: var(--font-primary);
+            cursor: pointer; margin-bottom: 16px; appearance: auto;
         }}
-        .repo-item:hover {{ background: var(--border-color); }}
-        .repo-item.active {{ background: var(--primary-lighter); color: var(--primary-dark); }}
-        [data-color-scheme="dark"] .repo-item.active {{ background: rgba(105,80,232,0.16); color: var(--primary-light); }}
-        .repo-dot {{ width: 10px; height: 10px; border-radius: 50%; background: var(--grey-400); flex-shrink: 0; }}
-        .repo-item.active .repo-dot {{ background: var(--primary); }}
-        .repo-name {{ font-size: 14px; font-weight: 600; }}
+        .repo-select:focus {{ outline: 2px solid var(--primary); outline-offset: -2px; }}
 
         .main {{ margin-left: var(--sidebar-width); flex: 1; padding: 32px; }}
 
@@ -362,7 +531,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             display: flex; align-items: center; gap: 8px; padding: 6px 8px;
             border-radius: 6px; cursor: pointer; transition: background .12s; white-space: nowrap;
         }}
-        .tree-entry:hover {{ background: var(--bg-neutral); }}
+        .tree-entry:hover {{ background: var(--border-color); }}
         .tree-entry svg {{ width: 18px; height: 18px; flex-shrink: 0; }}
         .tree-entry .name {{ flex: 1; overflow: hidden; text-overflow: ellipsis; }}
         .tree-entry .name a {{ color: var(--text-primary); text-decoration: none; }}
@@ -371,24 +540,34 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         .tree-children.collapsed {{ display: none; }}
         .tree-toggle {{ transition: transform .15s; }}
         .tree-toggle.open {{ transform: rotate(90deg); }}
-        .dir-icon {{ color: var(--primary); }}
-        .file-icon {{ color: var(--text-disabled); }}
+
+        .icon-dir {{ color: var(--primary); }}
+        .icon-md {{ color: #2196F3; }}
+        [data-theme="github-dark"] .icon-md, [data-theme="hacker"] .icon-md {{ color: #64B5F6; }}
+        .icon-code {{ color: #FF9800; }}
+        [data-theme="github-dark"] .icon-code, [data-theme="hacker"] .icon-code {{ color: #FFB74D; }}
+        .icon-binary {{ color: var(--text-disabled); }}
+        .tree-entry.disabled {{ opacity: 0.5; cursor: default; }}
+        .tree-entry.disabled:hover {{ background: transparent; }}
+
         .loading {{ text-align: center; padding: 40px; color: var(--text-secondary); }}
 
         .search-box {{
             display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-            background: var(--bg-neutral); border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm); margin-bottom: 16px;
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm); margin-bottom: 12px;
         }}
         .search-box input {{
             border: none; background: transparent; outline: none;
-            font-size: 14px; color: var(--text-primary); width: 100%; font-family: var(--font-primary);
+            font-size: 13px; color: var(--text-primary); width: 100%; font-family: var(--font-primary);
         }}
         .search-box svg {{ color: var(--text-disabled); flex-shrink: 0; }}
 
         .empty-state {{ text-align: center; padding: 60px 20px; color: var(--text-secondary); }}
         .empty-state svg {{ width: 64px; height: 64px; color: var(--text-disabled); margin-bottom: 16px; }}
         .empty-state p {{ font-size: 14px; }}
+
+        .sidebar-hint {{ padding: 20px 8px; font-size: 13px; color: var(--text-disabled); text-align: center; }}
 
         @media (max-width: 768px) {{
             .sidebar {{ display: none; }}
@@ -404,16 +583,17 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             synctx
         </div>
         <div class="header-actions">
-            <button class="icon-btn" onclick="toggleTheme()" title="테마 전환">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-            </button>
+            <select id="index-theme-select" class="theme-select" onchange="changeTheme(this.value)">{theme_options}</select>
         </div>
     </header>
 
     <div class="layout">
         <aside class="sidebar">
             <div class="sidebar-title">Repositories</div>
-            <nav id="repo-nav">{repo_nav_html}</nav>
+            <select id="repo-select" class="repo-select" onchange="onRepoChange(this.value)">
+                {repo_options}
+            </select>
+            <div id="sidebar-tree">{sidebar_tree_html}</div>
         </aside>
         <main class="main">
             {main_content}
@@ -421,40 +601,161 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <script>
-        function toggleTheme() {{
-            const html = document.documentElement;
-            const current = html.getAttribute('data-color-scheme');
-            html.setAttribute('data-color-scheme', current === 'dark' ? 'light' : 'dark');
-            localStorage.setItem('synctx-theme', html.getAttribute('data-color-scheme'));
+        var VIEW_PREFIX = '{view_prefix}';
+        var ACTIVE_REPO = '{active_repo_id}';
+
+        function changeTheme(theme) {{
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('synctx-theme', theme);
         }}
         (function() {{
-            const saved = localStorage.getItem('synctx-theme');
-            if (saved) document.documentElement.setAttribute('data-color-scheme', saved);
+            var saved = localStorage.getItem('synctx-theme');
+            if (saved) {{
+                document.documentElement.setAttribute('data-theme', saved);
+                var sel = document.getElementById('index-theme-select');
+                if (sel) sel.value = saved;
+            }}
         }})();
+
+        function onRepoChange(repoId) {{
+            if (repoId) {{
+                window.location.href = VIEW_PREFIX + '/' + repoId;
+            }} else {{
+                window.location.href = VIEW_PREFIX;
+            }}
+        }}
+
+        var ICON_DIR = '<svg class="icon-dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>';
+        var ICON_MD = '<svg class="icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
+        var ICON_CODE = '<svg class="icon-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m10 13-2 2 2 2"/><path d="m14 13 2 2-2 2"/></svg>';
+        var ICON_BINARY = '<svg class="icon-binary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+        var FILE_ICONS = {{ markdown: ICON_MD, code: ICON_CODE, binary: ICON_BINARY }};
+
+        function toggleDir(el) {{
+            var children = el.nextElementSibling;
+            var icon = el.querySelector('.tree-toggle');
+            if (children) {{
+                children.classList.toggle('collapsed');
+                icon.classList.toggle('open');
+                if (!children.classList.contains('collapsed') && children.dataset.path && !children.dataset.loaded) {{
+                    loadSubtree(children, children.dataset.path);
+                }}
+            }}
+        }}
+
+        async function loadSubtree(container, path) {{
+            container.dataset.loaded = '1';
+            container.innerHTML = '<div class="loading" style="padding:8px;font-size:13px;">Loading...</div>';
+            try {{
+                var res = await fetch(VIEW_PREFIX + '/api/repos/' + ACTIVE_REPO + '/tree?path=' + encodeURIComponent(path));
+                if (!res.ok) throw new Error('Failed');
+                var data = await res.json();
+                var html = '';
+                var dirs = data.entries.filter(function(e) {{ return e.type === 'dir'; }}).sort(function(a,b) {{ return a.name.localeCompare(b.name); }});
+                var files = data.entries.filter(function(e) {{ return e.type === 'file'; }}).sort(function(a,b) {{ return a.name.localeCompare(b.name); }});
+                for (var i = 0; i < dirs.length; i++) {{
+                    var d = dirs[i];
+                    html += '<div class="tree-entry" onclick="toggleDir(this)">' +
+                        '<svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>' +
+                        ICON_DIR +
+                        '<span class="name">' + d.name + '/</span></div>' +
+                        '<div class="tree-children collapsed" data-path="' + d.path + '"></div>';
+                }}
+                for (var j = 0; j < files.length; j++) {{
+                    var f = files[j];
+                    var ficon = FILE_ICONS[f.icon_type] || ICON_BINARY;
+                    if (f.viewable) {{
+                        html += '<div class="tree-entry">' +
+                            '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
+                            ficon +
+                            '<span class="name"><a href="' + VIEW_PREFIX + '/' + ACTIVE_REPO + '/' + f.path + '">' + f.name + '</a></span></div>';
+                    }} else {{
+                        html += '<div class="tree-entry disabled">' +
+                            '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
+                            ficon +
+                            '<span class="name">' + f.name + '</span></div>';
+                    }}
+                }}
+                container.innerHTML = html || '<div style="padding:8px;color:var(--text-disabled);font-size:13px;">Empty</div>';
+            }} catch(err) {{
+                container.innerHTML = '<div style="padding:8px;color:#E01E1F;">Failed to load</div>';
+            }}
+        }}
+
+        function filterTree(query) {{
+            var q = query.toLowerCase();
+            document.querySelectorAll('#file-tree .tree-entry').forEach(function(el) {{
+                var name = el.querySelector('.name').textContent.toLowerCase();
+                el.style.display = !q || name.includes(q) ? '' : 'none';
+            }});
+        }}
     </script>
 </body>
 </html>"""
 
-def _build_repo_nav_html(repos, active_id=None):
+
+# ── View Helpers ──
+
+def generate_toc_html(toc_tokens):
     html = ""
-    for r in repos:
-        active = " active" if r.id == active_id else ""
-        html += f'<a class="repo-item{active}" href="{_view_url(r.id)}">'
-        html += '<span class="repo-dot"></span>'
-        html += f'<span class="repo-name">{r.name}</span></a>'
+    for token in toc_tokens:
+        html += f'<li><a href="#{token["id"]}">{token["name"]}</a>'
+        if token.get("children"):
+            html += "<ul>" + generate_toc_html(token["children"]) + "</ul>"
+        html += "</li>"
     return html
 
 
-VIEW_PREFIX = "/view"
+DIR_ICON_SVG = '<svg class="icon-dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>'
 
-def _view_url(path=""):
-    return f"{VIEW_PREFIX}/{path}" if path else VIEW_PREFIX
+
+def _build_tree_html(repo_id, path):
+    try:
+        manager = get_repo_manager(repo_id)
+        entries = manager.list_tree(path)
+    except Exception:
+        return '<div class="empty-state"><p>Failed to load file tree.</p></div>'
+
+    dirs = sorted([e for e in entries if e.type == "dir"], key=lambda e: e.name)
+    files = sorted([e for e in entries if e.type == "file"], key=lambda e: e.name)
+
+    html = ""
+    for e in dirs:
+        html += f'''<div class="tree-entry" onclick="toggleDir(this)">
+            <svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+            {DIR_ICON_SVG}
+            <span class="name">{e.name}/</span>
+        </div>
+        <div class="tree-children collapsed" data-path="{e.path}"></div>'''
+    for e in files:
+        icon = _file_icon_svg(e.path)
+        if is_viewable(e.path):
+            file_url = _view_url(f"{repo_id}/{e.path}")
+            html += f'''<div class="tree-entry">
+            <svg style="width:18px" viewBox="0 0 24 24"></svg>
+            {icon}
+            <span class="name"><a href="{file_url}">{e.name}</a></span>
+        </div>'''
+        else:
+            html += f'''<div class="tree-entry disabled">
+            <svg style="width:18px" viewBox="0 0 24 24"></svg>
+            {icon}
+            <span class="name">{e.name}</span>
+        </div>'''
+    if not html:
+        html = '<div style="padding:8px;color:var(--text-disabled);font-size:13px;">Empty repository</div>'
+    return html
+
+
+# ── View Routes ──
+
+RESERVED_PATHS = {"api", "raw", "static", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
 
 
 @app.get("/", dependencies=[Depends(verify_viewer_access)])
 def view_index():
     repos = config.repositories
-    repo_nav_html = _build_repo_nav_html(repos)
+    repo_options = _build_repo_options(repos)
 
     if repos:
         cards = ""
@@ -475,11 +776,19 @@ def view_index():
                 <p>등록된 저장소가 없습니다.</p>
             </div>'''
 
-    html = INDEX_TEMPLATE.format(repo_nav_html=repo_nav_html, main_content=main_content)
+    sidebar_tree_html = '<div class="sidebar-hint">저장소를 선택하면 파일 트리가 표시됩니다.</div>'
+
+    html = INDEX_TEMPLATE.format(
+        repo_options=repo_options,
+        sidebar_tree_html=sidebar_tree_html,
+        main_content=main_content,
+        view_prefix=VIEW_PREFIX,
+        active_repo_id="",
+        theme_vars_css=THEME_VARS_CSS,
+        active_theme="github-light",
+        theme_options=_build_theme_options(),
+    )
     return HTMLResponse(content=html)
-
-
-RESERVED_PATHS = {"api", "raw", "static", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
 
 
 @app.get("/{repo_id}", dependencies=[Depends(verify_viewer_access)])
@@ -489,7 +798,7 @@ def view_repo(repo_id: str):
 
     manager = get_repo_manager(repo_id)
     repos = config.repositories
-    repo_nav_html = _build_repo_nav_html(repos, active_id=repo_id)
+    repo_options = _build_repo_options(repos, active_id=repo_id)
     repo = manager.profile
 
     try:
@@ -501,11 +810,17 @@ def view_repo(repo_id: str):
         file_count = 0
 
     tree_html = _build_tree_html(repo_id, "")
-    view_prefix = VIEW_PREFIX
+
+    sidebar_tree_html = f'''
+        <div class="search-box">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input type="text" placeholder="Filter files..." oninput="filterTree(this.value)">
+        </div>
+        <div class="tree" id="file-tree">{tree_html}</div>'''
 
     main_content = f'''
         <div class="breadcrumb">
-            <a href="{view_prefix}">Repositories</a><span class="sep">&rsaquo;</span>{repo.name}
+            <a href="{VIEW_PREFIX}">Repositories</a><span class="sep">&rsaquo;</span>{repo.name}
         </div>
         <div class="card">
             <div class="card-header">
@@ -514,108 +829,118 @@ def view_repo(repo_id: str):
             </div>
             <div style="font-size:13px;color:var(--text-secondary);word-break:break-all;">{repo.url}</div>
         </div>
-        <div class="card">
-            <div class="card-header">
-                <div class="card-title">Files</div>
-            </div>
-            <div class="search-box">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                <input type="text" placeholder="Filter files..." oninput="filterTree(this.value)">
-            </div>
-            <div class="tree" id="file-tree">{tree_html}</div>
-        </div>
-    '''
+        <div class="empty-state" style="padding:40px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="16" y1="13" x2="8" y2="13"/>
+                <line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+            <p>왼쪽 트리에서 파일을 선택하면 문서가 표시됩니다.</p>
+        </div>'''
 
-    html = INDEX_TEMPLATE.format(repo_nav_html=repo_nav_html, main_content=main_content)
-    html = html.replace('</script>\n</body>', f'''</script>
-    <script>
-        function toggleDir(el) {{
-            const children = el.parentElement.querySelector('.tree-children');
-            const icon = el.querySelector('.tree-toggle');
-            if (children) {{
-                children.classList.toggle('collapsed');
-                icon.classList.toggle('open');
-                if (!children.classList.contains('collapsed') && children.dataset.path && !children.dataset.loaded) {{
-                    loadSubtree(children, children.dataset.path);
-                }}
-            }}
-        }}
-        async function loadSubtree(container, path) {{
-            container.dataset.loaded = '1';
-            container.innerHTML = '<div class="loading">Loading...</div>';
-            try {{
-                const repo_id = '{repo_id}';
-                const res = await fetch('{view_prefix}/api/repos/' + repo_id + '/tree?path=' + encodeURIComponent(path));
-                if (!res.ok) throw new Error('Failed');
-                const data = await res.json();
-                let html = '';
-                const dirs = data.entries.filter(e => e.type === 'dir').sort((a,b) => a.name.localeCompare(b.name));
-                const files = data.entries.filter(e => e.type === 'file').sort((a,b) => a.name.localeCompare(b.name));
-                for (const e of dirs) {{
-                    html += '<div class="tree-entry" onclick="toggleDir(this)">' +
-                        '<svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>' +
-                        '<svg class="dir-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>' +
-                        '<span class="name">' + e.name + '/</span></div>' +
-                        '<div class="tree-children collapsed" data-path="' + e.path + '"></div>';
-                }}
-                for (const e of files) {{
-                    html += '<div class="tree-entry">' +
-                        '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
-                        '<svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
-                        '<span class="name"><a href="{view_prefix}/' + repo_id + '/' + e.path + '">' + e.name + '</a></span></div>';
-                }}
-                container.innerHTML = html || '<div style="padding:8px;color:var(--text-disabled);font-size:13px;">Empty</div>';
-            }} catch(err) {{
-                container.innerHTML = '<div style="padding:8px;color:#E01E1F;">Failed to load</div>';
-            }}
-        }}
-        function filterTree(query) {{
-            const q = query.toLowerCase();
-            document.querySelectorAll('#file-tree .tree-entry').forEach(el => {{
-                const name = el.querySelector('.name').textContent.toLowerCase();
-                el.style.display = !q || name.includes(q) ? '' : 'none';
-            }});
-        }}
-    </script>
-</body>''')
+    html = INDEX_TEMPLATE.format(
+        repo_options=repo_options,
+        sidebar_tree_html=sidebar_tree_html,
+        main_content=main_content,
+        view_prefix=VIEW_PREFIX,
+        active_repo_id=repo_id,
+        theme_vars_css=THEME_VARS_CSS,
+        active_theme="github-light",
+        theme_options=_build_theme_options(),
+    )
     return HTMLResponse(content=html)
 
 
-def _build_tree_html(repo_id, path):
+def _render_file_response(repo_id: str, path: str, theme: str = "github-light"):
+    manager = get_repo_manager(repo_id)
     try:
-        manager = get_repo_manager(repo_id)
-        entries = manager.list_tree(path)
-    except Exception:
-        return '<div class="empty-state"><p>Failed to load file tree.</p></div>'
+        content = manager.read_file_text(path)
 
-    dirs = sorted([e for e in entries if e.type == "dir"], key=lambda e: e.name)
-    files = sorted([e for e in entries if e.type == "file"], key=lambda e: e.name)
+        suffix = PurePosixPath(path).suffix.lower()
+        is_md = suffix in MARKDOWN_EXTENSIONS
+        if not is_md:
+            language = get_code_language(path)
+            if language is None:
+                raise HTTPException(status_code=415, detail="Unsupported file type for viewing")
+            content = _wrap_code_as_markdown(path, content, language)
 
-    html = ""
-    for e in dirs:
-        html += f'''<div class="tree-entry" onclick="toggleDir(this)">
-            <svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-            <svg class="dir-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
-            <span class="name">{e.name}/</span>
-        </div>
-        <div class="tree-children collapsed" data-path="{e.path}"></div>'''
-    for e in files:
-        file_url = _view_url(f"{repo_id}/{e.path}")
-        html += f'''<div class="tree-entry">
-            <svg style="width:18px" viewBox="0 0 24 24"></svg>
-            <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            <span class="name"><a href="{file_url}">{e.name}</a></span>
-        </div>'''
-    if not html:
-        html = '<div style="padding:8px;color:var(--text-disabled);font-size:13px;">Empty repository</div>'
-    return html
+        rendered = render_markdown(content)
+        if is_md:
+            rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path)
+
+        toc_html = generate_toc_html(rendered.get("toc", []))
+
+        if theme not in THEME_CSS:
+            theme = "github-light"
+        theme_css = THEME_CSS[theme]
+        hljs_theme = THEME_HLJS.get(theme, "github")
+        mermaid_theme = THEME_MERMAID.get(theme, "default")
+        theme_options = _build_theme_options(theme)
+
+        has_mermaid = 'class="mermaid"' in rendered.get("html", "")
+        if has_mermaid:
+            mermaid_scripts = (
+                f'<script src="{VIEW_PREFIX}/static/vendor/mermaid.min.js"></script>\n'
+                f'    <script>mermaid.initialize({{ startOnLoad: false, theme: \'{mermaid_theme}\' }});mermaid.run();</script>'
+            )
+        else:
+            mermaid_scripts = ""
+
+        toolbar_buttons = ""
+        if is_md:
+            from synctx_common.frontmatter import parse_frontmatter
+            try:
+                original_content = manager.read_file_text(path)
+                fm, _ = parse_frontmatter(original_content)
+            except Exception:
+                fm = None
+            is_marp = fm.get("marp", False) if fm else False
+            if is_marp:
+                toolbar_buttons += '<button class="btn" onclick="convertMarpPdf()">PDF (Marp)</button>'
+                toolbar_buttons += '<button class="btn btn-secondary" onclick="publishMarpSlide()">출판 (Marp)</button>'
+        if path.endswith(".drawio"):
+            toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
+        if not toolbar_buttons:
+            toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}">다운로드</a>'
+
+        html = VIEWER_TEMPLATE.format(
+            title=rendered.get("title", "Document"),
+            theme_vars_css=THEME_VARS_CSS,
+            active_theme=theme,
+            theme_css=theme_css,
+            hljs_theme=hljs_theme,
+            mermaid_theme=mermaid_theme,
+            view_prefix=VIEW_PREFIX,
+            repo_id=repo_id,
+            path=path,
+            toc_html=toc_html,
+            theme_options=theme_options,
+            toolbar_buttons=toolbar_buttons,
+            html_body=rendered.get("html", ""),
+            raw_markdown=content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
+            mermaid_scripts=mermaid_scripts,
+        )
+        return HTMLResponse(content=html)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
+
+
+@app.get("/api/repos/{repo_id}/render", dependencies=[Depends(verify_viewer_access)])
+def render_file(repo_id: str, path: str, theme: str = "github-light"):
+    return _render_file_response(repo_id, path, theme)
 
 
 @app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
-def render_permalink(repo_id: str, path: str):
+def render_permalink(repo_id: str, path: str, theme: str = "github-light"):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
-    return render_file(repo_id, path)
+    return _render_file_response(repo_id, path, theme)
+
+
+# ── Kanban Board ──
 
 KANBAN_TEMPLATE = """<!DOCTYPE html>
 <html lang="ko">
@@ -644,17 +969,16 @@ KANBAN_TEMPLATE = """<!DOCTYPE html>
 </body>
 </html>"""
 
+
 @app.get("/api/repos/{repo_id}/board/{version}", dependencies=[Depends(verify_viewer_access)])
 def render_board(repo_id: str, version: str):
     manager = get_repo_manager(repo_id)
     try:
         entries = manager.list_tree("")
-        
-        # Simple Kanban state mapping
         columns = {"open": [], "in_progress": [], "closed": []}
-        
+
         from synctx_common.frontmatter import parse_frontmatter
-        
+
         for entry in entries:
             if entry.type == "file" and entry.name.endswith(".md"):
                 content = manager.read_file_text(entry.path)
@@ -663,17 +987,17 @@ def render_board(repo_id: str, version: str):
                     meta = fm["synctx"]
                     if meta.get("type") == "task" and meta.get("version") == version:
                         status = meta.get("status", "open").lower()
-                        # Map status to columns
                         col_key = "open"
-                        if status in ["in_progress", "doing", "active"]: col_key = "in_progress"
-                        elif status in ["closed", "done", "resolved"]: col_key = "closed"
-                        
+                        if status in ["in_progress", "doing", "active"]:
+                            col_key = "in_progress"
+                        elif status in ["closed", "done", "resolved"]:
+                            col_key = "closed"
                         columns[col_key].append({
                             "path": entry.path,
                             "title": fm.get("title", entry.name),
-                            "priority": meta.get("priority", "normal")
+                            "priority": meta.get("priority", "normal"),
                         })
-                        
+
         columns_html = ""
         for col_name, cards in columns.items():
             cards_html = ""
@@ -693,7 +1017,7 @@ def render_board(repo_id: str, version: str):
                 {cards_html}
             </div>
             """
-            
+
         html = KANBAN_TEMPLATE.format(version=version, repo_id=repo_id, columns_html=columns_html)
         return HTMLResponse(content=html)
     except Exception as e:

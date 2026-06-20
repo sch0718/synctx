@@ -34,6 +34,18 @@ spec:
             - name: SYNCTX_CONFIG_PATH
               value: /etc/synctx/.synctx.yaml
             {{- end }}
+            {{- if or .Values.git.secrets.create .Values.git.secrets.existingSecret }}
+            - name: GIT_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.git.secrets.existingSecret | default (printf "%s-git-secrets" (include "synctx.fullname" .)) }}
+                  key: read-token
+            - name: GIT_PUBLISH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.git.secrets.existingSecret | default (printf "%s-git-secrets" (include "synctx.fullname" .)) }}
+                  key: publish-token
+            {{- end }}
           startupProbe:
             httpGet:
               path: /healthz

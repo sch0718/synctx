@@ -27,10 +27,21 @@ spec:
             - name: http
               containerPort: 8000
               protocol: TCP
-          {{- if .Values.synctxConfig.create }}
+          {{- if or .Values.synctxConfig.create .Values.git.secrets.create .Values.git.secrets.existingSecret }}
           env:
+            {{- if .Values.synctxConfig.create }}
             - name: SYNCTX_CONFIG_PATH
               value: /etc/synctx/.synctx.yaml
+            {{- end }}
+            {{- if or .Values.git.secrets.create .Values.git.secrets.existingSecret }}
+            - name: GIT_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.git.secrets.existingSecret | default (printf "%s-git-secrets" (include "synctx.fullname" .)) }}
+                  key: read-token
+            {{- end }}
+          {{- end }}
+          {{- if .Values.synctxConfig.create }}
           volumeMounts:
             - name: synctx-config
               mountPath: /etc/synctx/.synctx.yaml
