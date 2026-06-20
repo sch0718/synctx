@@ -201,6 +201,32 @@ class GitRepoManager:
     def invalidate_cache(self) -> None:
         return
 
+    def list_branches(self) -> list[str]:
+        """원격 브랜치 목록을 반환한다."""
+        result = self._run_git("ls-remote", "--heads", "origin")
+        branches: list[str] = []
+        for line in result.stdout.decode("utf-8").strip().splitlines():
+            if not line:
+                continue
+            parts = line.split("\t", 1)
+            if len(parts) == 2:
+                branches.append(parts[1].replace("refs/heads/", ""))
+        return sorted(branches)
+
+    def _resolve_ref(self, ref: str | None = None) -> str:
+        """ref를 git 명령에 사용할 수 있는 형태로 변환한다."""
+        if ref is None or ref == self.profile.default_ref:
+            return self.profile.default_ref
+        try:
+            self._run_git(
+                "fetch", "origin",
+                f"refs/heads/{ref}:refs/remotes/origin/{ref}",
+            )
+        except subprocess.CalledProcessError:
+            logger.warning("fetch_ref_failed repo_id=%s ref=%s", self.profile.id, ref)
+            raise
+        return f"origin/{ref}"
+
     def validate_path(self, path: str) -> str:
         """경로 탐색(Path Traversal) 공격을 방어하고 정규화된 경로를 반환한다."""
         normalized = os.path.normpath(path.strip("/"))
@@ -208,10 +234,10 @@ class GitRepoManager:
             raise ValueError(f"Invalid path: {path}")
         return normalized
 
-    def list_tree(self, path: str = "", recursive: bool = False) -> list[TreeEntry]:
-        # path는 validate_path를 거친 repo 루트 기준 경로를 받는다.
+    def list_tree(self, path: str = "", recursive: bool = False, ref: str | None = None) -> list[TreeEntry]:
         target = self.validate_path(path) if path else ""
-        tree_spec = self.profile.default_ref if not target else f"{self.profile.default_ref}:{target}"
+        resolved = self._resolve_ref(ref)
+        tree_spec = resolved if not target else f"{resolved}:{target}"
         args = ["ls-tree"]
         if recursive:
             args.append("-r")
@@ -232,15 +258,16 @@ class GitRepoManager:
             entries.append(TreeEntry(name=name, path=full_path, type=item_type))
         return entries
 
-    def read_file(self, path: str) -> bytes:
+    def read_file(self, path: str, ref: str | None = None) -> bytes:
         target = self.validate_path(path)
+        resolved = self._resolve_ref(ref)
         if self.profile.storage_mode in {"blobless", "treeless"}:
             logger.info("lazy_blob_fetch repo_id=%s path=%s", self.profile.id, target)
-        result = self._run_git("show", f"{self.profile.default_ref}:{target}")
+        result = self._run_git("show", f"{resolved}:{target}")
         return result.stdout
 
-    def read_file_text(self, path: str) -> str:
-        return self.read_file(path).decode("utf-8")
+    def read_file_text(self, path: str, ref: str | None = None) -> str:
+        return self.read_file(path, ref=ref).decode("utf-8")
 
     def last_commit(self, path: str) -> CommitInfo:
         target = self.validate_path(path)
