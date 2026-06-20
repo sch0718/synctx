@@ -72,11 +72,21 @@ def list_repos():
     }
 
 
-@app.get("/api/repos/{repo_id}/tree", dependencies=[Depends(verify_viewer_access)])
-def get_tree(repo_id: str, path: str = ""):
+@app.get("/api/repos/{repo_id}/branches", dependencies=[Depends(verify_viewer_access)])
+def list_branches(repo_id: str):
     manager = get_repo_manager(repo_id)
     try:
-        entries = manager.list_tree(path)
+        branches = manager.list_branches()
+        return {"branches": branches, "default": manager.profile.default_ref}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/repos/{repo_id}/tree", dependencies=[Depends(verify_viewer_access)])
+def get_tree(repo_id: str, path: str = "", ref: str | None = None):
+    manager = get_repo_manager(repo_id)
+    try:
+        entries = manager.list_tree(path, ref=ref)
         result = []
         for e in entries:
             entry = e.__dict__.copy()
@@ -93,10 +103,10 @@ def get_tree(repo_id: str, path: str = ""):
 
 
 @app.get("/api/repos/{repo_id}/download", dependencies=[Depends(verify_viewer_access)])
-def download_file(repo_id: str, path: str):
+def download_file(repo_id: str, path: str, ref: str | None = None):
     manager = get_repo_manager(repo_id)
     try:
-        content = manager.read_file(path)
+        content = manager.read_file(path, ref=ref)
         filename = os.path.basename(path.strip("/")) or "download"
         return Response(
             content=content,
@@ -108,10 +118,10 @@ def download_file(repo_id: str, path: str):
 
 
 @app.get("/raw/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
-def raw_file(repo_id: str, path: str):
+def raw_file(repo_id: str, path: str, ref: str | None = None):
     manager = get_repo_manager(repo_id)
     try:
-        return Response(content=manager.read_file(path), media_type="application/octet-stream")
+        return Response(content=manager.read_file(path, ref=ref), media_type="application/octet-stream")
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
 
@@ -373,7 +383,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
     <div class="viewer-sidebar">
         <h3><a href="{view_prefix}">synctx</a></h3>
         <div class="path-info">
-            <a href="{view_prefix}/{repo_id}">{repo_id}</a> / {path}
+            <a href="{view_prefix}/{repo_id}{ref_param_first}">{repo_id}</a> / {path}
         </div>
         <hr>
         <div class="toc-title">목차</div>
@@ -383,7 +393,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
         <div class="viewer-toolbar">
             <div class="breadcrumb">
                 <a href="{view_prefix}">synctx</a> &rsaquo;
-                <a href="{view_prefix}/{repo_id}">{repo_id}</a> &rsaquo; {path}
+                <a href="{view_prefix}/{repo_id}{ref_param_first}">{repo_id}</a> &rsaquo; {path}
             </div>
             <div class="actions">
                 <select id="theme-select" onchange="changeTheme(this.value)">{theme_options}</select>
@@ -494,13 +504,14 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         }}
         .sidebar-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-disabled); margin-bottom: 12px; padding: 0 8px; }}
 
-        .repo-select {{
+        .repo-select, .branch-select {{
             width: 100%; padding: 10px 12px; border: 1px solid var(--border-color);
             border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text-primary);
             font-size: 14px; font-weight: 600; font-family: var(--font-primary);
             cursor: pointer; margin-bottom: 16px; appearance: auto;
         }}
-        .repo-select:focus {{ outline: 2px solid var(--primary); outline-offset: -2px; }}
+        .branch-select {{ font-size: 13px; font-weight: 400; margin-bottom: 12px; }}
+        .repo-select:focus, .branch-select:focus {{ outline: 2px solid var(--primary); outline-offset: -2px; }}
 
         .main {{ margin-left: var(--sidebar-width); flex: 1; padding: 32px; }}
 
@@ -593,6 +604,11 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             <select id="repo-select" class="repo-select" onchange="onRepoChange(this.value)">
                 {repo_options}
             </select>
+            <div id="branch-select-wrapper" style="display:{branch_select_display}">
+                <select id="branch-select" class="branch-select" onchange="onBranchChange(this.value)">
+                    {branch_options}
+                </select>
+            </div>
             <div id="sidebar-tree">{sidebar_tree_html}</div>
         </aside>
         <main class="main">
@@ -603,6 +619,11 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     <script>
         var VIEW_PREFIX = '{view_prefix}';
         var ACTIVE_REPO = '{active_repo_id}';
+        var ACTIVE_REF = '{active_ref}';
+
+        function _refParam(sep) {{
+            return ACTIVE_REF ? sep + 'ref=' + encodeURIComponent(ACTIVE_REF) : '';
+        }}
 
         function changeTheme(theme) {{
             document.documentElement.setAttribute('data-theme', theme);
@@ -623,6 +644,13 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             }} else {{
                 window.location.href = VIEW_PREFIX;
             }}
+        }}
+
+        function onBranchChange(ref) {{
+            if (!ACTIVE_REPO) return;
+            var url = VIEW_PREFIX + '/' + ACTIVE_REPO;
+            if (ref) url += '?ref=' + encodeURIComponent(ref);
+            window.location.href = url;
         }}
 
         var ICON_DIR = '<svg class="icon-dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>';
@@ -647,7 +675,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             container.dataset.loaded = '1';
             container.innerHTML = '<div class="loading" style="padding:8px;font-size:13px;">Loading...</div>';
             try {{
-                var res = await fetch(VIEW_PREFIX + '/api/repos/' + ACTIVE_REPO + '/tree?path=' + encodeURIComponent(path));
+                var res = await fetch(VIEW_PREFIX + '/api/repos/' + ACTIVE_REPO + '/tree?path=' + encodeURIComponent(path) + _refParam('&'));
                 if (!res.ok) throw new Error('Failed');
                 var data = await res.json();
                 var html = '';
@@ -668,7 +696,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                         html += '<div class="tree-entry">' +
                             '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
                             ficon +
-                            '<span class="name"><a href="' + VIEW_PREFIX + '/' + ACTIVE_REPO + '/' + f.path + '">' + f.name + '</a></span></div>';
+                            '<span class="name"><a href="' + VIEW_PREFIX + '/' + ACTIVE_REPO + '/' + f.path + _refParam('?') + '">' + f.name + '</a></span></div>';
                     }} else {{
                         html += '<div class="tree-entry disabled">' +
                             '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
@@ -709,13 +737,25 @@ def generate_toc_html(toc_tokens):
 DIR_ICON_SVG = '<svg class="icon-dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>'
 
 
-def _build_tree_html(repo_id, path):
+def _build_branch_options(branches, active_ref, default_ref):
+    html = ""
+    for b in branches:
+        label = b
+        if b == default_ref:
+            label += " (default)"
+        sel = " selected" if b == active_ref else ""
+        html += f'<option value="{b}"{sel}>{label}</option>'
+    return html
+
+
+def _build_tree_html(repo_id, path, ref=None):
     try:
         manager = get_repo_manager(repo_id)
-        entries = manager.list_tree(path)
+        entries = manager.list_tree(path, ref=ref)
     except Exception:
         return '<div class="empty-state"><p>Failed to load file tree.</p></div>'
 
+    ref_param = f"?ref={ref}" if ref else ""
     dirs = sorted([e for e in entries if e.type == "dir"], key=lambda e: e.name)
     files = sorted([e for e in entries if e.type == "file"], key=lambda e: e.name)
 
@@ -730,7 +770,7 @@ def _build_tree_html(repo_id, path):
     for e in files:
         icon = _file_icon_svg(e.path)
         if is_viewable(e.path):
-            file_url = _view_url(f"{repo_id}/{e.path}")
+            file_url = _view_url(f"{repo_id}/{e.path}") + ref_param
             html += f'''<div class="tree-entry">
             <svg style="width:18px" viewBox="0 0 24 24"></svg>
             {icon}
@@ -787,12 +827,15 @@ def view_index():
         theme_vars_css=THEME_VARS_CSS,
         active_theme="github-light",
         theme_options=_build_theme_options(),
+        branch_options="",
+        branch_select_display="none",
+        active_ref="",
     )
     return HTMLResponse(content=html)
 
 
 @app.get("/{repo_id}", dependencies=[Depends(verify_viewer_access)])
-def view_repo(repo_id: str):
+def view_repo(repo_id: str, ref: str | None = None):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -801,15 +844,24 @@ def view_repo(repo_id: str):
     repo_options = _build_repo_options(repos, active_id=repo_id)
     repo = manager.profile
 
+    active_ref = ref or ""
+    effective_ref = ref if ref and ref != repo.default_ref else None
+
     try:
-        entries = manager.list_tree("")
+        branches = manager.list_branches()
+    except Exception:
+        branches = [repo.default_ref]
+    branch_options = _build_branch_options(branches, ref or repo.default_ref, repo.default_ref)
+
+    try:
+        entries = manager.list_tree("", ref=effective_ref)
         dir_count = sum(1 for e in entries if e.type == "dir")
         file_count = sum(1 for e in entries if e.type == "file")
     except Exception:
         dir_count = 0
         file_count = 0
 
-    tree_html = _build_tree_html(repo_id, "")
+    tree_html = _build_tree_html(repo_id, "", ref=effective_ref)
 
     sidebar_tree_html = f'''
         <div class="search-box">
@@ -818,9 +870,10 @@ def view_repo(repo_id: str):
         </div>
         <div class="tree" id="file-tree">{tree_html}</div>'''
 
+    ref_display = f" ({ref})" if ref and ref != repo.default_ref else ""
     main_content = f'''
         <div class="breadcrumb">
-            <a href="{VIEW_PREFIX}">Repositories</a><span class="sep">&rsaquo;</span>{repo.name}
+            <a href="{VIEW_PREFIX}">Repositories</a><span class="sep">&rsaquo;</span>{repo.name}{ref_display}
         </div>
         <div class="card">
             <div class="card-header">
@@ -848,14 +901,20 @@ def view_repo(repo_id: str):
         theme_vars_css=THEME_VARS_CSS,
         active_theme="github-light",
         theme_options=_build_theme_options(),
+        branch_options=branch_options,
+        branch_select_display="block",
+        active_ref=active_ref,
     )
     return HTMLResponse(content=html)
 
 
-def _render_file_response(repo_id: str, path: str, theme: str = "github-light"):
+def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
     manager = get_repo_manager(repo_id)
+    effective_ref = ref if ref and ref != manager.profile.default_ref else None
+    ref_param = f"&ref={ref}" if ref else ""
+    ref_param_first = f"?ref={ref}" if ref else ""
     try:
-        content = manager.read_file_text(path)
+        content = manager.read_file_text(path, ref=effective_ref)
 
         suffix = PurePosixPath(path).suffix.lower()
         is_md = suffix in MARKDOWN_EXTENSIONS
@@ -891,7 +950,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light"):
         if is_md:
             from synctx_common.frontmatter import parse_frontmatter
             try:
-                original_content = manager.read_file_text(path)
+                original_content = manager.read_file_text(path, ref=effective_ref)
                 fm, _ = parse_frontmatter(original_content)
             except Exception:
                 fm = None
@@ -902,7 +961,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light"):
         if path.endswith(".drawio"):
             toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
         if not toolbar_buttons:
-            toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}">다운로드</a>'
+            toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}{ref_param}">다운로드</a>'
 
         html = VIEWER_TEMPLATE.format(
             title=rendered.get("title", "Document"),
@@ -920,6 +979,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light"):
             html_body=rendered.get("html", ""),
             raw_markdown=content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
             mermaid_scripts=mermaid_scripts,
+            ref_param_first=ref_param_first,
         )
         return HTMLResponse(content=html)
     except HTTPException:
@@ -929,15 +989,15 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light"):
 
 
 @app.get("/api/repos/{repo_id}/render", dependencies=[Depends(verify_viewer_access)])
-def render_file(repo_id: str, path: str, theme: str = "github-light"):
-    return _render_file_response(repo_id, path, theme)
+def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
+    return _render_file_response(repo_id, path, theme, ref=ref)
 
 
 @app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
-def render_permalink(repo_id: str, path: str, theme: str = "github-light"):
+def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
-    return _render_file_response(repo_id, path, theme)
+    return _render_file_response(repo_id, path, theme, ref=ref)
 
 
 # ── Kanban Board ──
