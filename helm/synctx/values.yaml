@@ -59,6 +59,27 @@ sync:
       cpu: 1000m
       memory: 1Gi
 
+feedback:
+  enabled: false
+  image:
+    repository: synctx/feedback
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  schedule: "*/5 * * * *"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  secrets:
+    create: false
+    existingSecret: ""
+    hmacKey: ""
+    hashSalt: ""
+    smtpCredential: ""
+
 ingress:
   enabled: true
   className: "nginx"

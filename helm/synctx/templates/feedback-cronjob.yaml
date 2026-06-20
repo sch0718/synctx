@@ -1,0 +1,71 @@
+{{- if .Values.feedback.enabled }}
+{{- if and (not .Values.feedback.secrets.create) (not .Values.feedback.secrets.existingSecret) }}
+  {{- fail "feedback.enabled=true requires either feedback.secrets.create=true or feedback.secrets.existingSecret to be set" }}
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "synctx.fullname" . }}-feedback
+  labels:
+    app.kubernetes.io/name: feedback
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  schedule: {{ .Values.feedback.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: feedback
+            app.kubernetes.io/instance: {{ .Release.Name }}
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+          containers:
+            - name: feedback
+              image: "{{ .Values.feedback.image.repository }}:{{ .Values.feedback.image.tag }}"
+              imagePullPolicy: {{ .Values.feedback.image.pullPolicy | default "IfNotPresent" }}
+              command: ["synctx-feedback"]
+              env:
+                - name: OUTBOUND_FEEDBACK_HMAC_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
+                      key: hmac-key
+                - name: OUTBOUND_FEEDBACK_HASH_SALT
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
+                      key: hash-salt
+                - name: OUTBOUND_SMTP_CREDENTIAL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
+                      key: smtp-credential
+                {{- if .Values.synctxConfig.create }}
+                - name: SYNCTX_CONFIG_PATH
+                  value: /etc/synctx/.synctx.yaml
+                {{- end }}
+              volumeMounts:
+                - name: sync-state
+                  mountPath: /data/sync-state
+                {{- if .Values.synctxConfig.create }}
+                - name: synctx-config
+                  mountPath: /etc/synctx/.synctx.yaml
+                  subPath: .synctx.yaml
+                  readOnly: true
+                {{- end }}
+              resources:
+                {{- toYaml .Values.feedback.resources | nindent 16 }}
+          volumes:
+            - name: sync-state
+              persistentVolumeClaim:
+                claimName: {{ include "synctx.fullname" . }}-sync-state
+            {{- if .Values.synctxConfig.create }}
+            - name: synctx-config
+              configMap:
+                name: {{ include "synctx.fullname" . }}-config
+            {{- end }}
+{{- end }}

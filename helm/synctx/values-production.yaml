@@ -58,6 +58,14 @@ drawio:
     repository: registry.internal/jgraph/drawio
     tag: "24.2.5"
 
+feedback:
+  enabled: true
+  image:
+    repository: registry.internal/synctx/feedback
+    tag: "0.1.0"
+  secrets:
+    existingSecret: "synctx-feedback-secrets"
+
 ingress:
   enabled: true
   className: "nginx"

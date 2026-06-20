@@ -24,6 +24,7 @@ members = [
     "services/cdn",
     "services/marp",
     "services/sync",
+    "services/feedback",
 ]
 
 [tool.uv.sources]
