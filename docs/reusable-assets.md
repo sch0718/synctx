@@ -207,19 +207,17 @@ git diff --name-status <last-sync-sha>..HEAD -- '*.md'
 
 | 모듈 | 설명 | 복잡도 |
 |------|------|--------|
-| `app.py` | FastAPI 서버 | 낮음 |
-| `marp_routes.py` | 변환/출판/미리보기 API | 중 |
-| `git_publisher.py` | HTML → Git 커밋 출판 모듈 | 중 |
+| `app.py` | FastAPI 서버, 변환/출판/미리보기/목록/삭제 API | 중 |
 
 ### Sync Engine
 
 | 모듈 | 설명 | 복잡도 |
 |------|------|--------|
 | `sync_engine.py` | 동기화 오케스트레이션 | 높음 |
-| `path_mapper.py` | 경로 + front matter → 대상 매핑 | 중 |
+| `converters/mermaid.py` | Mermaid → SVG 변환 | 중 |
 | `targets/xwiki.py` | XWiki REST API 클라이언트 | 중 |
 | `targets/openproject.py` | OpenProject REST API v3 클라이언트 | 중 |
-| `cli.py` | CLI 엔트리포인트 | 낮음 |
+| `sync_cli.py` | CLI 엔트리포인트 | 낮음 |
 
 ### Draw.io Service
 

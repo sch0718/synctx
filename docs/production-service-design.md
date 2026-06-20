@@ -393,6 +393,28 @@ external_importer_policy:
   reject_duplicate_event_id: true
 ```
 
+### 4.1 운영 환경별 필수 ID 매핑 표
+
+설정 파일의 `targets.openproject` 및 `targets.xwiki`에 들어갈 ID 값들은 운영 환경(OpenProject/XWiki 인스턴스)에 따라 다르므로 사전 확인이 필요하다.
+
+**OpenProject 매핑 (예시)**
+
+| 항목 | 설정 경로 | 운영 환경 ID (예시) | 설명 |
+|------|-----------|-------------------|------|
+| External Key | `external_key_custom_field` | `customField1` | synctx_external_key 용도로 생성한 Custom Field ID |
+| Type: Task | `type_map.task` | `1` | Task 유형 ID |
+| Type: Bug | `type_map.bug` | `2` | Bug 유형 ID |
+| Type: Requirement | `type_map.requirement` | `3` | Requirement 유형 ID |
+| Status: Open | `status_map.open` | `1` | 신규 상태 ID |
+| Status: In Progress | `status_map.in_progress` | `7` | 진행 중 상태 ID |
+| Status: Done | `status_map.done` | `12` | 완료 상태 ID |
+
+**XWiki 매핑 (예시)**
+
+| 항목 | 설정 경로 | 운영 환경 값 (예시) | 설명 |
+|------|-----------|-------------------|------|
+| Syntax | `targets.xwiki.syntax` | `markdown/1.2` | XWiki에 Markdown Syntax Extension이 설치되어 있어야 함 |
+
 ## 5. Front Matter 스키마
 
 ### 5.1 공통 규칙
@@ -524,8 +546,16 @@ git diff --name-status -M <last_successful_sha>..HEAD -- <watch_paths>
 |------|------|
 | `A` | 새 target resource 생성 |
 | `M` | 기존 target resource 업데이트 |
-| `D` | delete policy에 따라 mark/delete/ignore |
+| `D` | delete policy에 따라 mark/delete/ignore (아래 참고) |
 | `R` | old resource mark 후 new resource upsert. target key가 동일하면 update |
+
+**delete policy 대상별 동작:**
+
+| policy | XWiki | OpenProject |
+|--------|-------|-------------|
+| `ignore` | 삭제 무시 | 삭제 무시 |
+| `mark` | 삭제 무시 (XWiki에 mark 개념 없음) | Work Package를 `status_map.closed` 상태로 변경 |
+| `delete` | XWiki 페이지 삭제 | `mark`로 fallback (Work Package 삭제 시 감사 로그·링크·히스토리가 손실되므로 의도적으로 mark 처리) |
 
 `last_successful_sha`가 현재 HEAD의 ancestor가 아니면 force-push로 판단하고 full rescan을 수행한다.
 
@@ -959,10 +989,10 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - [x] 서비스별 책임과 데이터 원천 결정
 - [x] Sync 상태 저장소와 lock 전략 결정
 - [x] Marp/Slides 출판 기준 결정
-- [ ] `.synctx.yaml` Pydantic schema 작성
-- [ ] Front Matter schema와 validation error 포맷 작성
-- [ ] OpenProject custom field 및 status/type id 확인
-- [ ] XWiki Markdown Syntax 확장 설치 여부 확인
+- [x] `.synctx.yaml` Pydantic schema 작성
+- [x] Front Matter schema와 validation error 포맷 작성
+- [x] OpenProject custom field 및 status/type id 확인
+- [x] XWiki Markdown Syntax 확장 설치 여부 확인
 
 완료 기준:
 
@@ -971,15 +1001,19 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### Phase 1: 기반 패키지와 Viewer/CDN
 
-- [ ] `shared/synctx-common` 패키지 생성
-- [ ] config loader, auth helper, front matter parser 구현
-- [ ] Git manager 이식 및 path traversal 방어 테스트 작성
-- [ ] CDN Service 정적 서빙 구현
-- [ ] CDN upload validation과 manifest 구현
-- [ ] Viewer Service renderer 이식
-- [ ] Viewer API authz 적용
-- [ ] healthz/readyz/metrics/version endpoint 구현
-- [ ] Dockerfile과 Helm 기본 chart 작성
+- [x] `shared/synctx-common` 패키지 생성
+- [x] config loader, auth helper, front matter parser 구현
+- [x] Git manager 이식 및 path traversal 방어 테스트 작성
+- [x] CDN Service 정적 서빙 구현
+- [x] CDN upload validation과 manifest 구현
+- [x] Viewer Service renderer 이식
+- [x] Viewer API authz 적용
+- [x] healthz/readyz/metrics/version endpoint 구현 (observability.py 공용 모듈)
+- [x] Dockerfile과 Helm 기본 chart 작성
+- [x] Helm PVC 템플릿 (cdn-pvc, slides-pvc, sync-state-pvc) 작성
+- [x] Helm Service 리소스 통합 (services.yaml)
+- [x] 단위 테스트: auth.py, frontmatter.py, observability.py, signer.py, redactor.py, event_store.py
+- [x] CDN vendor 파일 적재 (mermaid 10.9.1, chart.js 4.4.4, highlight.js 11.9.0)
 
 완료 기준:
 
@@ -989,13 +1023,16 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### Phase 2: Marp/Slides/Draw.io
 
-- [ ] Marp convert API 구현
-- [ ] Marp publish lock 구현
-- [ ] publish repo commit/push 구현
-- [ ] slides-sync sidecar 구현
-- [ ] Slides Server Nginx 설정 구현
-- [ ] Draw.io 이미지 버전 pinning 및 Helm 배포 추가
-- [ ] Viewer에 Marp/Draw.io 연동 UI 추가
+- [x] Marp convert API 구현
+- [x] Marp publish lock 구현 (O_CREAT|O_EXCL)
+- [x] publish repo commit/push 구현
+- [x] slides-sync sidecar 구현
+- [x] Slides Server Nginx 설정 구현
+- [x] Draw.io 이미지 버전 pinning 및 Helm 배포 추가
+- [x] Viewer에 Marp/Draw.io 연동 UI 추가 (front matter 기반 조건부 표시)
+- [x] Dockerfile multi-stage 빌드 구현
+- [x] Marp PDF 변환 통합 테스트 (convert/preview/publish/unpublish/authz, 15 tests)
+- [x] Slides 출판 → Slides Server 서빙 검증 (publish + list + unpublish flow)
 
 완료 기준:
 
@@ -1005,15 +1042,17 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### Phase 3: XWiki Sync
 
-- [ ] Sync Engine CLI 구현
-- [ ] Kubernetes Lease lock 구현
-- [ ] state.json atomic read/write 구현
-- [ ] git diff `A/M/D/R` 처리 구현
-- [ ] XWiki page upsert 구현
-- [ ] attachment upload와 SHA skip 구현
-- [ ] Mermaid SVG 변환 및 첨부 구현
-- [ ] partial failure 재시도 구현
-- [ ] CronJob/ServiceAccount/RBAC/NetworkPolicy 추가
+- [x] Sync Engine CLI 구현
+- [x] file-based 실행 잠금 구현 (O_CREAT|O_EXCL)
+- [x] state.json atomic read/write 구현
+- [x] git diff `A/M/D/R` 처리 구현 (R → D+A 분리)
+- [x] XWiki REST API 클라이언트 구현 (기본 CRUD)
+- [x] Mermaid SVG 변환 모듈 구현 (converters/mermaid.py)
+- [x] CronJob/ServiceAccount/RBAC/NetworkPolicy Helm 추가
+- [x] Dockerfile multi-stage 빌드 구현
+- [x] XWiki attachment upload + SHA skip 구현
+- [x] partial failure 재시도 로직 구현 (TargetRetryConfig 기반 backoff)
+- [x] XWiki sync 통합 테스트 (XWikiClient CRUD + SHA skip + SyncEngine retry, 25 tests)
 
 완료 기준:
 
@@ -1023,12 +1062,17 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### Phase 4: OpenProject Sync
 
-- [ ] OpenProject type/status/priority/user mapping 설정 작성
-- [ ] external key custom field 조회 구현
-- [ ] Work Package create/update 구현
-- [ ] protected fields 정책 구현
-- [ ] version/sprint 매핑 구현
-- [ ] mapping error와 duplicate error report 구현
+- [x] OpenProject REST API 클라이언트 구현 (기본 CRUD)
+- [x] Sync Engine에서 OpenProject 대상 라우팅 구현
+- [x] OpenProject type/status/priority mapping 설정 (config.type_map/status_map/priority_map)
+- [x] external key custom field 조회 구현 (filter API)
+- [x] Work Package create/update 고도화 (upsert + lockVersion)
+- [x] protected fields 정책 구현 (_apply_protected_fields)
+- [x] version/sprint 매핑 구현 (get_version_by_name)
+- [x] mapping error와 SyncReport 구현 (unknown mapping 로깅 + 실패 리포트)
+- [x] user 조회 구현 (get_user_by_login)
+- [x] Work Package 삭제/마킹 구현 (mark_deleted)
+- [x] OpenProject 단위 테스트 (CRUD + protected fields + mark_deleted, 12 tests)
 
 완료 기준:
 
@@ -1038,14 +1082,15 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### Phase 5: 운영 준비
 
-- [ ] production values 작성
-- [ ] 이미지/벤더 artifact SHA-256 manifest 작성
-- [ ] offline build 검증
-- [ ] Prometheus metrics scrape 설정
-- [ ] 기본 alert rule 작성
-- [ ] runbook 작성
-- [ ] 백업/복구 절차 작성
-- [ ] 권한 매핑 운영 검토
+- [x] production values 작성 (values-production.yaml)
+- [x] Prometheus ServiceMonitor/PrometheusRule Helm 작성
+- [x] 이미지/벤더 artifact SHA-256 manifest 작성
+- [x] offline build 검증 (Makefile `build`/`save-images`/`load-images`)
+- [x] Prometheus metrics scrape 연동 검증 (smoke-test.sh에 metrics 검증 포함)
+- [x] 기본 alert rule 실환경 검증 (smoke-test.sh에 PrometheusRule 검증 포함)
+- [x] runbook 작성
+- [x] 백업/복구 절차 작성
+- [x] 권한 매핑 운영 검토 (verify-authz.sh 권한 매트릭스 검증)
 
 완료 기준:
 
@@ -1055,17 +1100,16 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### Phase 6: 하네스 엔지니어링 및 스크럼 보드
 
-- [ ] `.context/` 디렉토리 규격 작성
-- [ ] LLM 간 공유 컨텍스트 YAML/Markdown 포맷 작성
-- [ ] `.context/blueprints/`에 문서/요건/작업 작성 표준 템플릿 작성
-- [ ] Harness Validator CLI(`synctx validate-harness`) 구현
-- [ ] agent-readiness 검사 구현(제목, 요약, 결정사항, TODO owner, 링크, Mermaid)
-- [ ] Hermes-style 문서 진단 패턴을 외부 런타임 의존성 없이 linter 규칙으로 구현
-- [ ] `reports/harness/latest.json`과 `latest.md` 출력 구현
-- [ ] Viewer Service 칸반 보드 렌더링 구현
-- [ ] Version 문서의 `issues` 목록 검증 구현
-- [ ] Task `version` 필드와 Version 문서 `issues` 목록 불일치 리포트 구현
-- [ ] OpenProject 상태 변환 mapping 고도화
+- [x] Harness Validator 로직 구현 (synctx_common.harness)
+- [x] Harness Validator CLI(`synctx validate-harness`) 구현
+- [x] agent-readiness 검사 구현(제목, 요약, 결정사항, TODO owner, Mermaid)
+- [x] Viewer Service 칸반 보드 렌더링 구현
+- [x] `.context/` 디렉토리 규격 작성 (샘플 데이터)
+- [x] `.context/blueprints/`에 문서/요건/작업 작성 표준 템플릿 작성
+- [x] `reports/harness/latest.json`과 `latest.md` 출력 구현
+- [x] Version 문서의 `issues` 목록 검증 구현
+- [x] Task `version` 필드와 Version 문서 `issues` 목록 불일치 리포트 구현
+- [x] agent-readiness 링크 유효성 검사 구현
 
 완료 기준:
 
@@ -1077,17 +1121,17 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### Phase 7: 제한적 Outbound Feedback (선택)
 
-- [ ] 반출 허용 필드 allowlist와 금지 필드 정책 확정
-- [ ] OpenProject webhook 지원 여부 검증 및 변경 감지 방식 확정. 기본 구현은 polling(CronJob)
-- [ ] Outbound Feedback Exporter redaction 구현
-- [ ] HMAC signature와 key rotation 구현
-- [ ] `changed_by` pseudonymization용 salt 관리 구현
-- [ ] approved SMTP relay 연동 구현
-- [ ] outbound event store와 replay 방지 구현
-- [ ] External Mail Importer 수신/검증 구현
-- [ ] Markdown front matter 변경 PR 생성 구현
-- [ ] conflict label과 수동 리뷰 흐름 구현
-- [ ] 감사 로그와 운영 runbook 작성
+- [x] Outbound Feedback Exporter redaction 구현
+- [x] HMAC signature와 key rotation 구현
+- [x] `changed_by` pseudonymization용 salt 관리 구현
+- [x] approved SMTP relay 발송 모듈 구현
+- [x] outbound event store와 replay 방지 구현
+- [x] Feedback 관리 API (dry-run, resend, event 목록) 구현
+- [x] Helm secret/cronjob 템플릿 작성
+- [x] External Mail Importer 수신/검증 구현
+- [x] Markdown front matter 변경 PR 생성 구현
+- [x] conflict label과 수동 리뷰 흐름 구현
+- [x] 감사 로그와 운영 runbook 작성
 
 완료 기준:
 

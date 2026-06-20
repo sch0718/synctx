@@ -421,17 +421,17 @@ sequenceDiagram
     Viewer-->>User: 출판 완료 및 URL 제공 (https://slides.internal/...)
 ```
 
-### 5.6 Git 출판 모듈 (`git_publisher.py`)
+### 5.6 Git 출판 기능 (`marp/src/app.py`)
 
 ```
-GitPublisher
-├── publish(repo_id, html_content, publish_path)
+Marp publish API
+├── publish_html(markdown, filename)
 │   ├── clone/fetch 출판 대상 저장소
 │   ├── HTML 파일을 지정 경로에 배치
 │   ├── git add + commit
 │   └── git push (내부 GitLab)
-├── list_published(repo_id)           # 출판된 슬라이드 목록
-└── unpublish(repo_id, publish_path)  # 출판 취소 (파일 삭제 + 커밋)
+├── list_published()                  # 출판된 슬라이드 목록
+└── unpublish(filename)               # 출판 취소 (파일 삭제 + 커밋)
 ```
 
 출판된 HTML은 Git 저장소에 커밋되므로 이력 관리가 가능하다.
@@ -711,35 +711,39 @@ synctx:
 
 ```
 synctx-common/
-├── config.py          # 공통 설정 스키마 (dataclass)
+├── config.py          # 공통 설정 스키마 (Pydantic model)
 ├── git_manager.py     # Git 저장소 관리 (clone, fetch, tree, read, diff)
 ├── auth.py            # 인증 헬퍼 (credential_env → header 변환)
-└── front_matter.py    # YAML front matter 파서
+├── frontmatter.py     # YAML front matter 파서 및 Pydantic 검증
+├── observability.py   # healthz/readyz/version/metrics 공통 라우트
+├── harness.py         # Harness Validator 로직 (context schema, agent-readiness)
+└── cli.py             # CLI 엔트리포인트 (validate-harness)
 ```
 
 ### 9.2 Viewer Service 모듈
 
 ```
 viewer/src/
-├── app.py              # FastAPI 앱 + 라우터 등록
-├── repo_routes.py      # 저장소 API (트리, 렌더링, 다운로드)
+├── app.py              # FastAPI 앱 (라우트 통합, lifespan, 칸반 보드)
 ├── renderer.py         # Markdown → HTML 렌더링 엔진
 │   ├── render_markdown()
-│   ├── transform_mermaid_blocks()
 │   ├── rewrite_links()
 │   └── extract_title()
-└── static/             # 프론트엔드
+├── converters/
+│   └── pdf.py          # PDF 변환 유틸리티
+└── static/
+    └── style.css       # 프론트엔드 스타일시트
 ```
 
 ### 9.3 CDN Service 모듈
 
 ```
 cdn/src/
-├── app.py              # FastAPI 앱 + StaticFiles 마운트
-└── cdn_routes.py       # 업로드/목록/삭제 API + 관리 웹 UI
-    ├── upload_files()
+└── app.py              # FastAPI 앱 + StaticFiles 마운트
+    ├── upload_file()       # 업로드 + MIME 검증 + manifest
     ├── list_libraries()
-    ├── list_versions()
+    ├── list_library_versions()
+    ├── cdn_admin()         # 관리 웹 UI (HTML)
     └── delete_file()
 ```
 
@@ -747,38 +751,25 @@ cdn/src/
 
 ```
 marp/src/
-├── app.py              # FastAPI 앱
-├── marp_routes.py      # 변환/출판/미리보기 API
-│   ├── convert()       # PDF/HTML 변환 + 다운로드
-│   ├── publish()       # HTML 출판 (Git 커밋)
-│   └── preview()       # 슬라이드 미리보기
-├── git_publisher.py    # Git 출판 모듈
-│   ├── publish()
-│   ├── list_published()
-│   └── unpublish()
-└── config.py           # Marp 전용 설정
+└── app.py              # FastAPI 앱 (라우트 통합)
+    ├── convert()           # PDF/HTML 변환 + 다운로드
+    ├── publish()           # HTML 출판 (Git 커밋, O_CREAT|O_EXCL lock)
+    ├── preview()           # 슬라이드 미리보기
+    ├── list_published()    # 출판된 슬라이드 목록
+    └── unpublish()         # 슬라이드 삭제
 ```
 
 ### 9.5 Sync Engine 모듈
 
 ```
 sync/src/
-├── cli.py              # CLI 엔트리포인트 (synctx sync)
-├── sync_engine.py      # 동기화 오케스트레이션
-│   ├── detect_changes()
-│   ├── parse_files()
-│   ├── map_targets()
-│   ├── convert()
-│   ├── sync_to_targets()
-│   └── update_state()
-├── harness_validator.py # synctx validate-harness
-├── harness/
-│   ├── context_schema.py
-│   ├── blueprint_linter.py
-│   ├── board_checker.py
-│   ├── agent_readiness.py
-│   └── report_writer.py
-├── path_mapper.py      # 경로 → 도구 리소스 매핑
+├── sync_cli.py         # CLI 엔트리포인트 (synctx-sync)
+├── sync_engine.py      # 동기화 오케스트레이션(run_sync 중심)
+├── harness_validator.py # synctx validate-harness (synctx_common.harness 위임)
+├── state.py            # state.json atomic read/write
+├── lease.py            # 실행 잠금 (O_CREAT|O_EXCL 기반)
+├── converters/
+│   └── mermaid.py      # Mermaid → SVG 변환
 └── targets/
     ├── xwiki.py        # XWiki REST API 클라이언트
     └── openproject.py  # OpenProject REST API 클라이언트
@@ -788,7 +779,8 @@ sync/src/
 
 ```
 feedback/src/
-├── cli.py              # polling/exporter 실행 엔트리포인트
+├── feedback_cli.py     # polling/exporter 실행 엔트리포인트
+├── app.py              # FastAPI 관리 API (dry-run, resend, event 목록)
 ├── exporter.py         # OpenProject 변경 감지 + 이벤트 생성
 ├── redactor.py         # allowlist 필드 추출 및 금지 필드 제거
 ├── signer.py           # HMAC 서명과 key_id 처리
@@ -804,34 +796,39 @@ feedback/src/
 helm/synctx/
 ├── Chart.yaml
 ├── values.yaml
+├── values-production.yaml          # 운영 환경 오버라이드
+├── files/
+│   ├── nginx.conf                  # Slides Nginx 설정
+│   └── sync-sidecar.sh             # Slides sync sidecar 스크립트
 └── templates/
     ├── _helpers.tpl
     ├── configmap.yaml              # .synctx.yaml → ConfigMap
-    ├── secret.yaml                 # 인증 정보 (외부 Secret 참조)
+    ├── secret.yaml                 # Feedback HMAC/salt/SMTP Secret
+    ├── services.yaml               # 전 서비스 Service 리소스 (통합)
     │
     ├── viewer-deployment.yaml
-    ├── viewer-service.yaml
     │
     ├── cdn-deployment.yaml
-    ├── cdn-service.yaml
     ├── cdn-pvc.yaml                # CDN 파일 저장소
     │
     ├── marp-deployment.yaml
-    ├── marp-service.yaml
     │
     ├── drawio-deployment.yaml
-    ├── drawio-service.yaml
     │
     ├── sync-cronjob.yaml           # 동기화 CronJob
-    ├── sync-webhook.yaml           # 즉시 실행 트리거용 Webhook Receiver
+    ├── sync-state-pvc.yaml         # Sync 상태 파일 저장소
+    ├── sync-rbac.yaml              # ServiceAccount/Role/RoleBinding
+    ├── sync-networkpolicy.yaml     # Egress 제한 NetworkPolicy
     │
     ├── feedback-cronjob.yaml       # Phase 7 선택: Outbound Feedback Exporter
     │
     ├── slides-deployment.yaml
-    ├── slides-service.yaml
+    ├── slides-configmap.yaml       # Nginx 설정
     ├── slides-pvc.yaml             # 출판된 HTML 저장소
     │
-    └── ingress.yaml                # 통합 Ingress
+    ├── ingress.yaml                # 통합 Ingress
+    ├── servicemonitor.yaml         # Prometheus ServiceMonitor
+    └── prometheusrule.yaml         # Prometheus Alert Rule
 ```
 
 ### 10.2 values.yaml 핵심 설정
@@ -1050,7 +1047,7 @@ helm upgrade synctx ./helm/synctx \
 ### Phase 2: Marp Service + Slides Server + Draw.io Service
 
 1. Marp Service: PDF 변환 + 다운로드 API
-2. Marp Service: HTML 출판 + Git 커밋 (`git_publisher.py`)
+2. Marp Service: HTML 출판 + Git 커밋 (`marp/src/app.py`)
 3. Slides Server: Nginx 정적 서빙
 4. Draw.io Service: `jgraph/drawio` 이미지 미러링 + Helm 배포 (별도 개발 불필요)
 5. Viewer에 Marp 연동 UI (PDF 다운로드 / 출판 버튼)

@@ -274,8 +274,10 @@ synctx는 단순한 동기화 도구를 넘어, **AI와 사람이 지식을 공�
 ```
 synctx/
 ├── README.md
+├── Makefile                           # 빌드/테스트/배포 자동화
 ├── docs/                              # 프로젝트 참고 문서
 │   ├── architecture.md
+│   ├── production-service-design.md
 │   ├── reusable-assets.md
 │   └── xwiki-api-reference.md
 │
@@ -284,90 +286,114 @@ synctx/
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   └── src/
-│   │       ├── app.py                 # FastAPI 서버
-│   │       ├── repo_routes.py         # 저장소 API
+│   │       ├── app.py                 # FastAPI 서버 (라우트 통합, lifespan, 칸반)
 │   │       ├── renderer.py            # Markdown → HTML 렌더링
-│   │       ├── git_manager.py         # Git 저장소 관리
-│   │       ├── config.py              # 설정 로더
-│   │       └── static/                # 프론트엔드 (HTML, CSS, JS)
+│   │       ├── converters/pdf.py      # PDF 변환 유틸리티
+│   │       └── static/style.css       # 프론트엔드 스타일시트
 │   │
 │   ├── cdn/                           # CDN Service
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   └── src/
-│   │       ├── app.py                 # FastAPI 서버
-│   │       ├── cdn_routes.py          # CDN API (서빙 + 업로드)
-│   │       └── static/                # 업로드 관리 웹 UI
+│   │       └── app.py                 # FastAPI 서버 (업로드/서빙/관리 통합)
 │   │
 │   ├── marp/                          # Marp Service
-│   │   ├── Dockerfile
+│   │   ├── Dockerfile                 # multi-stage (node + python)
 │   │   ├── pyproject.toml
-│   │   └── src/
-│   │       ├── app.py                 # FastAPI 서버
-│   │       ├── marp_routes.py         # 변환 + 출판 API
-│   │       ├── git_publisher.py       # HTML → Git 커밋 출판
-│   │       └── config.py              # Marp 설정
+│   │   ├── src/
+│   │   │   └── app.py                 # FastAPI 서버 (변환/출판/미리보기)
+│   │   └── tests/
+│   │       └── test_marp_api.py       # API 통합 테스트
 │   │
 │   ├── sync/                          # Sync Engine
-│   │   ├── Dockerfile
+│   │   ├── Dockerfile                 # multi-stage (node + python)
 │   │   ├── pyproject.toml
-│   │   └── src/
-│   │       ├── cli.py                 # CLI 엔트리포인트
-│   │       ├── sync_engine.py         # 동기화 오케스트레이션
-│   │       ├── harness_validator.py   # 하네스 규격/agent-readiness 검증
-│   │       ├── harness/
-│   │       │   ├── context_schema.py
-│   │       │   ├── blueprint_linter.py
-│   │       │   ├── board_checker.py
-│   │       │   ├── agent_readiness.py
-│   │       │   └── report_writer.py
-│   │       ├── path_mapper.py         # 경로 매핑
-│   │       ├── git_manager.py         # Git 변경 감지
-│   │       └── targets/               # 동기화 대상
-│   │           ├── xwiki.py
-│   │           └── openproject.py
+│   │   ├── puppeteer-config.json
+│   │   ├── src/
+│   │   │   ├── sync_cli.py            # CLI 엔트리포인트 (synctx-sync)
+│   │   │   ├── sync_engine.py         # 동기화 오케스트레이션 + retry
+│   │   │   ├── harness_validator.py   # 하네스 검증 (synctx_common.harness 위임)
+│   │   │   ├── state.py               # state.json atomic read/write
+│   │   │   ├── lease.py               # 실행 잠금 (O_CREAT|O_EXCL)
+│   │   │   ├── converters/mermaid.py  # Mermaid → SVG 변환
+│   │   │   └── targets/               # 동기화 대상
+│   │   │       ├── xwiki.py           # XWiki REST API 클라이언트
+│   │   │       └── openproject.py     # OpenProject REST API 클라이언트
+│   │   └── tests/                     # 단위/통합 테스트
+│   │       ├── test_state.py
+│   │       ├── test_sync_engine.py
+│   │       ├── test_xwiki_client.py
+│   │       └── test_op_client.py
 │   │
 │   ├── feedback/                      # Outbound Feedback Exporter (Phase 7 선택)
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
-│   │   └── src/
-│   │       ├── cli.py                 # polling/exporter 엔트리포인트
-│   │       ├── exporter.py            # OpenProject 변경 감지
-│   │       ├── redactor.py            # allowlist/redaction
-│   │       ├── signer.py              # HMAC 서명
-│   │       ├── mailer.py              # approved SMTP 발송
-│   │       └── event_store.py         # event_id 중복 방지와 재전송 상태
+│   │   ├── src/
+│   │   │   ├── feedback_cli.py        # polling/exporter 엔트리포인트
+│   │   │   ├── app.py                 # FastAPI 관리 API
+│   │   │   ├── exporter.py            # OpenProject 변경 감지
+│   │   │   ├── redactor.py            # allowlist/redaction
+│   │   │   ├── signer.py              # HMAC 서명 + key rotation
+│   │   │   ├── mailer.py              # approved SMTP 발송
+│   │   │   └── event_store.py         # event_id 중복 방지와 재전송 상태
+│   │   └── tests/                     # 단위 테스트
+│   │       ├── test_signer.py
+│   │       ├── test_redactor.py
+│   │       └── test_event_store.py
 │   │
-│   ├── drawio/                        # Draw.io Service
-│   │   └── values-override.yaml      # jgraph/drawio 이미지 설정
+│   ├── drawio/                        # Draw.io Service (외부 이미지)
 │   │
-│   └── slides/                        # Slides Server
-│       ├── Dockerfile
-│       └── nginx.conf
+│   └── slides/                        # Slides Server (Nginx)
+│       ├── nginx.conf
+│       └── sync-sidecar.sh
 │
 ├── shared/                            # 서비스 간 공유 라이브러리
 │   └── synctx-common/
 │       ├── pyproject.toml
+│       ├── tests/                     # 단위 테스트
+│       │   ├── test_auth.py
+│       │   ├── test_frontmatter.py
+│       │   ├── test_git_manager.py
+│       │   ├── test_harness.py
+│       │   └── test_observability.py
 │       └── src/synctx_common/
-│           ├── config.py              # 공통 설정 스키마
+│           ├── config.py              # 공통 설정 스키마 (Pydantic)
 │           ├── git_manager.py         # 공통 Git 모듈
-│           └── auth.py                # 공통 인증
+│           ├── auth.py                # 공통 인증 헬퍼
+│           ├── frontmatter.py         # Front matter 파서 + 검증
+│           ├── observability.py       # healthz/readyz/version/metrics
+│           ├── harness.py             # Harness Validator 로직
+│           └── cli.py                 # CLI 엔트리포인트
 │
 ├── helm/                              # Helm Charts
 │   └── synctx/
 │       ├── Chart.yaml
 │       ├── values.yaml
+│       ├── values-production.yaml
+│       ├── files/
+│       │   ├── nginx.conf             # Slides Nginx 설정
+│       │   └── sync-sidecar.sh        # Slides sync sidecar 스크립트
 │       └── templates/
+│           ├── _helpers.tpl
+│           ├── services.yaml          # 전 서비스 Service 리소스
+│           ├── configmap.yaml         # .synctx.yaml ConfigMap
+│           ├── secret.yaml            # Feedback HMAC/salt/SMTP
+│           ├── ingress.yaml
 │           ├── viewer-deployment.yaml
 │           ├── cdn-deployment.yaml
+│           ├── cdn-pvc.yaml
 │           ├── marp-deployment.yaml
 │           ├── drawio-deployment.yaml
 │           ├── sync-cronjob.yaml
+│           ├── sync-state-pvc.yaml
+│           ├── sync-rbac.yaml
+│           ├── sync-networkpolicy.yaml
 │           ├── feedback-cronjob.yaml  # Phase 7 선택
 │           ├── slides-deployment.yaml
-│           ├── ingress.yaml
-│           ├── pvc.yaml
-│           └── configmap.yaml
+│           ├── slides-configmap.yaml
+│           ├── slides-pvc.yaml
+│           ├── servicemonitor.yaml
+│           └── prometheusrule.yaml
 │
 ├── cdn-data/                          # CDN 초기 벤더 파일
 │   ├── mermaid/10.9.1/
@@ -376,7 +402,13 @@ synctx/
 │
 └── scripts/
     ├── download-cdn-vendor.sh         # CDN 벤더 파일 다운로드
-    └── pull-and-save-images.sh        # Docker 이미지 오프라인 반입
+    ├── generate-manifest.sh           # SHA-256 artifact manifest 생성
+    ├── backup-restore.sh              # PVC 백업/복구
+    ├── smoke-test.sh                  # 배포 후 smoke test
+    ├── verify-authz.sh                # 권한 매핑 검증
+    ├── external_importer.py           # External Mail Importer (Phase 7)
+    └── tests/
+        └── test_external_importer.py  # Importer 단위 테스트
 ```
 
 ### 사용자 workspace 하네스 규격
