@@ -13,19 +13,23 @@ echo "Repo: $REPO_URL"
 echo "Branch: $BRANCH"
 echo "Worktree: $WORKTREE"
 
-if [ ! -d "$WORKTREE/.git" ]; then
-    echo "Cloning repository..."
-    mkdir -p "$WORKTREE"
-    git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$WORKTREE"
-fi
-
-cd "$WORKTREE"
+mkdir -p "$WORKTREE"
 
 while true; do
+    if [ ! -d "$WORKTREE/.git" ]; then
+        echo "Cloning repository..."
+        if git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$WORKTREE"; then
+            echo "Clone successful."
+        else
+            echo "Clone failed, will retry in ${POLL_INTERVAL}s..."
+            sleep "$POLL_INTERVAL"
+            continue
+        fi
+    fi
+
+    cd "$WORKTREE"
     echo "Pulling latest changes..."
     git pull origin "$BRANCH" || echo "Failed to pull, will retry later."
-    
-    # Nginx에 reload 신호를 보낼 수도 있으나, 정적 파일이므로 파일 시스템 변경만으로 충분함.
-    
+
     sleep "$POLL_INTERVAL"
 done
