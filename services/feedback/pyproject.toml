@@ -1,0 +1,22 @@
+[project]
+name = "synctx-feedback"
+version = "0.1.0"
+description = "Outbound Feedback Exporter for synctx"
+requires-python = ">=3.10"
+dependencies = [
+    "synctx-common",
+    "httpx>=0.27.0",
+    "fastapi>=0.111.0",
+    "uvicorn>=0.30.0"
+]
+
+[project.scripts]
+synctx-feedback = "feedback_cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src"]
+sources = ["src"]

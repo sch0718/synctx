@@ -1,0 +1,92 @@
+# Production values for synctx
+viewer:
+  image:
+    repository: registry.internal/synctx/viewer
+    tag: "0.1.0"
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+cdn:
+  image:
+    repository: registry.internal/synctx/cdn
+    tag: "0.1.0"
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+sync:
+  image:
+    repository: registry.internal/synctx/sync
+    tag: "0.1.0"
+  schedule: "*/5 * * * *"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+marp:
+  image:
+    repository: registry.internal/synctx/marp
+    tag: "0.1.0"
+  replicaCount: 2
+
+slides:
+  image:
+    repository: registry.internal/nginx
+    tag: "1.25.4-alpine"
+  sidecar:
+    image:
+      repository: registry.internal/alpine/git
+      tag: "2.43.0"
+
+drawio:
+  image:
+    repository: registry.internal/jgraph/drawio
+    tag: "24.2.5"
+
+feedback:
+  enabled: true
+  image:
+    repository: registry.internal/synctx/feedback
+    tag: "0.1.0"
+  secrets:
+    existingSecret: "synctx-feedback-secrets"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  hosts:
+    - host: synctx.internal
+      paths:
+        - path: /(/.*)?
+          pathType: ImplementationSpecific
+          backend: viewer
+        - path: /cdn(/.*)?
+          pathType: ImplementationSpecific
+          backend: cdn
+        - path: /marp(/.*)?
+          pathType: ImplementationSpecific
+          backend: marp
+        - path: /slides(/.*)?
+          pathType: ImplementationSpecific
+          backend: slides
+        - path: /drawio(/.*)?
+          pathType: ImplementationSpecific
+          backend: drawio

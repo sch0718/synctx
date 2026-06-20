@@ -5,6 +5,7 @@ metadata:
   labels:
     app.kubernetes.io/name: viewer
     app.kubernetes.io/instance: {{ .Release.Name }}
+    synctx/metrics: "true"
 spec:
   type: ClusterIP
   selector:
@@ -22,6 +23,7 @@ metadata:
   labels:
     app.kubernetes.io/name: cdn
     app.kubernetes.io/instance: {{ .Release.Name }}
+    synctx/metrics: "true"
 spec:
   type: ClusterIP
   selector:
@@ -30,4 +32,56 @@ spec:
   ports:
     - name: http
       port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "synctx.fullname" . }}-marp
+  labels:
+    app.kubernetes.io/name: marp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    synctx/metrics: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: marp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "synctx.fullname" . }}-slides
+  labels:
+    app.kubernetes.io/name: slides
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: slides
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "synctx.fullname" . }}-drawio
+  labels:
+    app.kubernetes.io/name: drawio
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: drawio
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8080
       targetPort: http

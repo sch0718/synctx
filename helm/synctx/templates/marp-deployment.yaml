@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "synctx.fullname" . }}-marp
+  labels:
+    app.kubernetes.io/name: marp
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.marp.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: marp
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: marp
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: marp
+          image: "{{ .Values.marp.image.repository }}:{{ .Values.marp.image.tag }}"
+          imagePullPolicy: {{ .Values.marp.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: CHROME_PATH
+              value: "/usr/bin/chromium"
+            {{- if .Values.synctxConfig.create }}
+            - name: SYNCTX_CONFIG_PATH
+              value: /etc/synctx/.synctx.yaml
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          resources:
+            {{- toYaml .Values.marp.resources | nindent 12 }}
+          volumeMounts:
+            - name: marp-work
+              mountPath: /tmp/marp-work
+            {{- if .Values.synctxConfig.create }}
+            - name: synctx-config
+              mountPath: /etc/synctx/.synctx.yaml
+              subPath: .synctx.yaml
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: marp-work
+          emptyDir: {}
+        {{- if .Values.synctxConfig.create }}
+        - name: synctx-config
+          configMap:
+            name: {{ include "synctx.fullname" . }}-config
+        {{- end }}

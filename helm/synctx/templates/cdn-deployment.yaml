@@ -18,7 +18,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       securityContext:
-        runAsNonRoot: true
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: cdn
           image: "{{ .Values.cdn.image.repository }}:{{ .Values.cdn.image.tag }}"
@@ -43,6 +43,12 @@ spec:
               subPath: .synctx.yaml
               readOnly: true
             {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 12
+            periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /healthz

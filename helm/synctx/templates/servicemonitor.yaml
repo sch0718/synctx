@@ -1,0 +1,18 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "synctx.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "synctx.fullname" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      synctx/metrics: "true"
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+{{- end }}

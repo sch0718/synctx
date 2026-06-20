@@ -1,5 +1,8 @@
 # Default values for synctx.
 
+podSecurityContext:
+  runAsNonRoot: true
+
 metrics:
   enabled: true
 
@@ -40,6 +43,46 @@ cdn:
       cpu: 1000m
       memory: 1Gi
 
+sync:
+  image:
+    repository: synctx/sync
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  schedule: "*/5 * * * *"
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+feedback:
+  enabled: false
+  image:
+    repository: synctx/feedback
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  schedule: "*/5 * * * *"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  secrets:
+    create: false
+    existingSecret: ""
+    hmacKey: ""
+    hashSalt: ""
+    smtpCredential: ""
+
 ingress:
   enabled: true
   className: "nginx"
@@ -49,9 +92,72 @@ ingress:
   hosts:
     - host: synctx.internal
       paths:
-        - path: /view(/.*)?
+        - path: /view(/(.*))?
           pathType: ImplementationSpecific
           backend: viewer
-        - path: /cdn(/.*)?
+        - path: /cdn(/(.*))?
           pathType: ImplementationSpecific
           backend: cdn
+        - path: /marp(/(.*))?
+          pathType: ImplementationSpecific
+          backend: marp
+        - path: /slides(/(.*))?
+          pathType: ImplementationSpecific
+          backend: slides
+        - path: /drawio(/(.*))?
+          pathType: ImplementationSpecific
+          backend: drawio
+
+marp:
+  image:
+    repository: synctx/marp
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+slides:
+  image:
+    repository: nginx
+    tag: "1.25.4-alpine"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 5Gi
+    accessMode: ReadWriteMany
+    storageClass: ""
+  sidecar:
+    image:
+      repository: alpine/git
+      tag: "2.43.0"
+      pullPolicy: IfNotPresent
+  replicaCount: 1
+  publishRepoUrl: "https://gitlab.internal/team/published-slides.git"
+  pollingIntervalSeconds: "60"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+drawio:
+  image:
+    repository: jgraph/drawio
+    tag: "24.2.5"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi

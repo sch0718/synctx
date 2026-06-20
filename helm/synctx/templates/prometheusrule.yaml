@@ -1,0 +1,29 @@
+{{- if .Values.metrics.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "synctx.fullname" . }}-alerts
+  labels:
+    app.kubernetes.io/name: {{ include "synctx.fullname" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  groups:
+    - name: synctx.rules
+      rules:
+        - alert: SynctxSyncFailing
+          expr: rate(synctx_sync_errors_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Sync Engine errors detected"
+            description: "Sync Engine is failing to sync documents for more than 5 minutes."
+        - alert: SynctxViewerHighErrorRate
+          expr: rate(synctx_http_requests_total{status=~"5.."}[5m]) / rate(synctx_http_requests_total[5m]) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Viewer Service high error rate"
+            description: "Viewer Service is returning 5xx errors for more than 5% of requests."
+{{- end }}
