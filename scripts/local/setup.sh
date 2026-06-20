@@ -24,14 +24,14 @@ synctx 로컬 개발 환경을 설치합니다.
 
 옵션:
   --skip-infra    인프라(minikube, ingress) 설치 건너뜀
-  --skip-deps     의존성(XWiki, OpenProject, Mailhog) 배포 건너뜀
+  --skip-deps     의존성(XWiki, OpenProject, Mailpit) 배포 건너뜀
   --skip-build    이미지 빌드 건너뜀
   --skip-deploy   synctx 서비스 배포 건너뜀
   -h, --help      도움말
 
 단계:
   1. 인프라: minikube 시작, Ingress 활성화, /etc/hosts 설정
-  2. 의존성: XWiki, OpenProject, Mailhog 배포
+  2. 의존성: XWiki, OpenProject, Mailpit 배포
   3. 빌드: synctx 서비스 이미지 빌드 + minikube 로드
   4. 배포: synctx Helm 설치
 EOF
@@ -73,7 +73,7 @@ echo -e "   ${YELLOW}https://${SYNCTX_SUBDOMAIN}${NC}"
 print_info "3. 의존성 서비스:"
 echo -e "   ${YELLOW}https://${XWIKI_SUBDOMAIN}${NC}         — XWiki"
 echo -e "   ${YELLOW}https://${OPENPROJECT_SUBDOMAIN}${NC}   — OpenProject (admin/admin)"
-echo -e "   ${YELLOW}https://${MAIL_SUBDOMAIN}${NC}          — Mailhog"
+echo -e "   ${YELLOW}https://${MAIL_SUBDOMAIN}${NC}          — Mailpit"
 print_info "4. 모니터링:"
 echo -e "   ${YELLOW}https://${GRAFANA_SUBDOMAIN}${NC}       — Grafana"
 print_info "5. 상태 확인:"

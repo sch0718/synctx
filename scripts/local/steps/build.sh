@@ -90,4 +90,4 @@ done
 # 완료
 print_header "빌드 완료"
 print_info "Minikube 이미지 목록:"
-minikube image ls 2>/dev/null | grep -E "${DOCKER_REGISTRY}/|drawio|mailhog" || true
+minikube image ls 2>/dev/null | grep -E "${DOCKER_REGISTRY}/|drawio|mailpit" || true

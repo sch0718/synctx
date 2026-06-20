@@ -127,7 +127,7 @@ if kubectl get namespace "${DEPS_NAMESPACE}" &>/dev/null; then
     kubectl get pods -n "${DEPS_NAMESPACE}" 2>/dev/null || true
     echo ""
 
-    for dep in xwiki openproject mailhog; do
+    for dep in xwiki openproject mailpit; do
         POD_STATUS=$(kubectl get pods -n "${DEPS_NAMESPACE}" -l "app=${dep}" -o jsonpath='{.items[0].status.phase}' 2>/dev/null)
         if [ "$POD_STATUS" = "Running" ]; then
             print_success "${dep} Pod Running"
@@ -160,7 +160,7 @@ fi
 
 # 9. Ingress 리소스
 print_header "9. Ingress 리소스"
-kubectl get ingress -A 2>/dev/null | grep -E "synctx|xwiki|openproject|mailhog|grafana" || print_warning "Ingress 리소스 없음"
+kubectl get ingress -A 2>/dev/null | grep -E "synctx|xwiki|openproject|mailpit|grafana" || print_warning "Ingress 리소스 없음"
 
 # 10. /etc/hosts
 print_header "10. /etc/hosts 확인"

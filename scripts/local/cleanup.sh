@@ -46,11 +46,11 @@ safe_uninstall "synctx" "${NAMESPACE}"
 
 # 2. 의존성 제거
 print_header "2. 의존성 서비스 제거"
-for dep in xwiki xwiki-postgres openproject mailhog; do
+for dep in xwiki xwiki-postgres openproject mailpit; do
     kubectl delete deployment "${dep}" -n "${DEPS_NAMESPACE}" 2>/dev/null && \
         print_success "${dep} deployment 제거" || true
 done
-for svc in xwiki xwiki-postgres openproject mailhog; do
+for svc in xwiki xwiki-postgres openproject mailpit; do
     kubectl delete service "${svc}" -n "${DEPS_NAMESPACE}" 2>/dev/null || true
 done
 kubectl delete ingress --all -n "${DEPS_NAMESPACE}" 2>/dev/null || true

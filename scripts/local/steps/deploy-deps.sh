@@ -1,5 +1,5 @@
 #!/bin/bash
-# deploy-deps.sh - 외부 의존성 배포 (XWiki, OpenProject, Mailhog)
+# deploy-deps.sh - 외부 의존성 배포 (XWiki, OpenProject, Mailpit)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -134,6 +134,8 @@ spec:
               value: xwiki-local-password
             - name: DB_DATABASE
               value: xwiki
+            - name: JAVA_OPTS
+              value: "-Xmx1536m -Xms512m"
           ports:
             - containerPort: 8080
           volumeMounts:
@@ -142,10 +144,10 @@ spec:
           resources:
             requests:
               cpu: 200m
-              memory: 1Gi
+              memory: 1536Mi
             limits:
               cpu: 1000m
-              memory: 2Gi
+              memory: 3Gi
       volumes:
         - name: xwiki-data
           persistentVolumeClaim:
@@ -301,13 +303,13 @@ OP_EOF
 fi
 
 # ============================================================
-# Mailhog (SMTP 테스트)
+# Mailpit (SMTP 테스트, Mailhog 후속 - ARM64 지원)
 # ============================================================
 if [ "$SKIP_MAILHOG" = false ]; then
-    print_header "Mailhog 배포"
+    print_header "Mailpit 배포"
 
     if [ "$SKIP_IMAGES" = false ]; then
-        load_image "mailhog/mailhog:latest"
+        load_image "axllent/mailpit:latest"
     fi
 
     kubectl apply -n "${DEPS_NAMESPACE}" -f - <<'MAIL_EOF'
@@ -315,22 +317,22 @@ if [ "$SKIP_MAILHOG" = false ]; then
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mailhog
+  name: mailpit
   labels:
-    app: mailhog
+    app: mailpit
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mailhog
+      app: mailpit
   template:
     metadata:
       labels:
-        app: mailhog
+        app: mailpit
     spec:
       containers:
-        - name: mailhog
-          image: mailhog/mailhog:latest
+        - name: mailpit
+          image: axllent/mailpit:latest
           ports:
             - name: smtp
               containerPort: 1025
@@ -347,10 +349,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mailhog
+  name: mailpit
 spec:
   selector:
-    app: mailhog
+    app: mailpit
   ports:
     - name: smtp
       port: 1025
@@ -362,7 +364,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: mailhog
+  name: mailpit
   annotations:
     cert-manager.io/cluster-issuer: ca-issuer
 spec:
@@ -370,7 +372,7 @@ spec:
   tls:
     - hosts:
         - mail.synctx.local
-      secretName: mailhog-tls
+      secretName: mailpit-tls
   rules:
     - host: mail.synctx.local
       http:
@@ -379,14 +381,14 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: mailhog
+                name: mailpit
                 port:
                   number: 8025
 MAIL_EOF
 
-    print_success "Mailhog 배포 완료"
+    print_success "Mailpit 배포 완료"
     print_info "웹 UI: https://mail.synctx.local"
-    print_info "SMTP: mailhog.${DEPS_NAMESPACE}.svc.cluster.local:1025"
+    print_info "SMTP: mailpit.${DEPS_NAMESPACE}.svc.cluster.local:1025"
     setup_hosts "mail.synctx.local"
 fi
 
