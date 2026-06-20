@@ -4,6 +4,7 @@ import os
 import time
 import logging
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Generator
 
 try:
@@ -43,38 +44,41 @@ class LeaseLock:
             lease = self.api.read_namespaced_lease(self.name, self.namespace)
             now = time.time()
             renew_time = lease.spec.renew_time.timestamp() if lease.spec.renew_time else 0
-            
+
             if lease.spec.holder_identity == self.identity:
                 return True
-                
+
             if now > renew_time + (lease.spec.lease_duration_seconds or 0):
-                # Lease expired, acquire it
                 lease.spec.holder_identity = self.identity
-                lease.spec.renew_time = client.V1MicroTime()
+                lease.spec.renew_time = datetime.now(timezone.utc)
                 lease.spec.lease_duration_seconds = self.duration_seconds
                 self.api.replace_namespaced_lease(self.name, self.namespace, lease)
                 return True
             return False
-            
+
         except ApiException as e:
             if e.status == 404:
-                # Create new lease
                 lease = client.V1Lease(
                     metadata=client.V1ObjectMeta(name=self.name),
                     spec=client.V1LeaseSpec(
                         holder_identity=self.identity,
                         lease_duration_seconds=self.duration_seconds,
-                        renew_time=client.V1MicroTime()
+                        renew_time=datetime.now(timezone.utc)
                     )
                 )
                 try:
                     self.api.create_namespaced_lease(self.namespace, lease)
                     return True
                 except ApiException as create_e:
-                    if create_e.status == 409: # Conflict, someone else created it
+                    if create_e.status == 409:
                         return False
-                    raise
-            raise
+                    logger.error(f"Failed to create lease {self.name}: {create_e}")
+                    return False
+            logger.error(f"Failed to acquire lease {self.name}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error acquiring lease {self.name}: {e}")
+            return False
 
     def release(self) -> None:
         if not self.use_k8s:
