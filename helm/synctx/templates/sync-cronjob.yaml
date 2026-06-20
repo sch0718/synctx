@@ -29,17 +29,32 @@ spec:
               env:
                 - name: SYNCTX_CONFIG_PATH
                   value: /etc/synctx/.synctx.yaml
+              {{- end }}
+              {{- if or .Values.synctxConfig.create .Values.sync.persistence.enabled }}
               volumeMounts:
+                {{- if .Values.synctxConfig.create }}
                 - name: synctx-config
                   mountPath: /etc/synctx/.synctx.yaml
                   subPath: .synctx.yaml
                   readOnly: true
+                {{- end }}
+                {{- if .Values.sync.persistence.enabled }}
+                - name: sync-state
+                  mountPath: /data/sync-state
+                {{- end }}
               {{- end }}
               resources:
                 {{- toYaml .Values.sync.resources | nindent 16 }}
-          {{- if .Values.synctxConfig.create }}
+          {{- if or .Values.synctxConfig.create .Values.sync.persistence.enabled }}
           volumes:
+            {{- if .Values.synctxConfig.create }}
             - name: synctx-config
               configMap:
                 name: {{ include "synctx.fullname" . }}-config
+            {{- end }}
+            {{- if .Values.sync.persistence.enabled }}
+            - name: sync-state
+              persistentVolumeClaim:
+                claimName: {{ include "synctx.fullname" . }}-sync-state
+            {{- end }}
           {{- end }}

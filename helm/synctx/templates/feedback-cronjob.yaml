@@ -44,6 +44,20 @@ spec:
                     secretKeyRef:
                       name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
                       key: smtp-credential
+                {{- if .Values.feedback.secrets.opApiKey }}
+                - name: OPENPROJECT_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
+                      key: openproject-api-key
+                {{- end }}
+                {{- if .Values.feedback.secrets.xwikiCredential }}
+                - name: XWIKI_CREDENTIAL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
+                      key: xwiki-credential
+                {{- end }}
                 {{- if .Values.synctxConfig.create }}
                 - name: SYNCTX_CONFIG_PATH
                   value: /etc/synctx/.synctx.yaml
