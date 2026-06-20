@@ -1,0 +1,16 @@
+{{- if .Values.cdn.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "synctx.fullname" . }}-cdn-data
+  labels:
+    app.kubernetes.io/name: cdn
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  accessModes:
+    - {{ .Values.cdn.persistence.accessMode | default "ReadWriteMany" }}
+  storageClassName: {{ .Values.cdn.persistence.storageClass | default "" | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.cdn.persistence.size | default "10Gi" }}
+{{- end }}

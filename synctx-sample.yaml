@@ -1,0 +1,162 @@
+synctx:
+  version: "1"
+
+runtime:
+  environment: production
+  public_base_url: "https://synctx.internal"
+  request_id_header: X-Request-Id
+
+authz:
+  enabled: true
+  group_header: X-Forwarded-Groups
+  role_mappings:
+    viewer: ["dev-team", "biz-team"]
+    publisher: ["dev-team"]
+    cdn_admin: ["platform-team"]
+    sync_admin: ["platform-team"]
+    feedback_admin: ["platform-team"]
+    platform_admin: ["platform-admin"]
+
+repositories:
+  - id: project-docs
+    name: "Team Docs"
+    url: "https://gitlab.internal/team/docs.git"
+    default_ref: main
+    auth:
+      type: token
+      credential_env: GIT_READ_TOKEN
+    watch_paths:
+      - "docs/**/*.md"
+      - "issues/**/*.md"
+      - "slides/**/*.md"
+      - "diagrams/**/*.drawio"
+    ignore_paths:
+      - "docs/drafts/**"
+      - "_published/**"
+      - ".context/**"
+
+mappings:
+  - match:
+      path_prefix: "docs/"
+      extensions: [".md"]
+    target: xwiki
+    xwiki:
+      space_from: directory
+      page_from: filename
+  - match:
+      path_prefix: "issues/"
+      extensions: [".md"]
+    target: openproject
+    openproject:
+      project: example-project
+
+targets:
+  xwiki:
+    base_url: "https://wiki.internal"
+    wiki: xwiki
+    syntax: markdown/1.2
+    auth:
+      type: basic
+      credential_env: XWIKI_CREDENTIAL
+    concurrency: 5
+    timeout_seconds: 30
+    retry:
+      max_attempts: 3
+      backoff_seconds: [1, 5, 15]
+  openproject:
+    base_url: "https://op.internal"
+    auth:
+      type: token
+      credential_env: OPENPROJECT_API_KEY
+    external_key_custom_field: customField1  # e.g., synctx_external_key
+    protected_fields: ["assignee"]
+    type_map:
+      task: 1
+      bug: 2
+      requirement: 3
+    status_map:
+      open: 1
+      in_progress: 7
+      blocked: 8
+      done: 12
+    priority_map:
+      low: 7
+      normal: 8
+      high: 9
+      urgent: 10
+
+viewer:
+  repo_cache_path: "/data/repos"
+  max_render_size_bytes: 5242880
+  cdn_base_url: "https://synctx.internal/cdn"
+
+cdn:
+  storage_path: "/data/cdn"
+  upload_auth:
+    enabled: true
+    required_role: cdn-admin
+  allowed_extensions: [".js", ".css", ".woff", ".woff2", ".ttf", ".svg", ".png", ".map"]
+
+marp:
+  publish_repo: "https://gitlab.internal/team/published-slides.git"
+  publish_branch: main
+  publish_base_path: "_published/slides"
+  worktree_path: "/data/marp/publish-worktree"
+  conversion_timeout_seconds: 120
+  max_input_size_bytes: 10485760
+
+slides:
+  worktree_path: "/data/slides/worktree"
+  refresh_mode: webhook_and_polling
+  polling_interval_seconds: 60
+
+sync:
+  state_path: "/data/sync-state"
+  lease_namespace: synctx
+  schedule: "*/5 * * * *"
+  on_delete: mark
+  force_push_policy: full_rescan
+  dry_run: false
+
+harness:
+  context_path: ".context"
+  reports_path: "reports/harness"
+  required_context_files:
+    - system_prompt.md
+    - project_state.yaml
+    - glossary.md
+    - decision-log.md
+  blueprint_path: ".context/blueprints"
+  agent_readiness:
+    require_title: true
+    require_summary: true
+    require_decisions_section: true
+    require_todo_owner: true
+    check_links: true
+    check_mermaid: true
+
+outbound_feedback:
+  enabled: false
+  transport: email
+  mode: pr_only
+  change_detection: polling
+  polling_interval_seconds: 300
+  allowed_targets: [openproject]
+  allowed_fields: [status, priority, version, due_date]
+  include_subject: false
+  include_description: false
+  include_comments: false
+  include_attachments: false
+  user_identity: hashed
+  require_hmac_signature: true
+  replay_window_minutes: 1440
+  outbound_mail:
+    smtp_host: "smtp-relay.internal"
+    smtp_port: 587
+    credential_env: OUTBOUND_SMTP_CREDENTIAL
+    from: "synctx-feedback@internal"
+    to: "synctx-feedback-import@example.com"
+  external_importer:
+    create_pr: true
+    direct_push: false
+    branch_prefix: "synctx-feedback/"

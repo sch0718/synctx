@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "synctx.fullname" . }}-cdn
+  labels:
+    app.kubernetes.io/name: cdn
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.cdn.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cdn
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cdn
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: cdn
+          image: "{{ .Values.cdn.image.repository }}:{{ .Values.cdn.image.tag }}"
+          imagePullPolicy: {{ .Values.cdn.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: CDN_DATA_DIR
+              value: /data/cdn
+            {{- if .Values.synctxConfig.create }}
+            - name: SYNCTX_CONFIG_PATH
+              value: /etc/synctx/.synctx.yaml
+            {{- end }}
+          volumeMounts:
+            - name: cdn-data
+              mountPath: /data/cdn
+            {{- if .Values.synctxConfig.create }}
+            - name: synctx-config
+              mountPath: /etc/synctx/.synctx.yaml
+              subPath: .synctx.yaml
+              readOnly: true
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          resources:
+            {{- toYaml .Values.cdn.resources | nindent 12 }}
+      volumes:
+        - name: cdn-data
+          {{- if .Values.cdn.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "synctx.fullname" . }}-cdn-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.synctxConfig.create }}
+        - name: synctx-config
+          configMap:
+            name: {{ include "synctx.fullname" . }}-config
+        {{- end }}
