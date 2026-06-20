@@ -62,27 +62,12 @@ FastAPI 라우트 등록 순서:
 
 ## 4. 화면 구성
 
-```
-┌──────────────────────────────────────────────────────┐
-│  synctx viewer                          [🔍] [🌙]   │  ← Header (64px)
-├─────────────┬────────────────────────────────────────┤
-│ REPOSITORIES│  Repositories › synctx docs            │  ← Breadcrumb
-│             │                                        │
-│ ● synctx    │  ┌─ synctx docs ──────── Stats ──┐    │  ← Repo Header Card
-│   docs      │  │  github.com/...   24 files     │    │
-│             │  └────────────────────────────────┘    │
-│ ○ rule      │                                        │
-│   system    │  ┌─ Files ──────── [Filter...] ──┐    │  ← File Tree Card
-│             │  │  ▶ docs/                       │    │
-│ ○ api       │  │    architecture.md    12.4 KB  │    │
-│   gateway   │  │    local-development.md        │    │
-│             │  │  ▶ services/                   │    │
-│             │  │  ▶ helm/                       │    │
-│             │  │  README.md            5.8 KB   │    │
-│             │  │  .synctx.yaml         0.4 KB   │    │
-│             │  └────────────────────────────────┘    │
-└─────────────┴────────────────────────────────────────┘
-     320px                    flex
+```mermaid
+block-beta
+  columns 3
+  Header["synctx viewer / 검색 / 테마토글"]:3
+  Sidebar["REPOSITORIES\n● synctx docs\n○ example system\n○ api gateway"]:1
+  Main["Breadcrumb: Repositories › synctx docs\n\nRepo Header Card (이름, URL, 파일 수)\n\nFile Tree Card\n├ docs/\n│ ├ architecture.md\n│ └ local-development.md\n├ services/\n├ helm/\n├ README.md\n└ .synctx.yaml"]:2
 ```
 
 ### 레이아웃
@@ -97,31 +82,22 @@ FastAPI 라우트 등록 순서:
 
 ### 페이지 로드 시퀀스
 
-```
-Browser                  Viewer                    CDN
-   │                       │                        │
-   │  GET /view            │                        │
-   │──────────────────────►│                        │
-   │  HTML (SSR)           │                        │
-   │◄──────────────────────│                        │
-   │                       │                        │
-   │  GET /cdn/file-tree/1.0.0/prod.js              │
-   │────────────────────────────────────────────────►│
-   │  JS bundle                                     │
-   │◄────────────────────────────────────────────────│
-   │                       │                        │
-   │  GET /view/api/repos  │                        │
-   │──────────────────────►│                        │
-   │  JSON (repo list)     │                        │
-   │◄──────────────────────│                        │
-   │                       │                        │
-   │  GET /view/api/repos/{id}/tree                 │
-   │──────────────────────►│                        │
-   │  JSON (entries)       │                        │
-   │◄──────────────────────│                        │
-   │                       │                        │
-   │  [Render file-tree]   │                        │
-   │                       │                        │
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant V as Viewer
+    participant C as CDN
+
+    B->>V: GET /view
+    V-->>B: HTML (SSR, 저장소 목록 포함)
+
+    B->>C: GET /cdn/file-tree/1.0.0/prod.js
+    C-->>B: JS bundle
+
+    B->>V: GET /api/repos/{id}/tree
+    V-->>B: JSON (entries)
+
+    Note over B: file-tree 렌더링
 ```
 
 ### API 응답 → file-tree 매핑

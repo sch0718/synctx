@@ -229,7 +229,7 @@ def render_file(repo_id: str, path: str):
         if is_drawio:
             toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io 열기</a>'
         if not toolbar_buttons:
-            toolbar_buttons += f'<a class="btn" href="/api/repos/{repo_id}/download?path={path}">다운로드</a>'
+            toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}">다운로드</a>'
 
         html = VIEWER_TEMPLATE.format(
             title=rendered.get("title", "Document"),
@@ -244,8 +244,377 @@ def render_file(repo_id: str, path: str):
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
 
-@app.get("/view/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
+INDEX_TEMPLATE = """<!DOCTYPE html>
+<html lang="ko" data-color-scheme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>synctx Viewer</title>
+    <link rel="stylesheet" href="/cdn/highlight.js/11.9.0/styles/github.min.css">
+    <style>
+        :root {{
+            --primary: #6950E8;
+            --primary-light: #A996F8;
+            --primary-lighter: #E4DCFD;
+            --primary-dark: #3828A7;
+            --grey-50: #FCFDFD;
+            --grey-100: #F4F6F8;
+            --grey-200: #E9ECEF;
+            --grey-300: #DFE3E8;
+            --grey-400: #C4CDD5;
+            --grey-500: #919EAB;
+            --grey-600: #637381;
+            --grey-700: #454F5B;
+            --grey-800: #1C252E;
+            --grey-900: #141A21;
+            --bg-default: #FFFFFF;
+            --bg-neutral: #F4F6F8;
+            --bg-card: #FFFFFF;
+            --text-primary: #1C252E;
+            --text-secondary: #637381;
+            --text-disabled: #919EAB;
+            --border-color: rgba(145,158,171,0.2);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+            --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+            --font-primary: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            --font-mono: 'D2Coding', ui-monospace, monospace;
+            --header-height: 64px;
+            --sidebar-width: 320px;
+        }}
+        [data-color-scheme="dark"] {{
+            --bg-default: #141A21;
+            --bg-neutral: #1C252E;
+            --bg-card: #1C252E;
+            --text-primary: #FFFFFF;
+            --text-secondary: #919EAB;
+            --text-disabled: #637381;
+            --border-color: rgba(145,158,171,0.24);
+            --shadow-card: 0 0 2px 0 rgba(0,0,0,0.4), 0 12px 24px -4px rgba(0,0,0,0.3);
+            --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
+        }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: var(--font-primary); background: var(--bg-default); color: var(--text-primary); }}
+
+        .header {{
+            height: var(--header-height); display: flex; align-items: center;
+            padding: 0 24px; background: var(--bg-card); border-bottom: 1px solid var(--border-color);
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+        }}
+        .header-logo {{ font-size: 18px; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }}
+        .header-logo svg {{ width: 28px; height: 28px; }}
+        .header-actions {{ margin-left: auto; display: flex; gap: 8px; }}
+        .icon-btn {{
+            width: 40px; height: 40px; border-radius: var(--radius-sm); border: none;
+            background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            color: var(--text-secondary); transition: background .2s;
+        }}
+        .icon-btn:hover {{ background: var(--bg-neutral); }}
+
+        .layout {{ display: flex; margin-top: var(--header-height); min-height: calc(100vh - var(--header-height)); }}
+
+        .sidebar {{
+            width: var(--sidebar-width); min-width: var(--sidebar-width); background: var(--bg-neutral);
+            border-right: 1px solid var(--border-color); padding: 24px 16px; overflow-y: auto;
+            position: fixed; top: var(--header-height); bottom: 0; left: 0;
+        }}
+        .sidebar-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-disabled); margin-bottom: 16px; padding: 0 8px; }}
+        .repo-item {{
+            display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+            border-radius: var(--radius-sm); cursor: pointer; transition: background .15s;
+            text-decoration: none; color: var(--text-primary);
+        }}
+        .repo-item:hover {{ background: var(--border-color); }}
+        .repo-item.active {{ background: var(--primary-lighter); color: var(--primary-dark); }}
+        [data-color-scheme="dark"] .repo-item.active {{ background: rgba(105,80,232,0.16); color: var(--primary-light); }}
+        .repo-dot {{ width: 10px; height: 10px; border-radius: 50%; background: var(--grey-400); flex-shrink: 0; }}
+        .repo-item.active .repo-dot {{ background: var(--primary); }}
+        .repo-name {{ font-size: 14px; font-weight: 600; }}
+
+        .main {{ margin-left: var(--sidebar-width); flex: 1; padding: 32px; }}
+
+        .breadcrumb {{ font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; }}
+        .breadcrumb a {{ color: var(--text-secondary); text-decoration: none; }}
+        .breadcrumb a:hover {{ color: var(--primary); }}
+        .breadcrumb .sep {{ margin: 0 8px; }}
+
+        .card {{
+            background: var(--bg-card); border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-card); padding: 24px; margin-bottom: 24px;
+        }}
+        .card-header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }}
+        .card-title {{ font-size: 18px; font-weight: 700; }}
+        .stat {{ font-size: 13px; color: var(--text-secondary); }}
+
+        .repo-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }}
+        .repo-card {{
+            background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
+            padding: 24px; cursor: pointer; transition: transform .15s, box-shadow .15s; text-decoration: none; color: var(--text-primary);
+        }}
+        .repo-card:hover {{ transform: translateY(-2px); box-shadow: 0 0 2px 0 rgba(145,158,171,0.2), 0 20px 40px -4px rgba(145,158,171,0.16); }}
+        .repo-card-name {{ font-size: 18px; font-weight: 700; margin-bottom: 8px; }}
+        .repo-card-url {{ font-size: 13px; color: var(--text-secondary); word-break: break-all; }}
+
+        .tree {{ font-family: var(--font-mono); font-size: 14px; }}
+        .tree-entry {{
+            display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+            border-radius: 6px; cursor: pointer; transition: background .12s; white-space: nowrap;
+        }}
+        .tree-entry:hover {{ background: var(--bg-neutral); }}
+        .tree-entry svg {{ width: 18px; height: 18px; flex-shrink: 0; }}
+        .tree-entry .name {{ flex: 1; overflow: hidden; text-overflow: ellipsis; }}
+        .tree-entry .name a {{ color: var(--text-primary); text-decoration: none; }}
+        .tree-entry .name a:hover {{ color: var(--primary); }}
+        .tree-children {{ padding-left: 20px; }}
+        .tree-children.collapsed {{ display: none; }}
+        .tree-toggle {{ transition: transform .15s; }}
+        .tree-toggle.open {{ transform: rotate(90deg); }}
+        .dir-icon {{ color: var(--primary); }}
+        .file-icon {{ color: var(--text-disabled); }}
+        .loading {{ text-align: center; padding: 40px; color: var(--text-secondary); }}
+
+        .search-box {{
+            display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+            background: var(--bg-neutral); border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm); margin-bottom: 16px;
+        }}
+        .search-box input {{
+            border: none; background: transparent; outline: none;
+            font-size: 14px; color: var(--text-primary); width: 100%; font-family: var(--font-primary);
+        }}
+        .search-box svg {{ color: var(--text-disabled); flex-shrink: 0; }}
+
+        .empty-state {{ text-align: center; padding: 60px 20px; color: var(--text-secondary); }}
+        .empty-state svg {{ width: 64px; height: 64px; color: var(--text-disabled); margin-bottom: 16px; }}
+        .empty-state p {{ font-size: 14px; }}
+
+        @media (max-width: 768px) {{
+            .sidebar {{ display: none; }}
+            .main {{ margin-left: 0; }}
+            .repo-grid {{ grid-template-columns: 1fr; }}
+        }}
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4m-3.5-6.5L17 7m-10 10-1.5 1.5M20.5 17.5 19 17M5 7 3.5 5.5"/></svg>
+            synctx
+        </div>
+        <div class="header-actions">
+            <button class="icon-btn" onclick="toggleTheme()" title="테마 전환">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="sidebar-title">Repositories</div>
+            <nav id="repo-nav">{repo_nav_html}</nav>
+        </aside>
+        <main class="main">
+            {main_content}
+        </main>
+    </div>
+
+    <script>
+        function toggleTheme() {{
+            const html = document.documentElement;
+            const current = html.getAttribute('data-color-scheme');
+            html.setAttribute('data-color-scheme', current === 'dark' ? 'light' : 'dark');
+            localStorage.setItem('synctx-theme', html.getAttribute('data-color-scheme'));
+        }}
+        (function() {{
+            const saved = localStorage.getItem('synctx-theme');
+            if (saved) document.documentElement.setAttribute('data-color-scheme', saved);
+        }})();
+    </script>
+</body>
+</html>"""
+
+def _build_repo_nav_html(repos, active_id=None):
+    html = ""
+    for r in repos:
+        active = " active" if r.id == active_id else ""
+        html += f'<a class="repo-item{active}" href="{_view_url(r.id)}">'
+        html += '<span class="repo-dot"></span>'
+        html += f'<span class="repo-name">{r.name}</span></a>'
+    return html
+
+
+VIEW_PREFIX = "/view"
+
+def _view_url(path=""):
+    return f"{VIEW_PREFIX}/{path}" if path else VIEW_PREFIX
+
+
+@app.get("/", dependencies=[Depends(verify_viewer_access)])
+def view_index():
+    repos = config.repositories
+    repo_nav_html = _build_repo_nav_html(repos)
+
+    if repos:
+        cards = ""
+        for r in repos:
+            cards += f'''<a class="repo-card" href="{_view_url(r.id)}">
+                <div class="repo-card-name">{r.name}</div>
+                <div class="repo-card-url">{r.url}</div>
+            </a>'''
+        main_content = f'''
+            <div class="breadcrumb">Repositories</div>
+            <div class="repo-grid">{cards}</div>'''
+    else:
+        main_content = '''
+            <div class="empty-state">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                </svg>
+                <p>등록된 저장소가 없습니다.</p>
+            </div>'''
+
+    html = INDEX_TEMPLATE.format(repo_nav_html=repo_nav_html, main_content=main_content)
+    return HTMLResponse(content=html)
+
+
+RESERVED_PATHS = {"api", "raw", "static", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
+
+
+@app.get("/{repo_id}", dependencies=[Depends(verify_viewer_access)])
+def view_repo(repo_id: str):
+    if repo_id in RESERVED_PATHS:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    manager = get_repo_manager(repo_id)
+    repos = config.repositories
+    repo_nav_html = _build_repo_nav_html(repos, active_id=repo_id)
+    repo = manager.profile
+
+    try:
+        entries = manager.list_tree("")
+        dir_count = sum(1 for e in entries if e.type == "dir")
+        file_count = sum(1 for e in entries if e.type == "file")
+    except Exception:
+        dir_count = 0
+        file_count = 0
+
+    tree_html = _build_tree_html(repo_id, "")
+    view_prefix = VIEW_PREFIX
+
+    main_content = f'''
+        <div class="breadcrumb">
+            <a href="{view_prefix}">Repositories</a><span class="sep">&rsaquo;</span>{repo.name}
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">{repo.name}</div>
+                <div class="stat">{dir_count} folders &middot; {file_count} files</div>
+            </div>
+            <div style="font-size:13px;color:var(--text-secondary);word-break:break-all;">{repo.url}</div>
+        </div>
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Files</div>
+            </div>
+            <div class="search-box">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input type="text" placeholder="Filter files..." oninput="filterTree(this.value)">
+            </div>
+            <div class="tree" id="file-tree">{tree_html}</div>
+        </div>
+    '''
+
+    html = INDEX_TEMPLATE.format(repo_nav_html=repo_nav_html, main_content=main_content)
+    html = html.replace('</script>\n</body>', f'''</script>
+    <script>
+        function toggleDir(el) {{
+            const children = el.parentElement.querySelector('.tree-children');
+            const icon = el.querySelector('.tree-toggle');
+            if (children) {{
+                children.classList.toggle('collapsed');
+                icon.classList.toggle('open');
+                if (!children.classList.contains('collapsed') && children.dataset.path && !children.dataset.loaded) {{
+                    loadSubtree(children, children.dataset.path);
+                }}
+            }}
+        }}
+        async function loadSubtree(container, path) {{
+            container.dataset.loaded = '1';
+            container.innerHTML = '<div class="loading">Loading...</div>';
+            try {{
+                const repo_id = '{repo_id}';
+                const res = await fetch('{view_prefix}/api/repos/' + repo_id + '/tree?path=' + encodeURIComponent(path));
+                if (!res.ok) throw new Error('Failed');
+                const data = await res.json();
+                let html = '';
+                const dirs = data.entries.filter(e => e.type === 'dir').sort((a,b) => a.name.localeCompare(b.name));
+                const files = data.entries.filter(e => e.type === 'file').sort((a,b) => a.name.localeCompare(b.name));
+                for (const e of dirs) {{
+                    html += '<div class="tree-entry" onclick="toggleDir(this)">' +
+                        '<svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>' +
+                        '<svg class="dir-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>' +
+                        '<span class="name">' + e.name + '/</span></div>' +
+                        '<div class="tree-children collapsed" data-path="' + e.path + '"></div>';
+                }}
+                for (const e of files) {{
+                    html += '<div class="tree-entry">' +
+                        '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
+                        '<svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+                        '<span class="name"><a href="{view_prefix}/' + repo_id + '/' + e.path + '">' + e.name + '</a></span></div>';
+                }}
+                container.innerHTML = html || '<div style="padding:8px;color:var(--text-disabled);font-size:13px;">Empty</div>';
+            }} catch(err) {{
+                container.innerHTML = '<div style="padding:8px;color:#E01E1F;">Failed to load</div>';
+            }}
+        }}
+        function filterTree(query) {{
+            const q = query.toLowerCase();
+            document.querySelectorAll('#file-tree .tree-entry').forEach(el => {{
+                const name = el.querySelector('.name').textContent.toLowerCase();
+                el.style.display = !q || name.includes(q) ? '' : 'none';
+            }});
+        }}
+    </script>
+</body>''')
+    return HTMLResponse(content=html)
+
+
+def _build_tree_html(repo_id, path):
+    try:
+        manager = get_repo_manager(repo_id)
+        entries = manager.list_tree(path)
+    except Exception:
+        return '<div class="empty-state"><p>Failed to load file tree.</p></div>'
+
+    dirs = sorted([e for e in entries if e.type == "dir"], key=lambda e: e.name)
+    files = sorted([e for e in entries if e.type == "file"], key=lambda e: e.name)
+
+    html = ""
+    for e in dirs:
+        html += f'''<div class="tree-entry" onclick="toggleDir(this)">
+            <svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+            <svg class="dir-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>
+            <span class="name">{e.name}/</span>
+        </div>
+        <div class="tree-children collapsed" data-path="{e.path}"></div>'''
+    for e in files:
+        file_url = _view_url(f"{repo_id}/{e.path}")
+        html += f'''<div class="tree-entry">
+            <svg style="width:18px" viewBox="0 0 24 24"></svg>
+            <svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span class="name"><a href="{file_url}">{e.name}</a></span>
+        </div>'''
+    if not html:
+        html = '<div style="padding:8px;color:var(--text-disabled);font-size:13px;">Empty repository</div>'
+    return html
+
+
+@app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
 def render_permalink(repo_id: str, path: str):
+    if repo_id in RESERVED_PATHS:
+        raise HTTPException(status_code=404, detail="Not found")
     return render_file(repo_id, path)
 
 KANBAN_TEMPLATE = """<!DOCTYPE html>
