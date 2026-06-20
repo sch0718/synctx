@@ -31,7 +31,10 @@ project_name: "synctx"
 # When using multiple languages, the first language server that supports a given file will be used for that file.
 # The first language is the default language and the respective language server will be used as a fallback.
 # Note that when using the JetBrains backend, language servers are not used and this list is correspondingly ignored.
-languages: []
+languages:
+  - python
+  - yaml
+  - bash
 
 # the encoding used by text files in the project
 # For a list of possible encodings, see https://docs.python.org/3.11/library/codecs.html#standard-encodings
@@ -72,7 +75,10 @@ additional_workspace_folders: []
 # list of additional paths to ignore in this project.
 # Same syntax as gitignore, so you can use * and **.
 # Note: global ignored_paths from serena_config.yml are also applied additively.
-ignored_paths: []
+ignored_paths:
+  - "cdn-data/**"
+  - ".venv/**"
+  - "**/__pycache__/**"
 
 # whether the project is in read-only mode
 # If set to true, all editing tools will be disabled and attempts to use them will result in an error
@@ -111,7 +117,7 @@ added_modes:
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
 # (contrary to the memories, which are loaded on demand).
-initial_prompt: ""
+initial_prompt: "synctx는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍스트를 동기화하는 Python 마이크로서비스 플랫폼. uv workspace 기반 모노레포 구조로 services/(viewer, cdn, marp, sync, feedback, slides)와 shared/synctx-common으로 구성. Helm chart로 K8s 배포."
 
 # time budget (seconds) per tool call for the retrieval of additional symbol information
 # such as docstrings or parameter information.
