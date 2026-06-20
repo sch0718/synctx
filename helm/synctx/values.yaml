@@ -1,0 +1,57 @@
+# Default values for synctx.
+
+metrics:
+  enabled: true
+
+synctxConfig:
+  create: false
+  data: ""
+
+viewer:
+  image:
+    repository: synctx/viewer
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+cdn:
+  image:
+    repository: synctx/cdn
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+    accessMode: ReadWriteMany
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  hosts:
+    - host: synctx.internal
+      paths:
+        - path: /view(/.*)?
+          pathType: ImplementationSpecific
+          backend: viewer
+        - path: /cdn(/.*)?
+          pathType: ImplementationSpecific
+          backend: cdn

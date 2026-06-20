@@ -1,0 +1,12 @@
+{{- if .Values.synctxConfig.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "synctx.fullname" . }}-config
+  labels:
+    app.kubernetes.io/name: synctx
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  .synctx.yaml: |
+{{ .Values.synctxConfig.data | indent 4 }}
+{{- end }}
