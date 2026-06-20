@@ -52,6 +52,44 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 - README는 subgraph(External/Internal) 사용, architecture.md는 flat 노드
 - 시퀀스 다이어그램 액터 순서: 좌→우 = 사용자 → FE → BE → Engine → DB
 
+## 운영 환경 컨텍스트
+
+### 회사 / 시스템
+- **회사**: 금융사
+- **시스템**: 사내 시스템 (금융 폐쇄망)
+- **도메인 패턴**: 운영 `*.corp.example.com` `*.dev.example.com`, 로컬 `*.synctx.local`
+
+### 서버 환경
+- **OS**: Oracle Linux 9 (x86_64/amd64)
+- **K8s**: Kubespray 배포, CRI-O 런타임, kubeVersion >= 1.22.0
+- **클러스터 구성**:
+  - 운영: 여러 노드
+  - 개발: 여러 노드
+  - 추가 클러스터
+
+### 이미지 / 레지스트리
+- **내부 레지스트리**: `registry.local:5000` (폐쇄망 전용)
+- **이미지 전송**: `pull-and-save-images.sh`로 외부에서 pull → tar 저장 → 폐쇄망 반입 → registry push
+- **베이스 이미지**: `python:3.11-slim` (Debian 기반, Alpine 사용 금지)
+- **멀티 아키텍처**: Apple Silicon 개발 시 `--platform linux/amd64` 필수
+
+### CI/CD
+- **폐쇄망**: GitLab CI (내부)
+- **외부**: GitHub (외부 개발용)
+
+### TLS
+- **운영**: Ingress TLS Secret 직접 마운트
+- **로컬**: cert-manager v1.13.3 + mkcert CA → `ca-issuer` ClusterIssuer 자동 발급
+
+### 인프라 구성 (로컬 minikube)
+- **Ingress**: Nginx Ingress Controller (Helm Chart `ingress-nginx/ingress-nginx` v4.8.3)
+- **TLS**: cert-manager v1.13.3 + mkcert CA
+- **Monitoring**: Prometheus v2.39.1 + Grafana 9.5.20 (`monitoring` namespace)
+- **Logging (운영)**: EFK Stack — Elasticsearch 7.17.3, Fluent Bit 2.1.10, Kibana 7.17.3
+
+### 참조 프로젝트
+- `example-infra`: 동일 환경의 인프라 설정 참조 프로젝트 (로컬 시뮬레이션 패턴의 원본)
+
 ## Git 참고
 
 - `GITHUB_TOKEN` 환경변수에 잘못된 토큰이 있을 수 있음. push 시 `GITHUB_TOKEN= git push -u origin main`으로 keyring fallback 사용

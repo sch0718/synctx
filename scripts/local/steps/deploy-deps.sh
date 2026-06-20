@@ -168,8 +168,13 @@ metadata:
   name: xwiki
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    cert-manager.io/cluster-issuer: ca-issuer
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - xwiki.synctx.local
+      secretName: xwiki-tls
   rules:
     - host: xwiki.synctx.local
       http:
@@ -184,7 +189,7 @@ spec:
 XWIKI_EOF
 
     print_success "XWiki 배포 완료"
-    print_info "접속: http://xwiki.synctx.local (초기 설정 필요)"
+    print_info "접속: https://xwiki.synctx.local (초기 설정 필요)"
     setup_hosts "xwiki.synctx.local"
 fi
 
@@ -270,8 +275,13 @@ metadata:
   name: openproject
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    cert-manager.io/cluster-issuer: ca-issuer
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - openproject.synctx.local
+      secretName: openproject-tls
   rules:
     - host: openproject.synctx.local
       http:
@@ -286,7 +296,7 @@ spec:
 OP_EOF
 
     print_success "OpenProject 배포 완료"
-    print_info "접속: http://openproject.synctx.local (admin/admin)"
+    print_info "접속: https://openproject.synctx.local (admin/admin)"
     setup_hosts "openproject.synctx.local"
 fi
 
@@ -353,8 +363,14 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: mailhog
+  annotations:
+    cert-manager.io/cluster-issuer: ca-issuer
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - mail.synctx.local
+      secretName: mailhog-tls
   rules:
     - host: mail.synctx.local
       http:
@@ -369,7 +385,7 @@ spec:
 MAIL_EOF
 
     print_success "Mailhog 배포 완료"
-    print_info "웹 UI: http://mail.synctx.local"
+    print_info "웹 UI: https://mail.synctx.local"
     print_info "SMTP: mailhog.${DEPS_NAMESPACE}.svc.cluster.local:1025"
     setup_hosts "mail.synctx.local"
 fi

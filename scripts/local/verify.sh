@@ -27,25 +27,57 @@ else
     ((ERRORS++))
 fi
 
-# 2. Ingress
-print_header "2. Ingress Controller"
-if kubectl get pods -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx 2>/dev/null | grep -q Running; then
-    print_success "Ingress Controller 실행 중"
+# 2. Ingress Controller (Helm Chart)
+print_header "2. Nginx Ingress Controller"
+kubectl get namespace ingress-nginx &>/dev/null
+check_status $? "ingress-nginx namespace 존재"
+
+INGRESS_PODS=$(kubectl get pods -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx -o jsonpath='{.items[*].status.phase}' 2>/dev/null)
+if [[ "$INGRESS_PODS" == *"Running"* ]]; then
+    print_success "Ingress Controller Pod 실행 중"
 else
-    print_warning "Ingress Controller가 실행 중이 아닙니다"
-    print_info "minikube addons enable ingress 실행 필요"
+    print_error "Ingress Controller Pod가 실행되지 않았습니다"
     ((ERRORS++))
 fi
 
-# 3. synctx 서비스
-print_header "3. synctx 서비스 (${NAMESPACE})"
+LB_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+if [ -n "$LB_IP" ]; then
+    print_success "LoadBalancer IP 할당됨: $LB_IP"
+else
+    print_warning "LoadBalancer IP 미할당 (minikube tunnel 필요)"
+fi
+
+# 3. Cert-Manager
+print_header "3. Cert-Manager"
+kubectl get namespace cert-manager &>/dev/null
+check_status $? "cert-manager namespace 존재"
+
+CERT_PODS=$(kubectl get pods -n cert-manager -o jsonpath='{.items[*].status.phase}' 2>/dev/null)
+if [[ "$CERT_PODS" == *"Running"* ]] && [[ ! "$CERT_PODS" == *"Pending"* ]] && [[ ! "$CERT_PODS" == *"Failed"* ]]; then
+    print_success "Cert-Manager Pod 실행 중"
+else
+    print_error "Cert-Manager Pod에 문제가 있습니다"
+    ((ERRORS++))
+fi
+
+# 4. ClusterIssuer
+print_header "4. ClusterIssuer"
+ISSUERS=$(kubectl get clusterissuer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+if [ -n "$ISSUERS" ]; then
+    print_success "ClusterIssuer 존재: $ISSUERS"
+else
+    print_error "ClusterIssuer가 존재하지 않습니다"
+    ((ERRORS++))
+fi
+
+# 5. synctx 서비스
+print_header "5. synctx 서비스 (${NAMESPACE})"
 if kubectl get namespace "${NAMESPACE}" &>/dev/null; then
     print_success "네임스페이스 존재: ${NAMESPACE}"
     echo ""
     kubectl get pods -n "${NAMESPACE}" 2>/dev/null || true
     echo ""
 
-    # Deployment 기반 서비스
     for svc in viewer cdn marp slides drawio; do
         POD_STATUS=$(kubectl get pods -n "${NAMESPACE}" -l "app.kubernetes.io/name=${svc}" -o jsonpath='{.items[0].status.phase}' 2>/dev/null)
         if [ "$POD_STATUS" = "Running" ]; then
@@ -56,7 +88,6 @@ if kubectl get namespace "${NAMESPACE}" &>/dev/null; then
         fi
     done
 
-    # CronJob 기반 서비스
     for cj in sync feedback; do
         CJ_NAME=$(kubectl get cronjob -n "${NAMESPACE}" -l "app.kubernetes.io/name=${cj}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
         if [ -n "$CJ_NAME" ]; then
@@ -72,8 +103,24 @@ else
     ((ERRORS++))
 fi
 
-# 4. 의존성 서비스
-print_header "4. 의존성 서비스 (${DEPS_NAMESPACE})"
+# 6. Certificate 확인
+print_header "6. Certificate 확인"
+for ns in "${NAMESPACE}" "${DEPS_NAMESPACE}"; do
+    CERTS=$(kubectl get certificate -n "$ns" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+    if [ -n "$CERTS" ]; then
+        for cert in $CERTS; do
+            CERT_READY=$(kubectl get certificate "$cert" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+            if [ "$CERT_READY" = "True" ]; then
+                print_success "Certificate ${cert} Ready (${ns})"
+            else
+                print_warning "Certificate ${cert} 아직 Ready 아님 (${ns})"
+            fi
+        done
+    fi
+done
+
+# 7. 의존성 서비스
+print_header "7. 의존성 서비스 (${DEPS_NAMESPACE})"
 if kubectl get namespace "${DEPS_NAMESPACE}" &>/dev/null; then
     print_success "네임스페이스 존재: ${DEPS_NAMESPACE}"
     echo ""
@@ -94,13 +141,30 @@ else
     ((ERRORS++))
 fi
 
-# 5. Ingress 리소스
-print_header "5. Ingress 리소스"
-kubectl get ingress -A 2>/dev/null | grep -E "synctx|xwiki|openproject|mailhog" || print_warning "Ingress 리소스 없음"
+# 8. Monitoring
+print_header "8. Monitoring Stack"
+if kubectl get namespace "${MONITORING_NAMESPACE}" &>/dev/null; then
+    print_success "${MONITORING_NAMESPACE} namespace 존재"
 
-# 6. /etc/hosts
-print_header "6. /etc/hosts 확인"
-for h in "${DOMAIN}" xwiki.synctx.local openproject.synctx.local mail.synctx.local; do
+    for dep in monitoring-prometheus monitoring-grafana; do
+        READY=$(kubectl get deployment "$dep" -n "${MONITORING_NAMESPACE}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+        if [ -n "$READY" ] && [ "$READY" -gt 0 ]; then
+            print_success "${dep} Running"
+        else
+            print_warning "${dep} 미실행"
+        fi
+    done
+else
+    print_warning "${MONITORING_NAMESPACE} namespace 없음 (모니터링 미설치)"
+fi
+
+# 9. Ingress 리소스
+print_header "9. Ingress 리소스"
+kubectl get ingress -A 2>/dev/null | grep -E "synctx|xwiki|openproject|mailhog|grafana" || print_warning "Ingress 리소스 없음"
+
+# 10. /etc/hosts
+print_header "10. /etc/hosts 확인"
+for h in "${ALL_DOMAINS[@]}"; do
     if grep -q "$h" /etc/hosts 2>/dev/null; then
         print_success "${h} 설정됨"
     else
@@ -109,22 +173,22 @@ for h in "${DOMAIN}" xwiki.synctx.local openproject.synctx.local mail.synctx.loc
     fi
 done
 
-# 7. 엔드포인트 접근 테스트
-print_header "7. 엔드포인트 접근 테스트"
+# 11. 엔드포인트 접근 테스트 (HTTPS)
+print_header "11. 엔드포인트 접근 테스트"
 print_info "minikube tunnel이 실행 중이어야 합니다"
 
 ENDPOINTS=(
-    "http://${DOMAIN}/view/healthz"
-    "http://${DOMAIN}/cdn/healthz"
-    "http://${DOMAIN}/marp/healthz"
-    "http://${DOMAIN}/slides/"
-    "http://${DOMAIN}/drawio/"
-    "http://xwiki.synctx.local"
-    "http://openproject.synctx.local"
-    "http://mail.synctx.local"
+    "https://${SYNCTX_SUBDOMAIN}/view/healthz"
+    "https://${SYNCTX_SUBDOMAIN}/cdn/healthz"
+    "https://${SYNCTX_SUBDOMAIN}/marp/healthz"
+    "https://${SYNCTX_SUBDOMAIN}/slides/"
+    "https://${SYNCTX_SUBDOMAIN}/drawio/"
+    "https://${XWIKI_SUBDOMAIN}"
+    "https://${OPENPROJECT_SUBDOMAIN}"
+    "https://${MAIL_SUBDOMAIN}"
 )
 for endpoint in "${ENDPOINTS[@]}"; do
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "$endpoint" 2>/dev/null || echo "000")
+    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 3 "$endpoint" 2>/dev/null || echo "000")
     if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
         print_success "${endpoint} → ${HTTP_CODE}"
     elif [ "$HTTP_CODE" = "000" ]; then
@@ -140,6 +204,13 @@ done
 print_header "검증 결과"
 if [ $ERRORS -eq 0 ]; then
     print_success "모든 검증 항목 통과"
+    echo ""
+    print_info "브라우저에서 접속:"
+    echo -e "  ${GREEN}https://${SYNCTX_SUBDOMAIN}${NC}"
+    echo -e "  ${GREEN}https://${XWIKI_SUBDOMAIN}${NC}"
+    echo -e "  ${GREEN}https://${OPENPROJECT_SUBDOMAIN}${NC}"
+    echo -e "  ${GREEN}https://${MAIL_SUBDOMAIN}${NC}"
+    echo -e "  ${GREEN}https://${GRAFANA_SUBDOMAIN}${NC}"
     exit 0
 else
     print_error "${ERRORS}개 항목에서 문제 발견"

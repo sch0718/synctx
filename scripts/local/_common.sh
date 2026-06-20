@@ -5,8 +5,9 @@
 #   - 경로 설정 (SCRIPT_DIR, PROJECT_ROOT)
 #   - 색상 정의 및 출력 함수
 #   - 로컬 환경 상수
-#   - 인프라 구성 함수 (minikube, helm repos, ingress)
+#   - 인프라 구성 함수 (minikube, helm repos, ingress, cert-manager, CA)
 #   - Docker 이미지 빌드/로드 헬퍼
+#   - Helm 배포 헬퍼
 #
 # 사용법:
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,6 +54,7 @@ print_info()    { echo -e "${BLUE}ℹ $1${NC}"; }
 DOMAIN="synctx.local"
 NAMESPACE="synctx"
 DEPS_NAMESPACE="synctx-deps"
+MONITORING_NAMESPACE="monitoring"
 
 DOCKER_REGISTRY=${DOCKER_REGISTRY:-"synctx"}
 SERVICES=(viewer cdn marp sync feedback)
@@ -63,31 +65,76 @@ THIRD_PARTY_IMAGES=(
 )
 
 VALUES_LOCAL_FILE="${PROJECT_ROOT}/helm/synctx/values-local.yaml"
-VALUES_DEPS_FILE="${LOCAL_DIR}/values-deps.yaml"
+
+# 서브도메인
+SYNCTX_SUBDOMAIN="synctx.${DOMAIN}"
+XWIKI_SUBDOMAIN="xwiki.${DOMAIN}"
+OPENPROJECT_SUBDOMAIN="openproject.${DOMAIN}"
+MAIL_SUBDOMAIN="mail.${DOMAIN}"
+GRAFANA_SUBDOMAIN="grafana.${DOMAIN}"
+
+ALL_DOMAINS=(
+    "${SYNCTX_SUBDOMAIN}"
+    "${XWIKI_SUBDOMAIN}"
+    "${OPENPROJECT_SUBDOMAIN}"
+    "${MAIL_SUBDOMAIN}"
+)
 
 # ============================================================
 # 사전 요구사항 확인
+# 사용: check_prerequisites [mkcert] [minikube] [helm]
 # ============================================================
 check_prerequisites() {
-    local failed=false
+    local check_all=true
+    local check_mkcert=false
+    local check_minikube=false
+    local check_helm=false
 
-    for cmd in minikube helm kubectl docker; do
-        if command -v "$cmd" &>/dev/null; then
-            print_success "${cmd} 설치 확인"
+    if [ $# -gt 0 ]; then
+        check_all=false
+        for arg in "$@"; do
+            case "$arg" in
+                mkcert)   check_mkcert=true ;;
+                minikube) check_minikube=true ;;
+                helm)     check_helm=true ;;
+            esac
+        done
+    fi
+
+    if [ "$check_all" = true ] || [ "$check_mkcert" = true ]; then
+        if command -v mkcert &>/dev/null; then
+            print_success "mkcert 설치 확인"
         else
-            print_error "${cmd}가 설치되어 있지 않습니다"
-            failed=true
+            print_error "mkcert가 설치되어 있지 않습니다"
+            print_info "설치: brew install mkcert (macOS)"
+            return 1
         fi
-    done
+    fi
 
-    if [ "$failed" = true ]; then
-        print_info "설치: brew install minikube helm kubectl docker"
-        return 1
+    if [ "$check_all" = true ] || [ "$check_minikube" = true ]; then
+        if command -v minikube &>/dev/null; then
+            print_success "minikube 설치 확인"
+        else
+            print_error "minikube가 설치되어 있지 않습니다"
+            print_info "설치: brew install minikube (macOS)"
+            return 1
+        fi
+    fi
+
+    if [ "$check_all" = true ] || [ "$check_helm" = true ]; then
+        if command -v helm &>/dev/null; then
+            print_success "helm 설치 확인"
+        else
+            print_error "helm이 설치되어 있지 않습니다"
+            print_info "설치: brew install helm (macOS)"
+            return 1
+        fi
     fi
 }
 
 # ============================================================
 # /etc/hosts 설정
+# 사용: setup_hosts "domain1" "domain2" ...
 # ============================================================
 setup_hosts() {
     local domains=("$@")
@@ -138,20 +185,85 @@ start_minikube() {
 # ============================================================
 setup_helm_repos() {
     helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
+    helm repo add jetstack https://charts.jetstack.io 2>/dev/null || true
     helm repo update
     print_success "Helm Repository 추가 완료"
 }
 
 # ============================================================
-# Ingress Controller 설치 (minikube addon)
+# Nginx Ingress Controller 설치 (Helm Chart)
 # ============================================================
 install_ingress() {
-    if minikube addons list 2>/dev/null | grep -q "ingress.*enabled"; then
-        print_success "Ingress addon이 이미 활성화되어 있습니다"
+    kubectl create namespace ingress-nginx --dry-run=client -o yaml | kubectl apply -f -
+
+    if helm list -n ingress-nginx 2>/dev/null | grep -q ingress-nginx; then
+        print_success "Ingress Controller가 이미 설치되어 있습니다"
     else
-        minikube addons enable ingress
-        print_success "Ingress addon 활성화 완료"
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx \
+            --set controller.service.type=LoadBalancer \
+            --set controller.ingressClassResource.default=true \
+            --set controller.config.force-ssl-redirect=true \
+            --set controller.config.ssl-redirect=true \
+            --set controller.metrics.enabled=true \
+            --set controller.replicaCount=1 \
+            --version 4.8.3 \
+            --wait
+        print_success "Nginx Ingress Controller 설치 완료"
     fi
+}
+
+# ============================================================
+# Cert-Manager 설치
+# ============================================================
+install_cert_manager() {
+    kubectl create namespace cert-manager --dry-run=client -o yaml | kubectl apply -f -
+
+    if helm list -n cert-manager 2>/dev/null | grep -q cert-manager; then
+        print_success "Cert-Manager가 이미 설치되어 있습니다"
+    else
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.crds.yaml
+
+        helm upgrade --install cert-manager jetstack/cert-manager \
+            --namespace cert-manager \
+            --set installCRDs=false \
+            --set replicaCount=1 \
+            --version v1.13.3 \
+            --wait
+        print_success "Cert-Manager 설치 완료"
+    fi
+}
+
+# ============================================================
+# CA Secret 및 ClusterIssuer 설정 (mkcert)
+# ============================================================
+setup_ca_and_issuer() {
+    if kubectl get clusterissuer ca-issuer &>/dev/null; then
+        print_success "CA Issuer가 이미 존재합니다"
+        return
+    fi
+
+    mkcert -install
+    local ca_root
+    ca_root=$(mkcert -CAROOT)
+
+    kubectl create secret tls ca-key-pair \
+        --cert="${ca_root}/rootCA.pem" \
+        --key="${ca_root}/rootCA-key.pem" \
+        -n cert-manager \
+        --dry-run=client -o yaml | kubectl apply -f -
+    print_success "CA Secret 생성 완료 (mkcert)"
+
+    kubectl apply -f - <<'EOF'
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: ca-issuer
+spec:
+  ca:
+    secretName: ca-key-pair
+EOF
+    print_success "CA ClusterIssuer 생성 완료"
 }
 
 # ============================================================
@@ -161,6 +273,51 @@ ensure_namespace() {
     local ns="$1"
     kubectl create namespace "${ns}" --dry-run=client -o yaml | kubectl apply -f -
     print_success "네임스페이스 확인: ${ns}"
+}
+
+# ============================================================
+# 공통 인프라 설치 (Minikube + Helm Repos + Ingress + Cert-Manager + CA)
+# 사용: setup_common_infra [도메인1 도메인2 ...]
+# ============================================================
+setup_common_infra() {
+    local step=1
+    local domains=("$@")
+
+    if [ ${#domains[@]} -eq 0 ]; then
+        domains=("${ALL_DOMAINS[@]}")
+    fi
+
+    print_header "${step}. 사전 요구사항 확인"
+    check_prerequisites || exit 1
+    ((step++))
+
+    print_header "${step}. /etc/hosts 설정"
+    if [ ${#domains[@]} -gt 0 ]; then
+        setup_hosts "${domains[@]}"
+    fi
+    ((step++))
+
+    print_header "${step}. Minikube 시작"
+    start_minikube
+    ((step++))
+
+    print_header "${step}. Helm Repository 추가"
+    setup_helm_repos
+    ((step++))
+
+    print_header "${step}. Nginx Ingress Controller 설치"
+    install_ingress
+    ((step++))
+
+    print_header "${step}. Cert-Manager 설치"
+    install_cert_manager
+    ((step++))
+
+    print_header "${step}. CA Secret 및 Issuer 생성"
+    setup_ca_and_issuer
+    ((step++))
+
+    NEXT_STEP=$step
 }
 
 # ============================================================
@@ -247,19 +404,18 @@ build_and_load_service() {
 # ============================================================
 # Helm release 제거 헬퍼
 # ============================================================
-uninstall_release() {
+safe_uninstall() {
     local release="$1"
-    local ns="$2"
-    local display_name="${3:-$release}"
-    if helm list -n "${ns}" 2>/dev/null | grep -q "${release}"; then
-        if helm uninstall "${release}" -n "${ns}" 2>/dev/null; then
-            print_success "${display_name} 제거 완료"
-        else
-            print_warning "${display_name} 제거 중 오류 발생 (건너뜀)"
-        fi
-    else
-        print_info "${display_name}가 설치되어 있지 않습니다"
-    fi
+    local namespace="$2"
+    helm uninstall "$release" -n "$namespace" 2>/dev/null && \
+        print_success "${release} 삭제 완료 (${namespace})" || true
+}
+
+# ============================================================
+# kubectl 리소스 삭제 헬퍼 (not-found 무시)
+# ============================================================
+safe_delete() {
+    kubectl delete "$@" --ignore-not-found 2>/dev/null || true
 }
 
 # ============================================================

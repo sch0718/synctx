@@ -42,7 +42,7 @@ fi
 
 # 1. synctx Helm release 제거
 print_header "1. synctx 서비스 제거"
-uninstall_release "synctx" "${NAMESPACE}" "synctx"
+safe_uninstall "synctx" "${NAMESPACE}"
 
 # 2. 의존성 제거
 print_header "2. 의존성 서비스 제거"

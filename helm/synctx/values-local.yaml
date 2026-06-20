@@ -50,8 +50,7 @@ slides:
       tag: "2.43.0"
       pullPolicy: IfNotPresent
   replicaCount: 1
-  # TODO: 테스트용 GitHub repo로 변경
-  publishRepoUrl: "https://github.com/sch0718/synctx-slides-test.git"
+  publishRepoUrl: "https://github.com/example-org/published-slides.git"
   pollingIntervalSeconds: "120"
 
 drawio:
@@ -76,15 +75,20 @@ feedback:
     smtpCredential: "mailhog.synctx-deps.svc.cluster.local:1025"
     opApiKey: "local-openproject-api-key"
 
-# ── Ingress (minikube) ──
+# ── Ingress (minikube, TLS via cert-manager) ──
 ingress:
   enabled: true
   className: "nginx"
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/rewrite-target: /$2
+    cert-manager.io/cluster-issuer: ca-issuer
+  tls:
+    - hosts:
+        - synctx.synctx.local
+      secretName: synctx-tls
   hosts:
-    - host: synctx.local
+    - host: synctx.synctx.local
       paths:
         - path: /view(/.*)?
           pathType: ImplementationSpecific
@@ -112,7 +116,7 @@ synctxConfig:
 
     runtime:
       environment: development
-      public_base_url: "http://synctx.local"
+      public_base_url: "https://synctx.synctx.local"
 
     authz:
       enabled: false
@@ -155,7 +159,7 @@ synctxConfig:
           done: 12
 
     viewer:
-      cdn_base_url: "http://synctx.local/cdn"
+      cdn_base_url: "https://synctx.synctx.local/cdn"
 
     marp:
       publish_repo: "https://github.com/sch0718/synctx-slides-test.git"
@@ -180,6 +184,6 @@ synctxConfig:
         from: "synctx@local.dev"
         to: "test@local.dev"
 
-# ── 관측성 ──
+# ── 관측성 (기존 monitoring 네임스페이스의 Prometheus/Grafana 활용) ──
 metrics:
-  enabled: false
+  enabled: true
