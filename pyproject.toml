@@ -22,6 +22,8 @@ members = [
     "shared/synctx-common",
     "services/viewer",
     "services/cdn",
+    "services/marp",
+    "services/sync",
 ]
 
 [tool.uv.sources]

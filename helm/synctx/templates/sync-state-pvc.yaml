@@ -1,0 +1,16 @@
+{{- if .Values.sync.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "synctx.fullname" . }}-sync-state
+  labels:
+    app.kubernetes.io/name: sync
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  accessModes:
+    - {{ .Values.sync.persistence.accessMode | default "ReadWriteOnce" }}
+  storageClassName: {{ .Values.sync.persistence.storageClass | default "" | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.sync.persistence.size | default "1Gi" }}
+{{- end }}

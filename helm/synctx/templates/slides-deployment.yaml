@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "synctx.fullname" . }}-slides
+  labels:
+    app.kubernetes.io/name: slides
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.slides.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: slides
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: slides
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: nginx
+          image: "{{ .Values.slides.image.repository }}:{{ .Values.slides.image.tag }}"
+          imagePullPolicy: {{ .Values.slides.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            - name: slides-worktree
+              mountPath: /data/slides/worktree
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          resources:
+            {{- toYaml .Values.slides.resources | nindent 12 }}
+        - name: sync-sidecar
+          image: "{{ .Values.slides.sidecar.image.repository }}:{{ .Values.slides.sidecar.image.tag }}"
+          imagePullPolicy: {{ .Values.slides.sidecar.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/sync-sidecar.sh"]
+          env:
+            - name: PUBLISH_REPO_URL
+              value: {{ .Values.slides.publishRepoUrl | quote }}
+            - name: POLL_INTERVAL_SECONDS
+              value: {{ .Values.slides.pollingIntervalSeconds | quote }}
+          volumeMounts:
+            - name: slides-worktree
+              mountPath: /data/slides/worktree
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: slides-worktree
+          {{- if .Values.slides.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "synctx.fullname" . }}-slides-worktree
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: nginx-config
+          configMap:
+            name: {{ include "synctx.fullname" . }}-slides-config
+        - name: scripts
+          configMap:
+            name: {{ include "synctx.fullname" . }}-slides-scripts
+            defaultMode: 0755

@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "synctx.fullname" . }}-sync
+  labels:
+    app.kubernetes.io/name: sync
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  schedule: {{ .Values.sync.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: sync
+            app.kubernetes.io/instance: {{ .Release.Name }}
+        spec:
+          serviceAccountName: {{ include "synctx.fullname" . }}-sync
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+          containers:
+            - name: sync
+              image: "{{ .Values.sync.image.repository }}:{{ .Values.sync.image.tag }}"
+              imagePullPolicy: {{ .Values.sync.image.pullPolicy }}
+              command: ["synctx-sync"]
+              {{- if .Values.synctxConfig.create }}
+              env:
+                - name: SYNCTX_CONFIG_PATH
+                  value: /etc/synctx/.synctx.yaml
+              volumeMounts:
+                - name: synctx-config
+                  mountPath: /etc/synctx/.synctx.yaml
+                  subPath: .synctx.yaml
+                  readOnly: true
+              {{- end }}
+              resources:
+                {{- toYaml .Values.sync.resources | nindent 16 }}
+          {{- if .Values.synctxConfig.create }}
+          volumes:
+            - name: synctx-config
+              configMap:
+                name: {{ include "synctx.fullname" . }}-config
+          {{- end }}

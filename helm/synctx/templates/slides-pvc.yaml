@@ -1,0 +1,16 @@
+{{- if .Values.slides.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "synctx.fullname" . }}-slides-worktree
+  labels:
+    app.kubernetes.io/name: slides
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  accessModes:
+    - {{ .Values.slides.persistence.accessMode | default "ReadWriteMany" }}
+  storageClassName: {{ .Values.slides.persistence.storageClass | default "" | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.slides.persistence.size | default "5Gi" }}
+{{- end }}
