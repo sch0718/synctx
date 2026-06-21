@@ -143,6 +143,37 @@ class TestResolveTarget:
         assert project_id == "42"
 
 
+class TestDeriveXwikiTarget:
+    def test_single_dir(self):
+        config = _make_config()
+        engine = SyncEngine(config)
+        space, page = engine._derive_xwiki_target(_make_repo(), "docs/readme.md")
+        assert space == "docs"
+        assert page == "readme"
+
+    def test_nested_dirs(self):
+        config = _make_config()
+        engine = SyncEngine(config)
+        space, page = engine._derive_xwiki_target(_make_repo(), "docs/arch/overview.md")
+        assert space == "docs.arch"
+        assert page == "overview"
+
+    def test_root_file(self):
+        config = _make_config()
+        engine = SyncEngine(config)
+        repo = _make_repo()
+        space, page = engine._derive_xwiki_target(repo, "readme.md")
+        assert space == repo.id
+        assert page == "readme"
+
+    def test_deep_nesting(self):
+        config = _make_config()
+        engine = SyncEngine(config)
+        space, page = engine._derive_xwiki_target(_make_repo(), "a/b/c/d/file.md")
+        assert space == "a.b.c.d"
+        assert page == "file"
+
+
 class TestBuildOpPayload:
     def test_basic_payload(self):
         config = _make_config(
@@ -175,6 +206,26 @@ class TestBuildOpPayload:
         fm = {"synctx": {"due_date": "2026-12-31"}}
         payload = engine._build_op_payload(fm, "body", "task.md")
         assert payload["dueDate"] == "2026-12-31"
+
+    def test_assignee_mapping(self):
+        op = _op_config()
+        op.assignee_map = {"alice": 42, "bob": 99}
+        config = _make_config(
+            targets=TargetsConfig(xwiki=_xwiki_config(), openproject=op),
+        )
+        engine = SyncEngine(config)
+        fm = {"synctx": {"assignee": "alice"}}
+        payload = engine._build_op_payload(fm, "body", "task.md")
+        assert "/api/v3/users/42" in payload["_links"]["assignee"]["href"]
+
+    def test_assignee_unknown_no_error(self):
+        config = _make_config(
+            targets=TargetsConfig(xwiki=_xwiki_config(), openproject=_op_config()),
+        )
+        engine = SyncEngine(config)
+        fm = {"synctx": {"assignee": "unknown-user"}}
+        payload = engine._build_op_payload(fm, "body", "task.md")
+        assert "assignee" not in payload.get("_links", {})
 
 
 class TestRetryConfig:

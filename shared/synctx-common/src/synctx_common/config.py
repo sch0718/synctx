@@ -97,6 +97,7 @@ class OpenProjectTargetConfig(BaseModel):
     auth: TargetAuthConfig
     external_key_custom_field: str = "synctx_external_key"
     protected_fields: List[str] = Field(default_factory=lambda: ["assignee"])
+    assignee_map: Dict[str, int] = Field(default_factory=dict)
     type_map: Dict[str, int] = Field(default_factory=dict)
     status_map: Dict[str, int] = Field(default_factory=dict)
     priority_map: Dict[str, int] = Field(default_factory=dict)

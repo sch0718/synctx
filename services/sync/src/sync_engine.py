@@ -404,6 +404,15 @@ class SyncEngine:
         if "due_date" in synctx_meta:
             payload["dueDate"] = str(synctx_meta["due_date"])
 
+        if "assignee" in synctx_meta:
+            assignee_name = synctx_meta["assignee"]
+            if assignee_name in op_config.assignee_map:
+                payload.setdefault("_links", {})["assignee"] = {
+                    "href": f"/api/v3/users/{op_config.assignee_map[assignee_name]}"
+                }
+            else:
+                logger.warning(f"Assignee '{assignee_name}' not found in assignee_map for {path}")
+
         if mapping_errors:
             raise SyncError(f"Mapping errors for {path}: {mapping_errors}", "mapping_error")
 
@@ -431,6 +440,8 @@ class SyncEngine:
                 logger.warning(f"Version '{version_name}' not found in project {project_id}")
 
         external_key = f"{repo.id}:{path}"
+        cf_name = self.config.targets.openproject.external_key_custom_field
+        payload.setdefault("customField", {})[cf_name] = external_key
         await self.op_client.upsert_work_package(project_id, external_key, payload)
 
     def _get_all_files(self, git_manager: GitRepoManager) -> List[Tuple[str, str]]:
@@ -443,14 +454,18 @@ class SyncEngine:
         return changes
 
     def _derive_xwiki_target(self, repo: RepoProfile, path: str) -> Tuple[str, str]:
-        """경로에서 XWiki Space와 Page 이름을 추출."""
+        """경로에서 XWiki Space와 Page 이름을 추출.
+
+        docs/arch/overview.md → space="docs.arch", page="overview"
+        docs/readme.md → space="docs", page="readme"
+        readme.md → space=repo.id, page="readme"
+        """
         parts = path.split("/")
+        page = parts[-1].replace(".md", "")
         if len(parts) > 1:
-            space = parts[0]
-            page = parts[-1].replace(".md", "")
+            space = ".".join(parts[:-1])
         else:
             space = repo.id
-            page = parts[0].replace(".md", "")
         return space, page
 
     async def _process_mermaid_blocks(self, space: str, page: str, body: str) -> str:
