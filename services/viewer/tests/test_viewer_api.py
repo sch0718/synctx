@@ -1,14 +1,10 @@
 """Viewer API 단위 테스트."""
 
-import sys
-import os
 from unittest.mock import MagicMock, patch
 from pathlib import PurePosixPath
 
 import pytest
 from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 @pytest.fixture(autouse=True)

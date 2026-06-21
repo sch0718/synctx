@@ -111,6 +111,7 @@ class ViewerConfig(BaseModel):
     repo_cache_path: str = "/data/repos"
     max_render_size_bytes: int = 5242880
     cdn_base_url: str = "/cdn"
+    marp_service_url: str = "http://synctx-marp:8000"
 
 
 class CdnUploadAuthConfig(BaseModel):

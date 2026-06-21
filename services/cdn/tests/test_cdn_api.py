@@ -1,12 +1,8 @@
-import sys
-import os
 import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from app import app, CDN_DATA_DIR, MANIFEST_FILE, AUDIT_LOG_FILE
 

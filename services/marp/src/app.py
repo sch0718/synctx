@@ -314,6 +314,19 @@ async def publish_html(req: PublishRequest):
         "url": f"/slides/{req.filename}"
     }
 
+MARP_BUILTIN_THEMES = [
+    {"name": "default", "description": "Marp 기본 테마"},
+    {"name": "gaia", "description": "Gaia 테마 (어두운 배경)"},
+    {"name": "uncover", "description": "Uncover 테마 (미니멀)"},
+]
+
+
+@app.get("/api/marp/themes")
+async def list_themes():
+    """사용 가능한 Marp 테마 목록을 반환."""
+    return {"themes": MARP_BUILTIN_THEMES}
+
+
 @app.get("/api/marp/published", dependencies=[Depends(verify_publisher_access)])
 async def list_published():
     if not config.marp.publish_repo:

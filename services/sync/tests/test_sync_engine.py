@@ -1,12 +1,8 @@
 """SyncEngine 통합 테스트 (외부 의존성 mock)."""
 
-import sys
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from synctx_common.config import (
     SynctxConfig, TargetsConfig, XWikiTargetConfig, OpenProjectTargetConfig,

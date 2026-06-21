@@ -1,10 +1,6 @@
 """StateManager 단위 테스트."""
 
 import json
-import sys
-import os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from state import StateManager, RepoState, SyncedFileState, PendingFailure
 

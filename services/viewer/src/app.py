@@ -136,16 +136,52 @@ def get_tree(repo_id: str, path: str = "", ref: str | None = None):
 
 
 @app.get("/api/repos/{repo_id}/download", dependencies=[Depends(verify_viewer_access)])
-def download_file(repo_id: str, path: str, ref: str | None = None):
+async def download_file(repo_id: str, path: str, format: str = "raw", ref: str | None = None):
     manager = get_repo_manager(repo_id)
     try:
-        content = manager.read_file(path, ref=ref)
-        filename = os.path.basename(path.strip("/")) or "download"
-        return Response(
-            content=content,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
+        filename_base = PurePosixPath(path).stem or "download"
+
+        if format == "raw":
+            content = manager.read_file(path, ref=ref)
+            filename = os.path.basename(path.strip("/")) or "download"
+            return Response(
+                content=content,
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
+        if format == "html":
+            text_content = manager.read_file_text(path, ref=ref)
+            rendered = render_markdown(text_content)
+            html = _sanitize_html(rendered.get("html", ""))
+            html_doc = f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{filename_base}</title></head><body>{html}</body></html>"
+            return Response(
+                content=html_doc.encode("utf-8"),
+                media_type="text/html",
+                headers={"Content-Disposition": f'attachment; filename="{filename_base}.html"'},
+            )
+
+        if format == "pdf":
+            text_content = manager.read_file_text(path, ref=ref)
+            import httpx
+            marp_url = config.viewer.marp_service_url.rstrip("/")
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{marp_url}/api/marp/convert",
+                    json={"markdown": text_content},
+                )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="PDF conversion failed")
+            return Response(
+                content=resp.content,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename_base}.pdf"'},
+            )
+
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Use raw, html, or pdf.")
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
 
