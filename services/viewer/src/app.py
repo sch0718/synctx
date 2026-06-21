@@ -150,6 +150,17 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'},
             )
 
+        if format in ("html", "pdf"):
+            try:
+                blob_size = manager.file_size(path, ref=ref)
+            except Exception:
+                blob_size = 0
+            if blob_size > config.viewer.max_render_size_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large for conversion ({blob_size} bytes, max {config.viewer.max_render_size_bytes})",
+                )
+
         if format == "html":
             text_content = manager.read_file_text(path, ref=ref)
             rendered = render_markdown(text_content)
@@ -1034,13 +1045,17 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
     ref_param = f"&ref={ref}" if ref else ""
     ref_param_first = f"?ref={ref}" if ref else ""
     try:
-        content = manager.read_file_text(path, ref=effective_ref)
-
-        if len(content.encode("utf-8")) > config.viewer.max_render_size_bytes:
+        try:
+            blob_size = manager.file_size(path, ref=effective_ref)
+        except Exception:
+            blob_size = 0
+        if blob_size > config.viewer.max_render_size_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"File too large for rendering ({len(content.encode('utf-8'))} bytes, max {config.viewer.max_render_size_bytes})",
+                detail=f"File too large for rendering ({blob_size} bytes, max {config.viewer.max_render_size_bytes})",
             )
+
+        content = manager.read_file_text(path, ref=effective_ref)
 
         suffix = PurePosixPath(path).suffix.lower()
         is_md = suffix in MARKDOWN_EXTENSIONS

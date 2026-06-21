@@ -35,6 +35,7 @@ def mock_repo_manager():
     manager.profile.default_ref = "main"
     manager.head_sha_value = "abc123"
     manager.status = "ready"
+    manager.file_size.return_value = 100
     return manager
 
 
@@ -88,8 +89,7 @@ class TestMaxRenderSize:
         assert resp.status_code == 200
 
     def test_file_exceeding_limit_returns_413(self, client, mock_repo_manager):
-        large_content = "x" * 2000
-        mock_repo_manager.read_file_text.return_value = large_content
+        mock_repo_manager.file_size.return_value = 2000
         resp = client.get("/test-repo/docs/large.md")
         assert resp.status_code == 413
         assert "too large" in resp.json()["detail"].lower()
