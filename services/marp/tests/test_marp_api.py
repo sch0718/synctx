@@ -237,6 +237,25 @@ class TestCleanupFile:
         cleanup_file(str(tmp_path / "missing.pdf"))
 
 
+class TestConvertHtml:
+    def test_convert_html_format(self, client, tmp_path, monkeypatch):
+        monkeypatch.setenv("MARP_WORK_DIR", str(tmp_path))
+
+        async def mock_write_and_run(processed, md_path, out_path, flags, timeout):
+            Path(out_path).write_text("<html><body>slides</body></html>")
+
+        with patch("app.preprocess_mermaid", new_callable=AsyncMock, return_value=("# Slide", [])):
+            with patch("app.write_and_run_marp", side_effect=mock_write_and_run):
+                resp = client.post("/api/marp/convert", json={"markdown": "# Slide", "format": "html"})
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
+
+    def test_convert_invalid_format(self, client):
+        resp = client.post("/api/marp/convert", json={"markdown": "# Slide", "format": "pptx"})
+        assert resp.status_code == 400
+        assert "Unsupported format" in resp.json()["detail"]
+
+
 class TestThemesAPI:
     def test_list_themes(self, client):
         resp = client.get("/api/marp/themes")

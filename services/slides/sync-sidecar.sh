@@ -1,5 +1,6 @@
 #!/bin/sh
 # Slides Server Sidecar: 주기적으로 Git 저장소를 pull하여 최신 HTML을 가져온다.
+# SIGUSR1 수신 시 즉시 pull을 수행한다.
 
 set -e
 
@@ -7,6 +8,10 @@ REPO_URL="${PUBLISH_REPO_URL}"
 BRANCH="${PUBLISH_BRANCH:-main}"
 WORKTREE="/data/slides/worktree"
 POLL_INTERVAL="${POLL_INTERVAL_SECONDS:-60}"
+TRIGGER_FILE="/tmp/slides-refresh-trigger"
+
+SIDECAR_PID_FILE="/tmp/slides-sidecar.pid"
+echo $$ > "$SIDECAR_PID_FILE"
 
 echo "Starting slides-sync sidecar..."
 echo "Repo: $REPO_URL"
@@ -21,11 +26,22 @@ fi
 
 cd "$WORKTREE"
 
-while true; do
+do_pull() {
     echo "Pulling latest changes..."
-    git pull origin "$BRANCH" || echo "Failed to pull, will retry later."
-    
-    # Nginx에 reload 신호를 보낼 수도 있으나, 정적 파일이므로 파일 시스템 변경만으로 충분함.
-    
-    sleep "$POLL_INTERVAL"
+    git fetch origin "$BRANCH" 2>&1 || { echo "Fetch failed, will retry later."; return 1; }
+    git reset --hard "origin/$BRANCH" 2>&1 || { echo "Reset failed."; return 1; }
+    echo "Pull completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+
+trap 'do_pull' USR1
+
+while true; do
+    do_pull || true
+
+    if [ -f "$TRIGGER_FILE" ]; then
+        rm -f "$TRIGGER_FILE"
+    fi
+
+    sleep "$POLL_INTERVAL" &
+    wait $! || true
 done

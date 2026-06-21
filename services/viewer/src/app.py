@@ -195,8 +195,18 @@ def raw_file(repo_id: str, path: str, ref: str | None = None):
         raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
 
 
+def _verify_service_token(request: Request):
+    expected = os.getenv("SYNCTX_SERVICE_TOKEN", "")
+    if not expected:
+        return
+    token = request.headers.get("X-Service-Token", "")
+    if token != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing service token")
+
+
 @app.post("/api/repos/{repo_id}/webhook", dependencies=[Depends(verify_viewer_access)])
 async def repo_webhook(repo_id: str, request: Request):
+    _verify_service_token(request)
     manager = get_repo_manager(repo_id)
     payload = await request.json()
     source = payload.get("after") or payload.get("checkout_sha") or "webhook"

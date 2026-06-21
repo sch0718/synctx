@@ -133,3 +133,38 @@ class TestAPIRoutes:
     def test_repo_not_found(self, client):
         resp = client.get("/nonexistent/docs/test.md")
         assert resp.status_code == 404
+
+
+class TestWebhookToken:
+    def test_webhook_no_token_passes_when_unset(self, client, mock_repo_manager, monkeypatch):
+        from unittest.mock import AsyncMock
+        monkeypatch.delenv("SYNCTX_SERVICE_TOKEN", raising=False)
+        mock_repo_manager.fetch = AsyncMock(return_value="sha123")
+        resp = client.post("/api/repos/test-repo/webhook", json={"after": "abc"})
+        assert resp.status_code == 200
+
+    def test_webhook_rejects_missing_token(self, client, mock_repo_manager, monkeypatch):
+        monkeypatch.setenv("SYNCTX_SERVICE_TOKEN", "secret-token-123")
+        resp = client.post("/api/repos/test-repo/webhook", json={"after": "abc"})
+        assert resp.status_code == 401
+
+    def test_webhook_rejects_wrong_token(self, client, mock_repo_manager, monkeypatch):
+        monkeypatch.setenv("SYNCTX_SERVICE_TOKEN", "secret-token-123")
+        resp = client.post(
+            "/api/repos/test-repo/webhook",
+            json={"after": "abc"},
+            headers={"X-Service-Token": "wrong-token"},
+        )
+        assert resp.status_code == 401
+
+    def test_webhook_accepts_correct_token(self, client, mock_repo_manager, monkeypatch):
+        from unittest.mock import AsyncMock
+        monkeypatch.setenv("SYNCTX_SERVICE_TOKEN", "secret-token-123")
+        mock_repo_manager.fetch = AsyncMock(return_value="sha456")
+        resp = client.post(
+            "/api/repos/test-repo/webhook",
+            json={"after": "abc"},
+            headers={"X-Service-Token": "secret-token-123"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["head_sha"] == "sha456"
