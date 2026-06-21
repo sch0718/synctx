@@ -295,6 +295,83 @@ def list_library_versions(library: str):
     return {"library": library, "versions": versions}
 
 
+ADMIN_THEME_NAMES = {
+    "github-light": "GitHub Light",
+    "github-dark": "GitHub Dark",
+    "cayman": "Cayman",
+    "minimal": "Minimal",
+    "hacker": "Hacker",
+    "modernist": "Modernist",
+    "corporate": "Corporate",
+}
+
+ADMIN_THEME_VARS_CSS = """
+[data-theme="github-light"] {
+    --primary: #0969da; --primary-light: #4493f8; --primary-lighter: #ddf4ff; --primary-dark: #0550ae;
+    --bg-default: #ffffff; --bg-neutral: #f6f8fa; --bg-card: #ffffff;
+    --text-primary: #1f2328; --text-secondary: #57606a; --text-disabled: #8b949e;
+    --border-color: rgba(208,215,222,0.5);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+[data-theme="github-dark"] {
+    --primary: #58a6ff; --primary-light: #79c0ff; --primary-lighter: #0d1117; --primary-dark: #388bfd;
+    --bg-default: #0d1117; --bg-neutral: #161b22; --bg-card: #161b22;
+    --text-primary: #e6edf3; --text-secondary: #8b949e; --text-disabled: #484f58;
+    --border-color: rgba(48,54,61,0.6);
+    --shadow-card: 0 0 2px 0 rgba(0,0,0,0.4), 0 12px 24px -4px rgba(0,0,0,0.3);
+    --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
+}
+[data-theme="cayman"] {
+    --primary: #159957; --primary-light: #1e9b52; --primary-lighter: #e6f9ef; --primary-dark: #0e7a42;
+    --bg-default: #ffffff; --bg-neutral: #f3f6fa; --bg-card: #ffffff;
+    --text-primary: #606c71; --text-secondary: #819198; --text-disabled: #9aa6ac;
+    --border-color: rgba(220,230,240,0.5);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+[data-theme="minimal"] {
+    --primary: #4183c4; --primary-light: #6ba4d9; --primary-lighter: #e8f0fa; --primary-dark: #2e6da4;
+    --bg-default: #ffffff; --bg-neutral: #f8f8f8; --bg-card: #ffffff;
+    --text-primary: #333333; --text-secondary: #777777; --text-disabled: #999999;
+    --border-color: rgba(222,222,222,0.5);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+[data-theme="hacker"] {
+    --primary: #b5e853; --primary-light: #c4ee7e; --primary-lighter: #1a2a1a; --primary-dark: #8fc43e;
+    --bg-default: #151515; --bg-neutral: #1a1a1a; --bg-card: #1a1a1a;
+    --text-primary: #b0b0b0; --text-secondary: #888888; --text-disabled: #666666;
+    --border-color: rgba(51,51,51,0.6);
+    --shadow-card: 0 0 2px 0 rgba(0,0,0,0.4), 0 12px 24px -4px rgba(0,0,0,0.3);
+    --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
+}
+[data-theme="modernist"] {
+    --primary: #4276b6; --primary-light: #6694c8; --primary-lighter: #e8f0fa; --primary-dark: #325fa0;
+    --bg-default: #f1f1f1; --bg-neutral: #e8f0fa; --bg-card: #ffffff;
+    --text-primary: #474747; --text-secondary: #7a8a96; --text-disabled: #9aa6ac;
+    --border-color: rgba(197,209,219,0.5);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+[data-theme="corporate"] {
+    --primary: #E01E1F; --primary-light: #E84A4B; --primary-lighter: #FDE8E8; --primary-dark: #B01819;
+    --bg-default: #ffffff; --bg-neutral: #F4F6F8; --bg-card: #ffffff;
+    --text-primary: #1C252E; --text-secondary: #637381; --text-disabled: #919EAB;
+    --border-color: rgba(145,158,171,0.2);
+    --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
+    --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
+}
+"""
+
+
+def _build_admin_theme_options():
+    html = ""
+    for key, label in ADMIN_THEME_NAMES.items():
+        html += f'<option value="{key}">{label}</option>'
+    return html
+
+
 @app.get("/api/cdn/admin", response_class=HTMLResponse)
 def cdn_admin():
     manifest = get_manifest()
@@ -322,57 +399,163 @@ def cdn_admin():
     rows_html = "\n".join(rows)
     allowed_ext = ", ".join(config.cdn.allowed_extensions)
     max_size_mb = config.cdn.max_upload_size_bytes / 1_000_000
+    theme_options = _build_admin_theme_options()
     return f"""<!doctype html>
-<html lang="ko">
-<head><meta charset="utf-8"><title>synctx CDN Admin</title>
+<html lang="ko" data-theme="github-light">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>synctx CDN Admin</title>
+<script>
+(function() {{
+    var saved = localStorage.getItem('synctx-theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+}})();
+</script>
+<style>{ADMIN_THEME_VARS_CSS}</style>
 <style>
-*{{ box-sizing:border-box }}
-body{{ font-family:-apple-system,sans-serif; margin:0; padding:2rem; color:#1a1a1a; background:#fafafa }}
-h1{{ margin:0 0 1.5rem; font-size:1.5rem }}
-h2{{ font-size:1.1rem; margin:1.5rem 0 .8rem; color:#333 }}
-.layout{{ display:flex; gap:2rem; align-items:flex-start }}
-.upload-panel{{ flex:0 0 360px; background:#fff; border:1px solid #ddd; border-radius:8px; padding:1.2rem }}
-.file-panel{{ flex:1; min-width:0 }}
-.tab-bar{{ display:flex; gap:4px; margin-bottom:1rem }}
-.tab{{ padding:6px 14px; border:1px solid #ccc; border-radius:6px 6px 0 0; background:#f5f5f5; cursor:pointer; font-size:.85rem }}
-.tab.active{{ background:#fff; border-bottom-color:#fff; font-weight:600 }}
-.tab-content{{ display:none }} .tab-content.active{{ display:block }}
-label{{ display:block; font-size:.85rem; font-weight:500; margin:0.6rem 0 .3rem; color:#555 }}
-input[type=text]{{ width:100%; padding:6px 8px; border:1px solid #ccc; border-radius:4px; font-size:.9rem }}
-input[type=file]{{ font-size:.85rem }}
-.field-row{{ display:flex; gap:8px }}
-.field-row .field{{ flex:1 }}
-.checkbox-row{{ display:flex; align-items:center; gap:6px; margin:.8rem 0 }}
-.checkbox-row label{{ margin:0; font-weight:normal }}
-.hint{{ font-size:.75rem; color:#888; margin-top:2px }}
-.btn{{ padding:8px 16px; border:none; border-radius:4px; cursor:pointer; font-size:.9rem; font-weight:500 }}
-.btn-upload{{ background:#2563eb; color:#fff; margin-top:1rem; width:100% }}
-.btn-upload:hover{{ background:#1d4ed8 }}
-.btn-upload:disabled{{ background:#93c5fd; cursor:not-allowed }}
-.btn-scan{{ background:#059669; color:#fff; margin-top:.5rem; width:100% }}
-.btn-scan:hover{{ background:#047857 }}
-.btn-delete{{ background:none; border:1px solid #dc2626; color:#dc2626; padding:3px 10px; border-radius:4px; cursor:pointer; font-size:.8rem }}
-.btn-delete:hover{{ background:#dc2626; color:#fff }}
-.badge{{ padding:2px 8px; border-radius:10px; font-size:.75rem }}
-.badge-disabled{{ background:#fee2e2; color:#991b1b }}
-.toast{{ position:fixed; top:1rem; right:1rem; padding:10px 18px; border-radius:6px; color:#fff; font-size:.9rem; opacity:0; transition:opacity .3s; z-index:100 }}
-.toast.success{{ background:#16a34a }} .toast.error{{ background:#dc2626 }}
-.toast.show{{ opacity:1 }}
-.divider{{ border:0; border-top:1px solid #eee; margin:1.2rem 0 }}
-table{{ border-collapse:collapse; width:100%; font-size:.85rem }}
-th,td{{ border:1px solid #ddd; padding:6px 10px; text-align:left }}
-th{{ background:#f0f0f0; font-weight:600; position:sticky; top:0 }}
-td.num{{ text-align:right; font-variant-numeric:tabular-nums }}
-.empty{{ text-align:center; color:#999; padding:2rem }}
-.toolbar{{ display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem }}
-.file-count{{ font-size:.8rem; color:#666 }}
+:root {{
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --font-primary: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'D2Coding', ui-monospace, monospace;
+    --header-height: 64px;
+}}
+* {{ margin: 0; padding: 0; box-sizing: border-box; }}
+body {{ font-family: var(--font-primary); background: var(--bg-default); color: var(--text-primary); }}
+
+.header {{
+    height: var(--header-height); display: flex; align-items: center;
+    padding: 0 24px; background: var(--bg-card); border-bottom: 1px solid var(--border-color);
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+}}
+.header-logo {{ font-size: 18px; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }}
+.header-logo svg {{ width: 28px; height: 28px; }}
+.header-logo span {{ color: var(--text-secondary); font-weight: 400; font-size: 14px; }}
+.header-actions {{ margin-left: auto; display: flex; gap: 8px; align-items: center; }}
+.theme-select {{
+    padding: 6px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+    background: var(--bg-card); color: var(--text-primary); font-size: 13px;
+    font-family: var(--font-primary); cursor: pointer;
+}}
+.theme-select:focus {{ outline: 2px solid var(--primary); outline-offset: -2px; }}
+
+.page-body {{ margin-top: var(--header-height); padding: 32px; min-height: calc(100vh - var(--header-height)); }}
+.layout {{ display: flex; gap: 24px; align-items: flex-start; }}
+
+.upload-panel {{
+    flex: 0 0 360px; background: var(--bg-card); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card); padding: 24px;
+}}
+.file-panel {{ flex: 1; min-width: 0; }}
+
+.section-title {{ font-size: 16px; font-weight: 700; margin-bottom: 16px; }}
+
+.tab-bar {{ display: flex; gap: 4px; margin-bottom: 16px; }}
+.tab {{
+    padding: 8px 16px; border: 1px solid var(--border-color); border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    background: var(--bg-neutral); cursor: pointer; font-size: 13px; color: var(--text-secondary);
+    font-family: var(--font-primary); transition: background .15s, color .15s;
+}}
+.tab:hover {{ color: var(--text-primary); }}
+.tab.active {{ background: var(--bg-card); border-bottom-color: var(--bg-card); font-weight: 600; color: var(--text-primary); }}
+.tab-content {{ display: none; }} .tab-content.active {{ display: block; }}
+
+label {{ display: block; font-size: 13px; font-weight: 500; margin: 12px 0 4px; color: var(--text-secondary); }}
+input[type=text] {{
+    width: 100%; padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+    font-size: 14px; background: var(--bg-default); color: var(--text-primary); font-family: var(--font-primary);
+    transition: border-color .15s;
+}}
+input[type=text]:focus {{ outline: none; border-color: var(--primary); }}
+input[type=file] {{ font-size: 13px; color: var(--text-secondary); }}
+
+.field-row {{ display: flex; gap: 8px; }}
+.field-row .field {{ flex: 1; }}
+
+.checkbox-row {{ display: flex; align-items: center; gap: 8px; margin: 12px 0; }}
+.checkbox-row label {{ margin: 0; font-weight: 400; font-size: 13px; }}
+.checkbox-row input[type=checkbox] {{ accent-color: var(--primary); }}
+
+.hint {{ font-size: 12px; color: var(--text-disabled); margin-top: 4px; }}
+.hint code {{ font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }}
+
+.btn {{
+    padding: 10px 20px; border: none; border-radius: var(--radius-sm); cursor: pointer;
+    font-size: 14px; font-weight: 600; font-family: var(--font-primary); transition: background .15s;
+}}
+.btn-upload {{ background: var(--primary); color: #fff; margin-top: 16px; width: 100%; }}
+.btn-upload:hover {{ background: var(--primary-dark); }}
+.btn-upload:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+.btn-scan {{ background: var(--bg-neutral); color: var(--text-primary); border: 1px solid var(--border-color); margin-top: 8px; width: 100%; }}
+.btn-scan:hover {{ background: var(--border-color); }}
+.btn-delete {{
+    background: none; border: 1px solid var(--border-color); color: var(--text-secondary);
+    padding: 4px 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: 12px;
+    font-family: var(--font-primary); transition: all .15s;
+}}
+.btn-delete:hover {{ border-color: #dc2626; color: #dc2626; }}
+.badge {{ padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }}
+.badge-disabled {{ background: var(--primary-lighter); color: var(--primary-dark); }}
+[data-theme="github-dark"] .badge-disabled,
+[data-theme="hacker"] .badge-disabled {{ background: rgba(220,38,38,0.15); color: #f87171; }}
+
+.divider {{ border: none; border-top: 1px solid var(--border-color); margin: 20px 0; }}
+
+.file-card {{
+    background: var(--bg-card); border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card); overflow: hidden;
+}}
+.file-toolbar {{
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 16px 24px; border-bottom: 1px solid var(--border-color);
+}}
+.file-toolbar .section-title {{ margin: 0; }}
+.file-count {{ font-size: 13px; color: var(--text-disabled); font-weight: 500; }}
+
+.table-wrap {{ overflow-x: auto; }}
+table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+th, td {{ padding: 10px 16px; text-align: left; border-bottom: 1px solid var(--border-color); }}
+th {{
+    background: var(--bg-neutral); font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary);
+    position: sticky; top: 0;
+}}
+td {{ color: var(--text-primary); }}
+td code {{ font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }}
+td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); }}
+tbody tr:hover {{ background: var(--bg-neutral); }}
+.empty {{ text-align: center; color: var(--text-disabled); padding: 40px; }}
+
+.toast {{
+    position: fixed; top: 80px; right: 24px; padding: 12px 20px; border-radius: var(--radius-sm);
+    color: #fff; font-size: 14px; font-family: var(--font-primary); font-weight: 500;
+    opacity: 0; transition: opacity .3s; z-index: 200; box-shadow: var(--shadow-card);
+}}
+.toast.success {{ background: #16a34a; }} .toast.error {{ background: #dc2626; }}
+.toast.show {{ opacity: 1; }}
+
+@media (max-width: 768px) {{
+    .layout {{ flex-direction: column; }}
+    .upload-panel {{ flex: none; width: 100%; }}
+    .page-body {{ padding: 16px; }}
+}}
 </style>
 </head>
 <body>
-<h1>synctx CDN Admin</h1>
+<header class="header">
+    <div class="header-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4m-3.5-6.5L17 7m-10 10-1.5 1.5M20.5 17.5 19 17M5 7 3.5 5.5"/></svg>
+        synctx <span>CDN Admin</span>
+    </div>
+    <div class="header-actions">
+        <select id="theme-select" class="theme-select" onchange="changeTheme(this.value)">{theme_options}</select>
+    </div>
+</header>
+
+<div class="page-body">
 <div class="layout">
 <div class="upload-panel">
-  <h2>파일 업로드</h2>
+  <div class="section-title">파일 업로드</div>
   <div class="tab-bar">
     <div class="tab active" onclick="switchTab('single')">단일 파일</div>
     <div class="tab" onclick="switchTab('batch')">다중 파일</div>
@@ -415,23 +598,39 @@ td.num{{ text-align:right; font-variant-numeric:tabular-nums }}
   <div class="hint">최대 크기: {max_size_mb:.0f} MB</div>
   <button class="btn btn-upload" id="btn-upload" onclick="doUpload()">업로드</button>
   <hr class="divider">
-  <h2>파일시스템 스캔</h2>
+  <div class="section-title">파일시스템 스캔</div>
   <div class="hint">CDN 저장소에 직접 복사된 파일을 manifest에 등록합니다.</div>
   <button class="btn btn-scan" id="btn-scan" onclick="doScan()">스캔</button>
 </div>
 <div class="file-panel">
-  <div class="toolbar">
-    <h2 style="margin:0">업로드된 파일</h2>
-    <span class="file-count">{len(rows)}개 파일</span>
+  <div class="file-card">
+    <div class="file-toolbar">
+      <div class="section-title">업로드된 파일</div>
+      <span class="file-count">{len(rows)}개 파일</span>
+    </div>
+    <div class="table-wrap">
+    <table>
+    <thead><tr><th>Path</th><th>Size</th><th>SHA-256</th><th>Content-Type</th><th>Uploaded By</th><th>Uploaded At</th><th>상태</th><th></th></tr></thead>
+    <tbody id="file-table">{rows_html if rows_html else '<tr><td colspan="8" class="empty">업로드된 파일이 없습니다</td></tr>'}</tbody>
+    </table>
+    </div>
   </div>
-  <table>
-  <thead><tr><th>Path</th><th>Size</th><th>SHA-256</th><th>Content-Type</th><th>Uploaded By</th><th>Uploaded At</th><th>상태</th><th></th></tr></thead>
-  <tbody id="file-table">{rows_html if rows_html else '<tr><td colspan="8" class="empty">업로드된 파일이 없습니다</td></tr>'}</tbody>
-  </table>
+</div>
 </div>
 </div>
 <div class="toast" id="toast"></div>
 <script>
+(function() {{
+    var saved = localStorage.getItem('synctx-theme');
+    if (saved) {{
+        var sel = document.getElementById('theme-select');
+        if (sel) sel.value = saved;
+    }}
+}})();
+function changeTheme(theme) {{
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('synctx-theme', theme);
+}}
 function switchTab(name) {{
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
