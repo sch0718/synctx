@@ -9,6 +9,8 @@ BRANCH="${PUBLISH_BRANCH:-main}"
 WORKTREE="/data/slides/worktree"
 POLL_INTERVAL="${POLL_INTERVAL_SECONDS:-60}"
 TRIGGER_FILE="/tmp/slides-refresh-trigger"
+GENERATE_INDEX="/scripts/generate-index.sh"
+SLIDES_DIR="/data/slides/worktree/_published/slides"
 
 SIDECAR_PID_FILE="/tmp/slides-sidecar.pid"
 echo $$ > "$SIDECAR_PID_FILE"
@@ -31,6 +33,9 @@ do_pull() {
     git fetch origin "$BRANCH" 2>&1 || { echo "Fetch failed, will retry later."; return 1; }
     git reset --hard "origin/$BRANCH" 2>&1 || { echo "Reset failed."; return 1; }
     echo "Pull completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [ -x "$GENERATE_INDEX" ]; then
+        sh "$GENERATE_INDEX" "$SLIDES_DIR" 2>&1 || echo "Index generation failed."
+    fi
 }
 
 trap 'do_pull' USR1
