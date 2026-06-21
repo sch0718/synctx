@@ -25,6 +25,14 @@ helm upgrade --install synctx "${PROJECT_ROOT}/helm/synctx" \
 
 print_success "synctx Helm 배포 완료"
 
+# pullPolicy: Never 이므로 Deployment를 재시작해야 새 이미지가 적용됨
+print_header "Deployment 재시작 (새 이미지 적용)"
+for deploy in $(kubectl get deployments -n "${NAMESPACE}" -o name 2>/dev/null); do
+    kubectl rollout restart "${deploy}" -n "${NAMESPACE}" 2>/dev/null || true
+done
+kubectl rollout status deployment -n "${NAMESPACE}" --timeout=120s 2>/dev/null || true
+print_success "Deployment 재시작 완료"
+
 # 상태 확인
 print_header "배포 상태"
 kubectl get pods -n "${NAMESPACE}" 2>/dev/null || true

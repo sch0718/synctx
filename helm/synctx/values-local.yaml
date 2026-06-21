@@ -180,7 +180,7 @@ synctxConfig:
       cdn_base_url: "https://synctx.synctx.local/cdn"
 
     marp:
-      publish_repo: "https://github.com/sch0718/synctx-slides-test.git"
+      publish_repo: "https://github.com/example-org/published-slides.git"
       publish_branch: main
 
     sync:

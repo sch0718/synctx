@@ -132,7 +132,10 @@ class GitRepoManager:
     def _clone_with_args(self, clone_args: list[str]) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         if self.repo_dir.exists():
-            return
+            if (self.repo_dir / ".git").exists():
+                return
+            import shutil
+            shutil.rmtree(self.repo_dir)
         self._run_git("clone", *clone_args, self.profile.url, str(self.repo_dir), cwd=self.base_dir)
         if self.profile.sparse_paths:
             self._run_git("sparse-checkout", "init", "--cone")
@@ -325,5 +328,6 @@ class GitRepoManager:
             capture_output=True,
         )
         
+        self._run_git("pull", "--rebase", "origin", self.profile.default_ref)
         self._run_git("push", "origin", self.profile.default_ref)
         return self.head_sha()
