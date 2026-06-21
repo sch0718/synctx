@@ -6,7 +6,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from state import StateManager
+from state import StateManager, RepoState, SyncedFileState, PendingFailure
 
 
 class TestStateManager:
@@ -54,7 +54,14 @@ class TestStateManager:
         state_dir = tmp_path / "state"
         state_dir.mkdir()
         (state_dir / "repo-a.json").write_text("not valid json")
-        (state_dir / "repo-a.bak").write_text(json.dumps({"last_successful_sha": "sha-bak"}))
+        (state_dir / "repo-a.bak").write_text(json.dumps({
+            "schema_version": 1,
+            "repo_id": "repo-a",
+            "last_successful_sha": "sha-bak",
+            "last_run_id": "",
+            "synced_files": {},
+            "pending_failures": [],
+        }))
         sm = StateManager(str(state_dir))
         assert sm.get_last_successful_sha("repo-a") == "sha-bak"
 
@@ -65,3 +72,98 @@ class TestStateManager:
         (state_dir / "repo-a.bak").write_text("also invalid")
         sm = StateManager(str(state_dir))
         assert sm.get_last_successful_sha("repo-a") is None
+
+
+class TestPerFileTracking:
+    def test_file_changed_new_file(self, tmp_path):
+        sm = StateManager(str(tmp_path / "state"))
+        assert sm.is_file_changed("repo-a", "docs/test.md", "sha256abc") is True
+
+    def test_file_not_changed(self, tmp_path):
+        sm = StateManager(str(tmp_path / "state"))
+        state = sm.get_state("repo-a")
+        sm.record_file_synced(
+            state, "docs/test.md", "sha256abc", "xwiki",
+            "repo-a:docs/test.md", "xwiki:docs.test", "commit1", "2026-01-01T00:00:00Z",
+        )
+        sm.save_state("repo-a", state)
+        assert sm.is_file_changed("repo-a", "docs/test.md", "sha256abc") is False
+
+    def test_file_changed_after_content_update(self, tmp_path):
+        sm = StateManager(str(tmp_path / "state"))
+        state = sm.get_state("repo-a")
+        sm.record_file_synced(
+            state, "docs/test.md", "sha256abc", "xwiki",
+            "repo-a:docs/test.md", "xwiki:docs.test", "commit1", "2026-01-01T00:00:00Z",
+        )
+        sm.save_state("repo-a", state)
+        assert sm.is_file_changed("repo-a", "docs/test.md", "sha256xyz") is True
+
+    def test_record_file_deleted(self, tmp_path):
+        sm = StateManager(str(tmp_path / "state"))
+        state = sm.get_state("repo-a")
+        sm.record_file_synced(
+            state, "docs/test.md", "sha256abc", "xwiki",
+            "repo-a:docs/test.md", "xwiki:docs.test", "commit1", "2026-01-01T00:00:00Z",
+        )
+        sm.record_file_deleted(state, "docs/test.md")
+        assert "docs/test.md" not in state.synced_files
+
+
+class TestPendingFailures:
+    def test_add_pending_failure(self, tmp_path):
+        sm = StateManager(str(tmp_path / "state"))
+        state = sm.get_state("repo-a")
+        sm.add_pending_failure(state, "docs/broken.md", "mapping_error", "Unknown status: review")
+        assert len(state.pending_failures) == 1
+        assert state.pending_failures[0].error_type == "mapping_error"
+        assert state.pending_failures[0].path == "docs/broken.md"
+
+    def test_duplicate_failure_increments_count(self, tmp_path):
+        sm = StateManager(str(tmp_path / "state"))
+        state = sm.get_state("repo-a")
+        sm.add_pending_failure(state, "docs/broken.md", "mapping_error", "msg1")
+        sm.add_pending_failure(state, "docs/broken.md", "transient_error", "msg2")
+        assert len(state.pending_failures) == 1
+        assert state.pending_failures[0].attempt_count == 2
+        assert state.pending_failures[0].error_type == "transient_error"
+
+    def test_clear_pending_failure(self, tmp_path):
+        sm = StateManager(str(tmp_path / "state"))
+        state = sm.get_state("repo-a")
+        sm.add_pending_failure(state, "docs/a.md", "auth_error", "401")
+        sm.add_pending_failure(state, "docs/b.md", "transient_error", "timeout")
+        sm.clear_pending_failure(state, "docs/a.md")
+        assert len(state.pending_failures) == 1
+        assert state.pending_failures[0].path == "docs/b.md"
+
+    def test_state_persistence_with_failures(self, tmp_path):
+        sm = StateManager(str(tmp_path / "state"))
+        state = sm.get_state("repo-a")
+        sm.record_file_synced(
+            state, "docs/ok.md", "sha1", "xwiki",
+            "repo-a:docs/ok.md", "xwiki:docs.ok", "c1", "2026-01-01T00:00:00Z",
+        )
+        sm.add_pending_failure(state, "docs/fail.md", "auth_error", "403 Forbidden")
+        state.last_successful_sha = "abc"
+        sm.save_state("repo-a", state)
+
+        loaded = sm.get_state("repo-a")
+        assert loaded.last_successful_sha == "abc"
+        assert "docs/ok.md" in loaded.synced_files
+        assert loaded.synced_files["docs/ok.md"].content_sha == "sha1"
+        assert len(loaded.pending_failures) == 1
+        assert loaded.pending_failures[0].error_type == "auth_error"
+
+
+class TestMigration:
+    def test_migrate_flat_state(self, tmp_path):
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "repo-a.json").write_text(json.dumps({"last_successful_sha": "old-sha"}))
+
+        sm = StateManager(str(state_dir))
+        state = sm.get_state("repo-a")
+        assert state.last_successful_sha == "old-sha"
+        assert state.schema_version == 1
+        assert state.synced_files == {}

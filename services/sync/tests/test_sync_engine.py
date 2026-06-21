@@ -13,7 +13,8 @@ from synctx_common.config import (
     TargetAuthConfig, TargetRetryConfig, RepoProfile, RepoAuthConfig,
     MappingRule, TargetMatchConfig, OpenProjectTargetMapping, SyncConfig,
 )
-from sync_engine import SyncEngine, SyncReport
+from sync_engine import SyncEngine, SyncReport, SyncError, classify_error, should_retry, can_advance_state
+from state import RepoState
 
 
 def _xwiki_config():
@@ -64,19 +65,59 @@ class TestSyncReport:
 
     def test_record_failure(self):
         r = SyncReport()
-        r.record_failure("docs/b.md", "timeout", "xwiki")
+        r.record_failure("docs/b.md", "timeout", "xwiki", "transient_error")
         assert r.fail_count == 1
         assert r.failed[0]["error"] == "timeout"
+        assert r.failed[0]["error_type"] == "transient_error"
 
     def test_summary(self):
         r = SyncReport()
         r.record_success("a.md")
-        r.record_failure("b.md", "err", "xwiki")
+        r.record_failure("b.md", "err", "xwiki", "auth_error")
         r.record_skip("c.md")
         s = r.summary()
         assert s["success"] == 1
         assert s["failed"] == 1
         assert s["skipped"] == 1
+
+
+class TestErrorClassification:
+    def test_auth_error_401(self):
+        assert classify_error(Exception("HTTP 401 Unauthorized")) == "auth_error"
+
+    def test_auth_error_403(self):
+        assert classify_error(Exception("403 Forbidden")) == "auth_error"
+
+    def test_transient_error_timeout(self):
+        assert classify_error(Exception("connection timeout")) == "transient_error"
+
+    def test_transient_error_429(self):
+        assert classify_error(Exception("429 Too Many Requests")) == "transient_error"
+
+    def test_conflict_error(self):
+        assert classify_error(Exception("409 Conflict: duplicate external key")) == "conflict_error"
+
+    def test_validation_error(self):
+        assert classify_error(Exception("frontmatter validation failed")) == "validation_error"
+
+    def test_mapping_error(self):
+        assert classify_error(Exception("Unknown type: nonexistent")) == "mapping_error"
+
+    def test_sync_error_preserves_type(self):
+        assert classify_error(SyncError("msg", "conflict_error")) == "conflict_error"
+
+    def test_should_retry_only_transient(self):
+        assert should_retry("transient_error") is True
+        assert should_retry("auth_error") is False
+        assert should_retry("mapping_error") is False
+        assert should_retry("validation_error") is False
+        assert should_retry("conflict_error") is False
+
+    def test_can_advance_state_only_validation(self):
+        assert can_advance_state("validation_error") is True
+        assert can_advance_state("transient_error") is False
+        assert can_advance_state("auth_error") is False
+        assert can_advance_state("mapping_error") is False
 
 
 class TestResolveTarget:
@@ -120,14 +161,15 @@ class TestBuildOpPayload:
         assert "/api/v3/statuses/1" in payload["_links"]["status"]["href"]
         assert "/api/v3/priorities/1" in payload["_links"]["priority"]["href"]
 
-    def test_unknown_mapping_logged(self):
+    def test_unknown_mapping_raises_sync_error(self):
         config = _make_config(
             targets=TargetsConfig(xwiki=_xwiki_config(), openproject=_op_config()),
         )
         engine = SyncEngine(config)
         fm = {"title": "Task", "synctx": {"type": "nonexistent"}}
-        payload = engine._build_op_payload(fm, "body", "task.md")
-        assert "_links" not in payload
+        with pytest.raises(SyncError) as exc_info:
+            engine._build_op_payload(fm, "body", "task.md")
+        assert exc_info.value.error_type == "mapping_error"
 
     def test_due_date(self):
         config = _make_config(
@@ -167,17 +209,21 @@ class TestProcessWithRetry:
         monkeypatch.setenv("XWIKI_CRED", "user:pass")
         config = _make_config(sync=SyncConfig(state_path=str(tmp_path)))
         engine = SyncEngine(config)
-        engine._process_single_file = AsyncMock()
+        engine._process_single_file = AsyncMock(return_value="xwiki:docs.a")
 
         report = SyncReport()
+        state = RepoState(repo_id="test-repo")
         retry_cfg = TargetRetryConfig(max_attempts=3, backoff_seconds=[0, 0])
         repo = _make_repo()
 
-        result = await engine._process_with_retry(
-            repo, MagicMock(), "A", "docs/a.md", "xwiki", "1", retry_cfg, report,
+        result, error_type = await engine._process_with_retry(
+            repo, MagicMock(), "A", "docs/a.md", "xwiki", "1",
+            retry_cfg, report, state, "head123", "sha256abc",
         )
         assert result is True
+        assert error_type == ""
         assert report.success_count == 1
+        assert "docs/a.md" in state.synced_files
 
     async def test_retry_then_success(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XWIKI_CRED", "user:pass")
@@ -190,16 +236,19 @@ class TestProcessWithRetry:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
-                raise RuntimeError("transient error")
+                raise RuntimeError("transient timeout error")
+            return "xwiki:docs.a"
 
         engine._process_single_file = flaky
 
         report = SyncReport()
+        state = RepoState(repo_id="test-repo")
         retry_cfg = TargetRetryConfig(max_attempts=3, backoff_seconds=[0, 0])
         repo = _make_repo()
 
-        result = await engine._process_with_retry(
-            repo, MagicMock(), "A", "docs/a.md", "xwiki", "1", retry_cfg, report,
+        result, _ = await engine._process_with_retry(
+            repo, MagicMock(), "A", "docs/a.md", "xwiki", "1",
+            retry_cfg, report, state, "head123", "sha256abc",
         )
         assert result is True
         assert call_count == 3
@@ -208,18 +257,40 @@ class TestProcessWithRetry:
         monkeypatch.setenv("XWIKI_CRED", "user:pass")
         config = _make_config(sync=SyncConfig(state_path=str(tmp_path)))
         engine = SyncEngine(config)
-        engine._process_single_file = AsyncMock(side_effect=RuntimeError("permanent error"))
+        engine._process_single_file = AsyncMock(side_effect=RuntimeError("connection timeout"))
 
         report = SyncReport()
+        state = RepoState(repo_id="test-repo")
         retry_cfg = TargetRetryConfig(max_attempts=2, backoff_seconds=[0])
         repo = _make_repo()
 
-        result = await engine._process_with_retry(
-            repo, MagicMock(), "A", "docs/a.md", "xwiki", "1", retry_cfg, report,
+        result, error_type = await engine._process_with_retry(
+            repo, MagicMock(), "A", "docs/a.md", "xwiki", "1",
+            retry_cfg, report, state, "head123", "sha256abc",
         )
         assert result is False
+        assert error_type == "transient_error"
         assert report.fail_count == 1
-        assert "permanent error" in report.failed[0]["error"]
+        assert len(state.pending_failures) == 1
+
+    async def test_auth_error_no_retry(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XWIKI_CRED", "user:pass")
+        config = _make_config(sync=SyncConfig(state_path=str(tmp_path)))
+        engine = SyncEngine(config)
+        engine._process_single_file = AsyncMock(side_effect=RuntimeError("401 Unauthorized"))
+
+        report = SyncReport()
+        state = RepoState(repo_id="test-repo")
+        retry_cfg = TargetRetryConfig(max_attempts=3, backoff_seconds=[0, 0])
+        repo = _make_repo()
+
+        result, error_type = await engine._process_with_retry(
+            repo, MagicMock(), "A", "docs/a.md", "xwiki", "1",
+            retry_cfg, report, state, "head123", "sha256abc",
+        )
+        assert result is False
+        assert error_type == "auth_error"
+        engine._process_single_file.assert_called_once()
 
 
 @pytest.mark.asyncio
