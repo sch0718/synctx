@@ -7,6 +7,7 @@ import json
 from fastapi import Depends, FastAPI, Header, HTTPException
 
 from synctx_common.config import load_config
+from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 
 from event_store import EventStore
@@ -16,9 +17,10 @@ from signer import FeedbackSigner
 
 
 __version__ = "0.1.0"
+configure_logging(service_name="feedback")
 app = FastAPI(title="synctx-feedback", version=__version__)
 config = load_config()
-register_observability_routes(app, version=__version__)
+register_observability_routes(app, version=__version__, service_name="feedback")
 
 
 def verify_feedback_admin(x_forwarded_groups: str = Header(default="")):

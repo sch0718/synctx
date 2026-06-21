@@ -7,11 +7,12 @@ import asyncio
 import logging
 
 from synctx_common.config import load_config
+from synctx_common.logging import configure_logging
 
 from sync_engine import SyncEngine
 
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+configure_logging(service_name="sync")
 logger = logging.getLogger(__name__)
 
 

@@ -97,6 +97,7 @@ class OpenProjectTargetConfig(BaseModel):
     auth: TargetAuthConfig
     external_key_custom_field: str = "synctx_external_key"
     protected_fields: List[str] = Field(default_factory=lambda: ["assignee"])
+    assignee_map: Dict[str, int] = Field(default_factory=dict)
     type_map: Dict[str, int] = Field(default_factory=dict)
     status_map: Dict[str, int] = Field(default_factory=dict)
     priority_map: Dict[str, int] = Field(default_factory=dict)
@@ -111,6 +112,7 @@ class ViewerConfig(BaseModel):
     repo_cache_path: str = "/data/repos"
     max_render_size_bytes: int = 5242880
     cdn_base_url: str = "/cdn"
+    marp_service_url: str = "http://synctx-marp:8000"
 
 
 class CdnUploadAuthConfig(BaseModel):
@@ -121,7 +123,7 @@ class CdnUploadAuthConfig(BaseModel):
 class CdnConfig(BaseModel):
     storage_path: str = "/data/cdn"
     upload_auth: CdnUploadAuthConfig = Field(default_factory=CdnUploadAuthConfig)
-    max_upload_size_bytes: int = 10 * 1024 * 1024
+    max_upload_size_bytes: int = 50_000_000
     allowed_extensions: List[str] = Field(
         default_factory=lambda: [".js", ".css", ".woff", ".woff2", ".ttf", ".svg", ".png", ".map"]
     )

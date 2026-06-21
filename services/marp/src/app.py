@@ -14,18 +14,21 @@ from pydantic import BaseModel
 
 from synctx_common.config import load_config, RepoAuthConfig, RepoProfile
 from synctx_common.git_manager import GitRepoManager
+from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 
+__version__ = "0.1.0"
+configure_logging(service_name="marp")
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.0"
 app = FastAPI(title="synctx-marp", description="Marp Service for synctx", version=__version__, root_path="/marp")
 
 config = load_config()
-register_observability_routes(app, version=__version__)
+register_observability_routes(app, version=__version__, service_name="marp")
 
 class ConvertRequest(BaseModel):
     markdown: str
+    format: str = "pdf"
 
 class PublishRequest(BaseModel):
     markdown: str
@@ -190,8 +193,10 @@ def get_publish_manager() -> GitRepoManager:
     return GitRepoManager(profile, config.marp.worktree_path)
 
 @app.post("/api/marp/convert", dependencies=[Depends(verify_publisher_access)])
-async def convert_pdf(req: ConvertRequest, background_tasks: BackgroundTasks):
-    """마크다운을 PDF로 변환하여 반환한다."""
+async def convert_presentation(req: ConvertRequest, background_tasks: BackgroundTasks):
+    """마크다운을 PDF 또는 HTML로 변환하여 반환한다."""
+    if req.format not in ("pdf", "html"):
+        raise HTTPException(status_code=400, detail="Unsupported format. Use pdf or html.")
     if len(req.markdown.encode('utf-8')) > config.marp.max_input_size_bytes:
         raise HTTPException(status_code=400, detail="Input markdown too large")
 
@@ -202,34 +207,44 @@ async def convert_pdf(req: ConvertRequest, background_tasks: BackgroundTasks):
     svg_files = []
     job_id = str(uuid.uuid4())
     md_path = work_dir / f"{job_id}.md"
-    pdf_path = work_dir / f"{job_id}.pdf"
+
+    if req.format == "pdf":
+        out_path = work_dir / f"{job_id}.pdf"
+        marp_flags = ["--pdf"]
+        media_type = "application/pdf"
+        filename = "presentation.pdf"
+    else:
+        out_path = work_dir / f"{job_id}.html"
+        marp_flags = ["--html"]
+        media_type = "text/html"
+        filename = "presentation.html"
 
     try:
         processed, svg_files = await preprocess_mermaid(req.markdown, work_dir)
-        await write_and_run_marp(processed, md_path, pdf_path, ["--pdf"], config.marp.conversion_timeout_seconds)
+        await write_and_run_marp(processed, md_path, out_path, marp_flags, config.marp.conversion_timeout_seconds)
     except subprocess.TimeoutExpired:
         cleanup_file(str(md_path))
-        cleanup_file(str(pdf_path))
+        cleanup_file(str(out_path))
         for f in svg_files:
             cleanup_file(f)
         raise HTTPException(status_code=504, detail="Conversion timed out")
     except Exception as e:
         cleanup_file(str(md_path))
-        cleanup_file(str(pdf_path))
+        cleanup_file(str(out_path))
         for f in svg_files:
             cleanup_file(f)
-        logger.error(f"Marp PDF Conversion failed: {e}")
+        logger.error(f"Marp conversion failed: {e}")
         raise HTTPException(status_code=500, detail="Conversion failed")
 
     background_tasks.add_task(cleanup_file, str(md_path))
-    background_tasks.add_task(cleanup_file, str(pdf_path))
+    background_tasks.add_task(cleanup_file, str(out_path))
     for f in svg_files:
         background_tasks.add_task(cleanup_file, f)
 
     return FileResponse(
-        path=pdf_path,
-        filename="presentation.pdf",
-        media_type="application/pdf"
+        path=out_path,
+        filename=filename,
+        media_type=media_type,
     )
 
 @app.post("/api/marp/preview", response_class=HTMLResponse, dependencies=[Depends(verify_publisher_access)])
@@ -311,6 +326,19 @@ async def publish_html(req: PublishRequest):
         "path": target_path,
         "url": f"/slides/{req.filename}"
     }
+
+MARP_BUILTIN_THEMES = [
+    {"name": "default", "description": "Marp 기본 테마"},
+    {"name": "gaia", "description": "Gaia 테마 (어두운 배경)"},
+    {"name": "uncover", "description": "Uncover 테마 (미니멀)"},
+]
+
+
+@app.get("/api/marp/themes")
+async def list_themes():
+    """사용 가능한 Marp 테마 목록을 반환."""
+    return {"themes": MARP_BUILTIN_THEMES}
+
 
 @app.get("/api/marp/published", dependencies=[Depends(verify_publisher_access)])
 async def list_published():

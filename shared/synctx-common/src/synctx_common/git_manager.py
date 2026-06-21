@@ -272,6 +272,13 @@ class GitRepoManager:
     def read_file_text(self, path: str, ref: str | None = None) -> str:
         return self.read_file(path, ref=ref).decode("utf-8")
 
+    def file_size(self, path: str, ref: str | None = None) -> int:
+        """파일 내용을 로드하지 않고 바이트 크기만 반환 (git cat-file -s)."""
+        target = self.validate_path(path)
+        resolved = self._resolve_ref(ref)
+        result = self._run_git("cat-file", "-s", f"{resolved}:{target}")
+        return int(result.stdout.decode("utf-8").strip())
+
     def last_commit(self, path: str) -> CommitInfo:
         target = self.validate_path(path)
         result = self._run_git("log", "-1", "--format=%H%x1f%an%x1f%aI", "--", target)

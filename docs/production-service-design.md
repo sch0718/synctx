@@ -303,6 +303,7 @@ viewer:
 
 cdn:
   storage_path: "/data/cdn"
+  max_upload_size_bytes: 50000000  # 50 MB
   upload_auth:
     enabled: true
     required_role: cdn-admin
@@ -696,6 +697,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - `force=true`는 `cdn-admin` 권한, 변경 사유, audit log를 요구한다.
 - 삭제는 실제 파일 삭제 대신 manifest에서 disabled 처리한다.
 - `/cdn/latest` alias는 운영 사용을 금지하고 개발 환경에서만 허용한다.
+- 업로드 크기 제한: 기본 50 MB (`max_upload_size_bytes: 50000000`).
 
 `manifest.json` 예시:
 

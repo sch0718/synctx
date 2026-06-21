@@ -4,15 +4,11 @@ subprocess(marp CLI)와 GitRepoManager를 mock 처리하여
 FastAPI 엔드포인트 동작을 검증한다.
 """
 
-import sys
-import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from app import app, cleanup_file
 
@@ -239,3 +235,40 @@ class TestCleanupFile:
 
     def test_cleanup_nonexistent(self, tmp_path):
         cleanup_file(str(tmp_path / "missing.pdf"))
+
+
+class TestConvertHtml:
+    def test_convert_html_format(self, client, tmp_path, monkeypatch):
+        monkeypatch.setenv("MARP_WORK_DIR", str(tmp_path))
+
+        async def mock_write_and_run(processed, md_path, out_path, flags, timeout):
+            Path(out_path).write_text("<html><body>slides</body></html>")
+
+        with patch("app.preprocess_mermaid", new_callable=AsyncMock, return_value=("# Slide", [])):
+            with patch("app.write_and_run_marp", side_effect=mock_write_and_run):
+                resp = client.post("/api/marp/convert", json={"markdown": "# Slide", "format": "html"})
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
+
+    def test_convert_invalid_format(self, client):
+        resp = client.post("/api/marp/convert", json={"markdown": "# Slide", "format": "pptx"})
+        assert resp.status_code == 400
+        assert "Unsupported format" in resp.json()["detail"]
+
+
+class TestThemesAPI:
+    def test_list_themes(self, client):
+        resp = client.get("/api/marp/themes")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "themes" in body
+        names = [t["name"] for t in body["themes"]]
+        assert "default" in names
+        assert "gaia" in names
+        assert "uncover" in names
+
+    def test_themes_no_auth_required(self, client, _disable_authz):
+        import app as marp_app
+        marp_app.config.authz.enabled = True
+        resp = client.get("/api/marp/themes")
+        assert resp.status_code == 200

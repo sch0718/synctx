@@ -10,20 +10,112 @@ spec:
   groups:
     - name: synctx.rules
       rules:
-        - alert: SynctxSyncFailing
-          expr: rate(synctx_sync_errors_total[5m]) > 0
-          for: 5m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Sync Engine errors detected"
-            description: "Sync Engine is failing to sync documents for more than 5 minutes."
-        - alert: SynctxViewerHighErrorRate
-          expr: rate(synctx_http_requests_total{status=~"5.."}[5m]) / rate(synctx_http_requests_total[5m]) > 0.05
+        # 1. Sync가 30분 이상 성공하지 못함
+        - alert: SynctxSyncNoSuccess
+          expr: time() - synctx_sync_last_success_timestamp > 1800
           for: 5m
           labels:
             severity: critical
           annotations:
-            summary: "Viewer Service high error rate"
-            description: "Viewer Service is returning 5xx errors for more than 5% of requests."
+            summary: "Sync Engine 30분 이상 성공 없음"
+            description: "Sync Engine이 30분 넘게 성공적인 동기화를 완료하지 못했습니다."
+
+        # 2. Sync failure ratio가 최근 3회 평균 10% 초과
+        - alert: SynctxSyncHighFailureRate
+          expr: |
+            sum(rate(synctx_sync_failures_total[15m]))
+            / (sum(rate(synctx_sync_items_total[15m])) > 0)
+            > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Sync 실패율 10% 초과"
+            description: "최근 15분간 Sync 항목 처리 실패율이 10%를 초과했습니다."
+
+        # 3. XWiki/OpenProject auth error 발생
+        - alert: SynctxSyncAuthError
+          expr: increase(synctx_sync_failures_total{error_type="auth"}[10m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Sync 인증 오류 발생"
+            description: "XWiki 또는 OpenProject 연동 시 인증 오류가 발생했습니다. Secret 만료 여부를 확인하세요."
+
+        # 4. Marp publish push 실패
+        - alert: SynctxMarpPublishFailed
+          expr: increase(synctx_marp_publish_total{result="error"}[10m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Marp publish 실패"
+            description: "Marp 슬라이드 publish 중 Git push 실패가 발생했습니다."
+
+        # 5. Slides Server sidecar pull 실패
+        - alert: SynctxSlidesSidecarFailed
+          expr: kube_pod_container_status_restarts_total{container="sync-sidecar"} > 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Slides sidecar 반복 재시작"
+            description: "Slides Server의 sync-sidecar 컨테이너가 반복 재시작하고 있습니다. Git pull 또는 worktree 손상을 확인하세요."
+
+        # 6. Outbound Feedback mail send failure 3회 이상
+        - alert: SynctxFeedbackMailFailure
+          expr: increase(synctx_feedback_mail_failures_total[30m]) >= 3
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Feedback 메일 발송 3회 이상 실패"
+            description: "Outbound Feedback 메일 발송이 30분 내 3회 이상 실패했습니다. SMTP 연결을 확인하세요."
+
+        # 7. Outbound Feedback redaction failure 발생
+        - alert: SynctxFeedbackRedactionFailure
+          expr: increase(synctx_feedback_events_total{result="redaction_error"}[10m]) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Feedback redaction 실패"
+            description: "Outbound Feedback 이벤트 redaction 중 오류가 발생했습니다. 민감정보 유출 위험이 있으므로 즉시 확인하세요."
+
+        # 8. PVC 사용량 80% 초과
+        - alert: SynctxPVCUsageHigh
+          expr: |
+            kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}"}
+            / kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}"}
+            > 0.8
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "PVC 사용량 80% 초과"
+            description: "{{ .Release.Namespace }} 네임스페이스의 PVC 사용량이 80%를 초과했습니다."
+
+        # 9. readiness failure 5분 지속
+        - alert: SynctxReadinessFailure
+          expr: kube_pod_status_ready{namespace="{{ .Release.Namespace }}", condition="true"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod readiness 5분 이상 실패"
+            description: "{{ .Release.Namespace }} 네임스페이스에서 Pod가 5분 이상 ready 상태가 아닙니다."
+
+        # Viewer 5xx 에러율
+        - alert: SynctxViewerHighErrorRate
+          expr: |
+            sum(rate(synctx_http_requests_total{service="viewer",status=~"5.."}[5m]))
+            / sum(rate(synctx_http_requests_total{service="viewer"}[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Viewer 5xx 에러율 5% 초과"
+            description: "Viewer 서비스의 5xx 에러율이 5%를 초과했습니다."
 {{- end }}

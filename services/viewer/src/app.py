@@ -9,10 +9,12 @@ from fastapi.staticfiles import StaticFiles
 
 from synctx_common.config import load_config
 from synctx_common.git_manager import GitRepoManager
+from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 from renderer import render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
 
 __version__ = "0.1.0"
+configure_logging(service_name="viewer")
 VIEW_PREFIX = "/view"
 
 config = load_config()
@@ -31,7 +33,37 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="synctx-viewer", description="Viewer Service for synctx", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
-register_observability_routes(app, version=__version__)
+register_observability_routes(app, version=__version__, service_name="viewer")
+
+
+@app.middleware("http")
+async def csp_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if "text/html" in response.headers.get("content-type", ""):
+        cdn_url = config.viewer.cdn_base_url
+        cdn_host = ""
+        if cdn_url.startswith(("http://", "https://")):
+            from urllib.parse import urlparse
+            parsed = urlparse(cdn_url)
+            cdn_host = f" {parsed.scheme}://{parsed.netloc}"
+        elif cdn_url.startswith("//"):
+            cdn_host = f" {cdn_url}"
+            
+        csp = (
+            f"default-src 'self'; "
+            f"script-src 'self' 'unsafe-inline'{cdn_host}; "
+            f"style-src 'self' 'unsafe-inline'{cdn_host}; "
+            f"img-src 'self' data:{cdn_host}; "
+            f"font-src 'self'{cdn_host}; "
+            f"connect-src 'self'{cdn_host}; "
+            f"frame-src 'none'; "
+            f"object-src 'none'"
+        )
+        response.headers["Content-Security-Policy"] = csp
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+    return response
+
 
 repo_managers = {}
 
@@ -104,16 +136,63 @@ def get_tree(repo_id: str, path: str = "", ref: str | None = None):
 
 
 @app.get("/api/repos/{repo_id}/download", dependencies=[Depends(verify_viewer_access)])
-def download_file(repo_id: str, path: str, ref: str | None = None):
+async def download_file(repo_id: str, path: str, format: str = "raw", ref: str | None = None):
     manager = get_repo_manager(repo_id)
     try:
-        content = manager.read_file(path, ref=ref)
-        filename = os.path.basename(path.strip("/")) or "download"
-        return Response(
-            content=content,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
+        filename_base = PurePosixPath(path).stem or "download"
+
+        if format == "raw":
+            content = manager.read_file(path, ref=ref)
+            filename = os.path.basename(path.strip("/")) or "download"
+            return Response(
+                content=content,
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+
+        if format in ("html", "pdf"):
+            try:
+                blob_size = manager.file_size(path, ref=ref)
+            except Exception:
+                blob_size = 0
+            if blob_size > config.viewer.max_render_size_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large for conversion ({blob_size} bytes, max {config.viewer.max_render_size_bytes})",
+                )
+
+        if format == "html":
+            text_content = manager.read_file_text(path, ref=ref)
+            rendered = render_markdown(text_content)
+            html = _sanitize_html(rendered.get("html", ""))
+            html_doc = f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{filename_base}</title></head><body>{html}</body></html>"
+            return Response(
+                content=html_doc.encode("utf-8"),
+                media_type="text/html",
+                headers={"Content-Disposition": f'attachment; filename="{filename_base}.html"'},
+            )
+
+        if format == "pdf":
+            text_content = manager.read_file_text(path, ref=ref)
+            import httpx
+            marp_url = config.viewer.marp_service_url.rstrip("/")
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{marp_url}/api/marp/convert",
+                    json={"markdown": text_content},
+                )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="PDF conversion failed")
+            return Response(
+                content=resp.content,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename_base}.pdf"'},
+            )
+
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Use raw, html, or pdf.")
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
 
@@ -127,8 +206,18 @@ def raw_file(repo_id: str, path: str, ref: str | None = None):
         raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
 
 
+def _verify_service_token(request: Request):
+    expected = os.getenv("SYNCTX_SERVICE_TOKEN", "")
+    if not expected:
+        return
+    token = request.headers.get("X-Service-Token", "")
+    if token != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing service token")
+
+
 @app.post("/api/repos/{repo_id}/webhook", dependencies=[Depends(verify_viewer_access)])
 async def repo_webhook(repo_id: str, request: Request):
+    _verify_service_token(request)
     manager = get_repo_manager(repo_id)
     payload = await request.json()
     source = payload.get("after") or payload.get("checkout_sha") or "webhook"
@@ -330,7 +419,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
     </script>
     <style>{theme_vars_css}</style>
     <style>{theme_css}</style>
-    <link rel="stylesheet" href="{view_prefix}/static/vendor/hljs/{hljs_theme}.min.css">
+    <link rel="stylesheet" href="{cdn_base}/highlight.js/11.9.0/{hljs_theme}.min.css">
     <style>
         body {{ margin: 0; padding: 0; }}
         .viewer-sidebar {{
@@ -405,7 +494,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <script type="application/json" id="raw-markdown-json">{raw_markdown_json}</script>
-    <script src="{view_prefix}/static/vendor/highlight.min.js"></script>
+    <script src="{cdn_base}/highlight.js/11.9.0/highlight.min.js"></script>
     {mermaid_scripts}
     <script>
         hljs.highlightAll();
@@ -935,12 +1024,37 @@ def view_repo(repo_id: str, ref: str | None = None):
     return HTMLResponse(content=html)
 
 
+def _sanitize_html(html_str: str) -> str:
+    """사용자 생성 HTML에서 위험한 태그를 제거."""
+    import re
+    # 중첩 태그 우회 방지를 위해 루프를 돌며 <script> 및 <iframe> 제거
+    prev = ""
+    while prev != html_str:
+        prev = html_str
+        html_str = re.sub(r'<script\b[^>]*>.*?</script>', '', html_str, flags=re.DOTALL | re.IGNORECASE)
+        html_str = re.sub(r'<iframe\b[^>]*>.*?</iframe>', '', html_str, flags=re.DOTALL | re.IGNORECASE)
+        
+    html_str = re.sub(r'\bon\w+\s*=\s*["\'][^"\']*["\']', '', html_str, flags=re.IGNORECASE)
+    html_str = re.sub(r'\bon\w+\s*=\s*\S+', '', html_str, flags=re.IGNORECASE)
+    return html_str
+
+
 def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
     manager = get_repo_manager(repo_id)
     effective_ref = ref if ref and ref != manager.profile.default_ref else None
     ref_param = f"&ref={ref}" if ref else ""
     ref_param_first = f"?ref={ref}" if ref else ""
     try:
+        try:
+            blob_size = manager.file_size(path, ref=effective_ref)
+        except Exception:
+            blob_size = 0
+        if blob_size > config.viewer.max_render_size_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large for rendering ({blob_size} bytes, max {config.viewer.max_render_size_bytes})",
+            )
+
         content = manager.read_file_text(path, ref=effective_ref)
 
         suffix = PurePosixPath(path).suffix.lower()
@@ -952,6 +1066,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             content = _wrap_code_as_markdown(path, content, language)
 
         rendered = render_markdown(content)
+        rendered["html"] = _sanitize_html(rendered.get("html", ""))
         if is_md:
             rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path)
 
@@ -964,10 +1079,12 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         mermaid_theme = THEME_MERMAID.get(theme, "default")
         theme_options = _build_theme_options(theme)
 
+        cdn_base = config.viewer.cdn_base_url.rstrip("/")
+
         has_mermaid = 'class="mermaid"' in rendered.get("html", "")
         if has_mermaid:
             mermaid_scripts = (
-                f'<script src="{VIEW_PREFIX}/static/vendor/mermaid.min.js"></script>\n'
+                f'<script src="{cdn_base}/mermaid/10.9.1/mermaid.min.js"></script>\n'
                 f'    <script>mermaid.initialize({{ startOnLoad: false, theme: \'{mermaid_theme}\' }});mermaid.run();</script>'
             )
         else:
@@ -999,6 +1116,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             hljs_theme=hljs_theme,
             mermaid_theme=mermaid_theme,
             view_prefix=VIEW_PREFIX,
+            cdn_base=cdn_base,
             repo_id=repo_id,
             path=path,
             toc_html=toc_html,
@@ -1086,16 +1204,20 @@ def render_board(repo_id: str, version: str):
                             "priority": meta.get("priority", "normal"),
                         })
 
+        import html
         columns_html = ""
         for col_name, cards in columns.items():
             cards_html = ""
             for card in cards:
+                safe_title = html.escape(card['title'])
+                safe_path = html.escape(card['path'])
+                safe_priority = html.escape(card['priority'])
                 cards_html += f"""
-                <div class="card" onclick="window.location.href='/api/repos/{repo_id}/render?path={card['path']}'">
-                    <div class="card-title">{card['title']}</div>
+                <div class="card" onclick="window.location.href='/api/repos/{repo_id}/render?path={safe_path}'">
+                    <div class="card-title">{safe_title}</div>
                     <div class="card-meta">
-                        <span class="badge">{card['priority']}</span>
-                        {card['path']}
+                        <span class="badge">{safe_priority}</span>
+                        {safe_path}
                     </div>
                 </div>
                 """
