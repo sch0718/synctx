@@ -9,10 +9,12 @@ from fastapi.staticfiles import StaticFiles
 
 from synctx_common.config import load_config
 from synctx_common.git_manager import GitRepoManager
+from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 from renderer import render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
 
 __version__ = "0.1.0"
+configure_logging(service_name="viewer")
 VIEW_PREFIX = "/view"
 
 config = load_config()
@@ -31,7 +33,7 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="synctx-viewer", description="Viewer Service for synctx", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
-register_observability_routes(app, version=__version__)
+register_observability_routes(app, version=__version__, service_name="viewer")
 
 repo_managers = {}
 

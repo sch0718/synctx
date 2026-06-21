@@ -14,15 +14,17 @@ from pydantic import BaseModel
 
 from synctx_common.config import load_config, RepoAuthConfig, RepoProfile
 from synctx_common.git_manager import GitRepoManager
+from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 
+__version__ = "0.1.0"
+configure_logging(service_name="marp")
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.0"
 app = FastAPI(title="synctx-marp", description="Marp Service for synctx", version=__version__, root_path="/marp")
 
 config = load_config()
-register_observability_routes(app, version=__version__)
+register_observability_routes(app, version=__version__, service_name="marp")
 
 class ConvertRequest(BaseModel):
     markdown: str
