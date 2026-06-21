@@ -129,6 +129,11 @@ synctxConfig:
     authz:
       enabled: false
 
+    cdn:
+      upload_auth:
+        enabled: true
+        required_role: cdn-admin
+
     repositories:
       - id: synctx-docs
         name: "synctx docs"

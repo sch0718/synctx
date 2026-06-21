@@ -121,7 +121,7 @@ class CdnUploadAuthConfig(BaseModel):
 class CdnConfig(BaseModel):
     storage_path: str = "/data/cdn"
     upload_auth: CdnUploadAuthConfig = Field(default_factory=CdnUploadAuthConfig)
-    max_upload_size_bytes: int = 10 * 1024 * 1024
+    max_upload_size_bytes: int = 50_000_000
     allowed_extensions: List[str] = Field(
         default_factory=lambda: [".js", ".css", ".woff", ".woff2", ".ttf", ".svg", ".png", ".map"]
     )
