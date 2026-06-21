@@ -1,4 +1,7 @@
+import asyncio
+import functools
 import os
+import re
 import subprocess
 import uuid
 import logging
@@ -41,6 +44,119 @@ def verify_publisher_access(x_forwarded_groups: str = Header(default="")):
     if not any(role in groups for role in allowed_roles):
         raise HTTPException(status_code=403, detail="Forbidden: publisher role required")
 
+MERMAID_BLOCK_RE = re.compile(
+    r"```mermaid\s*\n(.*?)```",
+    re.DOTALL,
+)
+
+PUPPETEER_CONFIG_PATH = "/tmp/marp-work/puppeteer-config.json"
+
+
+def _ensure_puppeteer_config():
+    config_path = Path(PUPPETEER_CONFIG_PATH)
+    if not config_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text('{"executablePath":"/usr/bin/chromium","args":["--no-sandbox"]}')
+
+
+def _preprocess_mermaid_sync(markdown: str, work_dir: Path) -> tuple[str, list[str]]:
+    """mermaid 코드 블록을 SVG로 변환하여 인라인 HTML로 대체한다 (동기)."""
+    _ensure_puppeteer_config()
+    blocks = list(MERMAID_BLOCK_RE.finditer(markdown))
+    if not blocks:
+        return markdown, []
+
+    svg_files: list[str] = []
+    result = markdown
+
+    for i, match in enumerate(reversed(blocks)):
+        mmd_code = match.group(1)
+        svg_name = f"mermaid-{uuid.uuid4().hex[:8]}.svg"
+        mmd_path = work_dir / f"{svg_name}.mmd"
+        svg_path = work_dir / svg_name
+
+        mmd_path.write_text(mmd_code, encoding="utf-8")
+        mmdc_cmd = [
+            "mmdc", "-i", str(mmd_path), "-o", str(svg_path),
+            "-p", PUPPETEER_CONFIG_PATH,
+            "-b", "transparent",
+        ]
+        last_exc = None
+        for attempt in range(3):
+            try:
+                subprocess.run(mmdc_cmd, check=True, capture_output=True, timeout=60)
+                last_exc = None
+                break
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                last_exc = exc
+                stderr = getattr(exc, "stderr", None)
+                if stderr:
+                    logger.warning("mmdc attempt %d for block %d stderr: %s", attempt, i, stderr.decode(errors="replace"))
+                if attempt < 2:
+                    import time
+                    time.sleep(2)
+        if last_exc is not None:
+            logger.warning("mmdc failed for block %d after 3 attempts: %s", i, last_exc)
+            mmd_path.unlink(missing_ok=True)
+            continue
+        mmd_path.unlink(missing_ok=True)
+
+        svg_content = svg_path.read_text(encoding="utf-8")
+        svg_files.append(str(svg_path))
+        svg_content = re.sub(
+            r'(<svg[^>]*)\bstyle="([^"]*)"',
+            r'\1style="\2 max-height:60vh;"',
+            svg_content,
+            count=1,
+        )
+        replacement = f'<div style="text-align:center">{svg_content}</div>'
+        result = result[:match.start()] + replacement + result[match.end():]
+
+    return result, svg_files
+
+
+def _write_and_run_marp_sync(processed_md: str, md_path: Path, output_path: Path, extra_flags: list[str], timeout: int) -> None:
+    md_path.write_text(processed_md, encoding="utf-8")
+    subprocess.run(
+        ["marp", str(md_path), "--html", "--allow-local-files", *extra_flags, "-o", str(output_path)],
+        check=True,
+        capture_output=True,
+        timeout=timeout,
+    )
+
+
+def _read_file_sync(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _read_file_bytes_sync(path: Path) -> bytes:
+    return path.read_bytes()
+
+
+async def preprocess_mermaid(markdown: str, work_dir: Path) -> tuple[str, list[str]]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, functools.partial(_preprocess_mermaid_sync, markdown, work_dir)
+    )
+
+
+async def write_and_run_marp(processed_md: str, md_path: Path, output_path: Path, extra_flags: list[str], timeout: int) -> None:
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None, functools.partial(_write_and_run_marp_sync, processed_md, md_path, output_path, extra_flags, timeout)
+    )
+
+
+async def read_file_async(path: Path) -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _read_file_sync, path)
+
+
+async def read_file_bytes_async(path: Path) -> bytes:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _read_file_bytes_sync, path)
+
+
 def cleanup_file(path: str):
     try:
         if os.path.exists(path):
@@ -81,34 +197,35 @@ async def convert_pdf(req: ConvertRequest, background_tasks: BackgroundTasks):
 
     work_dir = Path(os.getenv("MARP_WORK_DIR", "/tmp/marp-work"))
     work_dir.mkdir(parents=True, exist_ok=True)
-    
+
+    processed = ""
+    svg_files = []
     job_id = str(uuid.uuid4())
     md_path = work_dir / f"{job_id}.md"
     pdf_path = work_dir / f"{job_id}.pdf"
-    
-    md_path.write_text(req.markdown, encoding="utf-8")
-    
+
     try:
-        # Run marp-cli
-        subprocess.run(
-            ["marp", str(md_path), "--pdf", "-o", str(pdf_path)],
-            check=True,
-            capture_output=True,
-            timeout=config.marp.conversion_timeout_seconds
-        )
+        processed, svg_files = await preprocess_mermaid(req.markdown, work_dir)
+        await write_and_run_marp(processed, md_path, pdf_path, ["--pdf"], config.marp.conversion_timeout_seconds)
     except subprocess.TimeoutExpired:
         cleanup_file(str(md_path))
         cleanup_file(str(pdf_path))
+        for f in svg_files:
+            cleanup_file(f)
         raise HTTPException(status_code=504, detail="Conversion timed out")
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         cleanup_file(str(md_path))
         cleanup_file(str(pdf_path))
-        logger.error(f"Marp CLI error: {e.stderr.decode()}")
+        for f in svg_files:
+            cleanup_file(f)
+        logger.error(f"Marp PDF Conversion failed: {e}")
         raise HTTPException(status_code=500, detail="Conversion failed")
-        
+
     background_tasks.add_task(cleanup_file, str(md_path))
     background_tasks.add_task(cleanup_file, str(pdf_path))
-    
+    for f in svg_files:
+        background_tasks.add_task(cleanup_file, f)
+
     return FileResponse(
         path=pdf_path,
         filename="presentation.pdf",
@@ -122,56 +239,54 @@ async def preview_html(req: PreviewRequest):
 
     work_dir = Path(os.getenv("MARP_WORK_DIR", "/tmp/marp-work"))
     work_dir.mkdir(parents=True, exist_ok=True)
+
+    processed = ""
+    svg_files = []
     job_id = str(uuid.uuid4())
     md_path = work_dir / f"{job_id}.md"
     html_path = work_dir / f"{job_id}.html"
-    md_path.write_text(req.markdown, encoding="utf-8")
 
     try:
-        subprocess.run(
-            ["marp", str(md_path), "--html", "-o", str(html_path)],
-            check=True,
-            capture_output=True,
-            timeout=config.marp.conversion_timeout_seconds,
-        )
-        return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
-    except subprocess.CalledProcessError as e:
-        logger.error("Marp CLI error: %s", e.stderr.decode())
+        processed, svg_files = await preprocess_mermaid(req.markdown, work_dir)
+        await write_and_run_marp(processed, md_path, html_path, [], config.marp.conversion_timeout_seconds)
+        html_content = await read_file_async(html_path)
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        logger.error("Marp Preview failed: %s", e)
         raise HTTPException(status_code=500, detail="Preview conversion failed")
     finally:
         cleanup_file(str(md_path))
         cleanup_file(str(html_path))
+        for f in svg_files:
+            cleanup_file(f)
 
 @app.post("/api/marp/publish", dependencies=[Depends(verify_publisher_access)])
 async def publish_html(req: PublishRequest):
     """마크다운을 HTML로 변환하여 출판 저장소에 커밋한다."""
     if not config.marp.publish_repo:
         raise HTTPException(status_code=500, detail="Publish repo not configured")
-        
+
     work_dir = Path(os.getenv("MARP_WORK_DIR", "/tmp/marp-work"))
     work_dir.mkdir(parents=True, exist_ok=True)
-    
+
+    processed = ""
+    svg_files = []
     job_id = str(uuid.uuid4())
     md_path = work_dir / f"{job_id}.md"
     html_path = work_dir / f"{job_id}.html"
-    
-    md_path.write_text(req.markdown, encoding="utf-8")
-    
+
     try:
-        subprocess.run(
-            ["marp", str(md_path), "--html", "-o", str(html_path)],
-            check=True,
-            capture_output=True,
-            timeout=config.marp.conversion_timeout_seconds
-        )
-    except subprocess.CalledProcessError as e:
-        cleanup_file(str(md_path))
-        logger.error(f"Marp CLI error: {e.stderr.decode()}")
+        processed, svg_files = await preprocess_mermaid(req.markdown, work_dir)
+        await write_and_run_marp(processed, md_path, html_path, [], config.marp.conversion_timeout_seconds)
+        html_content = await read_file_bytes_async(html_path)
+    except Exception as e:
+        logger.error(f"Marp Publish HTML Conversion failed: {e}")
         raise HTTPException(status_code=500, detail="Conversion failed")
-        
-    html_content = html_path.read_bytes()
-    cleanup_file(str(md_path))
-    cleanup_file(str(html_path))
+    finally:
+        cleanup_file(str(md_path))
+        cleanup_file(str(html_path))
+        for f in svg_files:
+            cleanup_file(f)
     
     with publish_lock():
         manager = get_publish_manager()

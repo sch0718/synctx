@@ -3,7 +3,7 @@
 ## 프로젝트 개요
 
 synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍스트를 동기화하는 마이크로서비스 플랫폼.
-현재 **설계 문서 단계**이며 구현 코드는 아직 없음.
+설계 문서와 구현 코드가 공존하는 단계.
 
 ## 문서 구조
 
@@ -71,7 +71,7 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 - **내부 레지스트리**: `registry.local:5000` (폐쇄망 전용)
 - **이미지 전송**: `pull-and-save-images.sh`로 외부에서 pull → tar 저장 → 폐쇄망 반입 → registry push
 - **베이스 이미지**: `python:3.11-slim` (Debian 기반, Alpine 사용 금지)
-- **멀티 아키텍처**: Apple Silicon 개발 시 `--platform linux/amd64` 필수
+- **멀티 아키텍처**: Dockerfile은 플랫폼에 종속되지 않게 작성. 로컬(ARM64)과 운영(amd64)에서 동일 Dockerfile 사용. `--platform` 플래그는 빌드 스크립트에서 환경에 맞게 지정
 
 ### CI/CD
 - **폐쇄망**: GitLab CI (내부)
@@ -89,6 +89,17 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 
 ### 참조 프로젝트
 - `example-infra`: 동일 환경의 인프라 설정 참조 프로젝트 (로컬 시뮬레이션 패턴의 원본)
+
+## 로컬 개발 (minikube)
+
+- **스크립트**: `scripts/local/setup.sh` (전체 설정), `scripts/local/steps/build.sh` (빌드), `scripts/local/steps/deploy-synctx.sh` (배포)
+- **빌드/배포**: 직접 `docker build`/`kubectl` 명령 사용 금지 — 반드시 `scripts/local/` 스크립트 사용
+- **스크립트 오류 시**: 스크립트를 우회하지 말고, 원인을 파악하여 스크립트 자체를 수정
+- **네임스페이스**: `synctx` (scripts에 정의됨, `default` 네임스페이스 사용 금지)
+
+## 구현 주의사항
+
+- **FastAPI에서 subprocess 호출 시** `asyncio.run_in_executor`로 비동기 실행 — 동기 subprocess는 이벤트 루프를 블로킹하여 K8s liveness probe 실패 유발
 
 ## Git 참고
 

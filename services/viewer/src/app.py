@@ -1,4 +1,5 @@
 import os
+import json
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 
@@ -403,7 +404,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
         <article class="markdown-body">{html_body}</article>
     </div>
 
-    <script type="text/markdown" id="raw-markdown">{raw_markdown}</script>
+    <script type="application/json" id="raw-markdown-json">{raw_markdown_json}</script>
     <script src="{view_prefix}/static/vendor/highlight.min.js"></script>
     {mermaid_scripts}
     <script>
@@ -416,8 +417,18 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
             window.location.href = u.toString();
         }}
 
+        function getRawMarkdown() {{
+            try {{
+                var rawJson = document.getElementById('raw-markdown-json').textContent;
+                return JSON.parse(rawJson).markdown;
+            }} catch (e) {{
+                console.error("Failed to parse raw markdown JSON", e);
+                return "";
+            }}
+        }}
+
         async function convertMarpPdf() {{
-            var md = document.getElementById('raw-markdown').textContent;
+            var md = getRawMarkdown();
             try {{
                 var res = await fetch('/marp/api/marp/convert', {{
                     method: 'POST',
@@ -433,8 +444,24 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
             }} catch (e) {{ alert(e.message); }}
         }}
 
+        async function previewMarpSlide() {{
+            var md = getRawMarkdown();
+            try {{
+                var res = await fetch('/marp/api/marp/preview', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ markdown: md }})
+                }});
+                if (!res.ok) throw new Error('미리보기 변환 실패');
+                var html = await res.text();
+                var win = window.open('', '_blank');
+                win.document.write(html);
+                win.document.close();
+            }} catch (e) {{ alert(e.message); }}
+        }}
+
         async function publishMarpSlide() {{
-            var md = document.getElementById('raw-markdown').textContent;
+            var md = getRawMarkdown();
             var filename = '{path}'.split('/').pop().replace('.md', '');
             try {{
                 var res = await fetch('/marp/api/marp/publish', {{
@@ -957,6 +984,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             is_marp = fm.get("marp", False) if fm else False
             if is_marp:
                 toolbar_buttons += '<button class="btn" onclick="convertMarpPdf()">PDF (Marp)</button>'
+                toolbar_buttons += '<button class="btn btn-secondary" onclick="previewMarpSlide()">미리보기 (Marp)</button>'
                 toolbar_buttons += '<button class="btn btn-secondary" onclick="publishMarpSlide()">출판 (Marp)</button>'
         if path.endswith(".drawio"):
             toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
@@ -977,7 +1005,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             theme_options=theme_options,
             toolbar_buttons=toolbar_buttons,
             html_body=rendered.get("html", ""),
-            raw_markdown=content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"),
+            raw_markdown_json=json.dumps({"markdown": content}),
             mermaid_scripts=mermaid_scripts,
             ref_param_first=ref_param_first,
         )
