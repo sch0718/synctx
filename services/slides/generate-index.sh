@@ -5,6 +5,23 @@
 SLIDES_DIR="${1:-/data/slides/worktree/_published/slides}"
 INDEX_FILE="$SLIDES_DIR/index.html"
 
+html_escape() {
+    printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&#39;/g"
+}
+
+url_encode() {
+    printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/#/%23/g' -e 's/?/%3F/g' -e 's/ /%20/g'
+}
+
+file_date() {
+    commit_date=$(git -C "$SLIDES_DIR" log -1 --format=%cs -- "$(basename "$1")" 2>/dev/null)
+    if [ -n "$commit_date" ]; then
+        echo "$commit_date"
+    else
+        date -r "$1" -u +%Y-%m-%d 2>/dev/null || stat -c %y "$1" 2>/dev/null | cut -d' ' -f1
+    fi
+}
+
 generate_index() {
     if [ ! -d "$SLIDES_DIR" ]; then
         echo "Slides directory not found: $SLIDES_DIR"
@@ -21,8 +38,9 @@ generate_index() {
 
         file_count=$((file_count + 1))
         fsize=$(wc -c < "$f" | tr -d ' ')
-        fdate=$(date -r "$f" -u +%Y-%m-%d 2>/dev/null || stat -c %y "$f" 2>/dev/null | cut -d' ' -f1)
-        title=$(echo "$fname" | sed 's/\.html$//')
+        fdate=$(file_date "$f")
+        title=$(html_escape "${fname%.html}")
+        href=$(html_escape "$(url_encode "$fname")")
 
         if [ "$fsize" -ge 1048576 ]; then
             size_display="$(echo "$fsize" | awk '{printf "%.1f MB", $1/1048576}')"
@@ -33,7 +51,7 @@ generate_index() {
         fi
 
         file_rows="$file_rows"'
-        <a href="'"$fname"'" class="slide-card">
+        <a href="'"$href"'" class="slide-card">
             <div class="slide-icon">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>
@@ -236,7 +254,7 @@ body { font-family: var(--font-primary); background: var(--bg-default); color: v
 <div class="page-body">
 HTMLHEAD
 
-    echo "$main_content" >> "$INDEX_FILE"
+    printf '%s\n' "$main_content" >> "$INDEX_FILE"
 
     cat >> "$INDEX_FILE" << 'HTMLTAIL'
 </div>

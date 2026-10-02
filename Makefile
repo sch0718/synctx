@@ -49,6 +49,7 @@ test:
 		services/feedback/tests/ \
 		services/marp/tests/ \
 		services/sync/tests/ \
+		services/slides/tests/ \
 		scripts/tests/ \
 		-q
 
