@@ -44,6 +44,12 @@ spec:
               value: {{ .Values.slides.publishRepoUrl | quote }}
             - name: POLL_INTERVAL_SECONDS
               value: {{ .Values.slides.pollingIntervalSeconds | quote }}
+            - name: GIT_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.git.secrets.existingSecret | default (printf "%s-git-secrets" (include "synctx.fullname" .)) }}
+                  key: read-token
+                  optional: true
           volumeMounts:
             - name: slides-worktree
               mountPath: /data/slides/worktree
