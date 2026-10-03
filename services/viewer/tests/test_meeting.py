@@ -304,28 +304,38 @@ class TestHighlightContrast:
         block = re.search(rf'\[data-theme="{theme}"\] \{{([^}}]*)\}}', THEME_VARS_CSS).group(1)
         return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", block))
 
-    def _danger(self, css, theme):
-        danger = None
+    def _meeting_color(self, css, theme, name, theme_vars):
+        value = None
         css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
         for rule in re.finditer(r"^(\S[^{}]*)\{([^}]*)\}", css, re.M):
             selectors = {sel.strip() for sel in rule.group(1).split(",")}
             if selectors & {":root", f'[data-theme="{theme}"]'}:
-                danger = self._decl(rule.group(2), "--meeting-danger") or danger
-        return danger
+                value = self._decl(rule.group(2), name) or value
+        ref = re.fullmatch(r"var\((--[\w-]+)(?:,\s*([^)]+))?\)", value)
+        if ref:
+            value = theme_vars.get(ref.group(1), ref.group(2))
+        return self._rgb(value)[0]
 
-    def test_danger_text_meets_aa_on_panel_backgrounds(self):
+    @pytest.mark.parametrize("name", ["--meeting-danger", "--meeting-muted", "--meeting-link"])
+    def test_panel_text_meets_aa_on_panel_backgrounds(self, name):
         import meeting
         from renderer import THEME_CSS
         css = (meeting.STATIC_DIR / "meeting.css").read_text(encoding="utf-8")
         failures = []
         for theme in THEME_CSS:
             theme_vars = self._theme_vars(theme)
-            danger = self._rgb(self._danger(css, theme))[0]
+            color = self._meeting_color(css, theme, name, theme_vars)
             for var in ("--bg-default", "--bg-neutral"):
-                ratio = self._contrast(danger, self._rgb(theme_vars[var])[0])
+                ratio = self._contrast(color, self._rgb(theme_vars[var])[0])
                 if ratio < 4.5:
                     failures.append(f"{theme} {var}: {ratio:.2f}")
         assert not failures, failures
+
+    def test_panel_secondary_text_and_links_use_meeting_colors(self):
+        import meeting
+        css = (meeting.STATIC_DIR / "meeting.css").read_text(encoding="utf-8")
+        assert not re.search(r"(?<![-\w])color:\s*var\(--text-secondary", css)
+        assert not re.search(r"(?<![-\w])color:\s*var\(--primary", css)
 
     @pytest.mark.parametrize("outer", ["note", "decision", "action"])
     @pytest.mark.parametrize("inner", ["note", "decision", "action"])
