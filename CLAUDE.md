@@ -105,8 +105,3 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 
 - `GITHUB_TOKEN` 환경변수에 잘못된 토큰이 있을 수 있음. push 시 `GITHUB_TOKEN= git push -u origin main`으로 keyring fallback 사용
 - 원격 저장소: `https://github.com/sch0718/synctx.git` (private)
-
-## Serena MCP
-
-이 프로젝트는 Serena MCP 서버가 활성화되어 있음.
-코드 구현 단계 진입 시 `initial_instructions` → 심볼 기반 탐색/편집 도구 활용.
