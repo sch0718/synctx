@@ -13,6 +13,7 @@
   var cfg, root, embed, readonly, storage, persistent;
   var memoPrefix, docKey, widthKey;
   var chosenWidth = 400;
+  var revivedId = null;
   var state = { memos: {}, lastWritten: {}, drafts: {}, timers: {}, conflicts: {} };
   var ui = { panel: null, list: null, summary: null, status: null, notice: null, toggle: null, resizer: null, selBtn: null, cards: {}, tab: 'memos', pendingSelection: null };
 
@@ -286,13 +287,13 @@
 
   // ── 저장(메모별 키, 설계 3.6) ──
 
-  function applyResult(id, r) {
+  function applyResult(id, r, fromOtherTab) {
     if (r.removed) {
       delete state.memos[id];
       delete state.lastWritten[id];
       return;
     }
-    if (core.validateMemo(r.display) !== null) {
+    if (fromOtherTab && core.validateMemo(r.display) !== null) {
       delete state.memos[id];
       delete state.lastWritten[id];
       return;
@@ -333,6 +334,17 @@
     card.querySelector('[data-field="action-row"]').hidden = state.drafts[id].kind !== 'action';
   }
 
+  function sanitizeFields(fields, previous) {
+    var out = Object.assign({}, fields);
+    out.text = String(out.text || '').slice(0, core.LIMITS.text);
+    out.owner = String(out.owner || '').slice(0, core.LIMITS.owner);
+    if (out.due && !/^\d{4}-\d{2}-\d{2}$/.test(out.due)) {
+      out.due = (previous && previous.due) || '';
+      setStatus('기한 형식이 올바르지 않습니다(YYYY-MM-DD)', true);
+    }
+    return out;
+  }
+
   function commit(id) {
     clearTimeout(state.timers[id]);
     delete state.timers[id];
@@ -341,13 +353,13 @@
     if (!fields || !base) return;
     delete state.drafts[id];
     if (state.conflicts[id] === 'changed') delete state.conflicts[id];
-    persist(Object.assign(core.stripRuntime(base), fields, { updated_at: core.nowIso() }));
+    persist(Object.assign(core.stripRuntime(base), sanitizeFields(fields, base), { updated_at: core.nowIso() }));
     refresh({ keepCard: id });
   }
 
   function reviveAsNew(old, fields) {
     var now = core.nowIso();
-    var memo = Object.assign(core.stripRuntime(old), fields || {}, { id: core.newId(), created_at: now, updated_at: now });
+    var memo = Object.assign(core.stripRuntime(old), fields ? sanitizeFields(fields, old) : {}, { id: core.newId(), created_at: now, updated_at: now });
     delete memo.deleted_at;
     persist(memo);
     return memo.id;
@@ -379,14 +391,12 @@
     refresh();
   }
 
-  var revivedId = null;
-
   function reconcileFromStorage(id) {
     var before = state.memos[id];
     var editing = isEditing(id);
     var fields = state.drafts[id] || (editing && ui.cards[id] ? readCardFields(ui.cards[id]) : null);
     var r = core.reconcileMemo(storage, memoPrefix + id, state.lastWritten[id] || null);
-    applyResult(id, r);
+    applyResult(id, r, true);
     if (r.removed && editing && before) {
       clearTimeout(state.timers[id]);
       delete state.timers[id];
@@ -586,7 +596,7 @@
     text.value = m.text || '';
     var owner = h('input', { type: 'text', 'data-field': 'owner', maxlength: String(core.LIMITS.owner), 'aria-label': '담당자', placeholder: '담당자' });
     owner.value = m.owner || '';
-    var due = h('input', { type: 'date', 'data-field': 'due', 'aria-label': '기한' });
+    var due = h('input', { type: 'date', 'data-field': 'due', min: '1000-01-01', max: '9999-12-31', 'aria-label': '기한' });
     due.value = m.due || '';
     [kind, text, owner, due].forEach(function (input) {
       input.addEventListener('input', function () { onEdit(m.id, card); });
