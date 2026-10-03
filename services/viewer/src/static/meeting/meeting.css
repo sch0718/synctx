@@ -1,10 +1,6 @@
 /* synctx 회의 모드. 오프라인 HTML에는 테마 변수가 없으므로 모든 var()에 기본값을 둔다. */
 :root { --meeting-danger: #b3261e; --meeting-muted: var(--text-secondary, #57606a); --meeting-link: var(--primary, #0969da); }
 [data-theme="github-dark"], [data-theme="hacker"] { --meeting-danger: #ff8a80; }
-[data-theme="cayman"] { --meeting-muted: #5d6a70; --meeting-link: #0e7a42; }
-[data-theme="minimal"] { --meeting-muted: #666666; --meeting-link: #2e6da4; }
-[data-theme="modernist"] { --meeting-muted: #5a6772; --meeting-link: #325fa0; }
-[data-theme="corporate"] { --meeting-link: #b01819; }
 .meeting-add {
   margin-left: 8px; padding: 1px 8px; font-size: 12px; line-height: 1.6; vertical-align: middle;
   border: 1px solid var(--border-color, #d0d7de); border-radius: 999px;
