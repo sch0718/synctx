@@ -333,6 +333,20 @@
     return result;
   }
 
+  function importSummary(res, invalidCount, unsaved) {
+    var text = '추가 ' + res.added.length + ', 갱신 ' + res.updated.length + ', 복원 ' + res.restored.length +
+      ', 건너뜀 ' + res.skipped.length + ', 형식 오류로 제외 ' + invalidCount;
+    var notes = [];
+    if (unsaved.failed > 0) {
+      notes.push('저장하지 못한 메모 ' + unsaved.failed + '건은 화면에만 남아 있어 새로고침하면 사라집니다(저장 공간 부족 등)');
+    }
+    if (unsaved.stale > 0) {
+      notes.push('다른 탭의 더 최신 내용이 있어 저장하지 않은 메모 ' + unsaved.stale + '건이 있습니다');
+    }
+    if (!notes.length) return { text: text, isError: false };
+    return { text: text + '. ' + notes.join('. '), isError: true };
+  }
+
   function readMemo(storage, key) {
     var raw = storage.getItem(key);
     if (raw == null) return null;
@@ -435,6 +449,7 @@
     validateMemo: validateMemo,
     parseImport: parseImport,
     merge: merge,
+    importSummary: importSummary,
     TOMBSTONE_TTL_MS: TOMBSTONE_TTL_MS,
     readMemo: readMemo,
     writeMemo: writeMemo,

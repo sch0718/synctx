@@ -214,6 +214,78 @@ class TestStaticAssets:
 from html.parser import HTMLParser
 
 
+class TestHighlightContrast:
+    """형광펜 위 본문 글자는 모든 테마에서 WCAG AA 4.5:1 이상이어야 한다."""
+
+    @staticmethod
+    def _rgb(value):
+        value = value.strip()
+        m = re.fullmatch(r"rgba?\(([^)]*)\)", value)
+        if m:
+            parts = [p.strip() for p in m.group(1).split(",")]
+            return tuple(int(p) for p in parts[:3]), float(parts[3]) if len(parts) == 4 else 1.0
+        hex_ = value.lstrip("#")
+        if len(hex_) == 3:
+            hex_ = "".join(c * 2 for c in hex_)
+        return tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4)), 1.0
+
+    @staticmethod
+    def _luminance(rgb):
+        def channel(v):
+            v /= 255
+            return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b = (channel(v) for v in rgb)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    def _contrast(self, a, b):
+        hi, lo = sorted((self._luminance(a), self._luminance(b)), reverse=True)
+        return (hi + 0.05) / (lo + 0.05)
+
+    @staticmethod
+    def _decl(block, prop):
+        m = re.search(rf"(?:^|[;{{\s]){prop}\s*:\s*([^;}}]+)", block)
+        return m.group(1).strip() if m else None
+
+    def _theme_colors(self, theme_css):
+        body = re.search(r"^body \{([^}]*)\}", theme_css, re.M).group(1)
+        doc = re.search(r"^\.markdown-body \{([^}]*)\}", theme_css, re.M).group(1)
+        text = self._rgb(self._decl(body, "color"))[0]
+        doc_bg = self._decl(doc, "background")
+        if not doc_bg or not re.match(r"#|rgb", doc_bg):
+            doc_bg = self._decl(body, "background")
+        background = self._rgb(doc_bg)[0]
+        return text, background
+
+    def _mark_style(self, css, theme, kind):
+        selectors = ["mark.meeting-hl"] + ([f"mark.meeting-hl--{kind}"] if kind != "note" else [])
+        style = {}
+        for prefix in ("", f'[data-theme="{theme}"] '):
+            for rule in re.finditer(r"^(\S[^{}]*)\{([^}]*)\}", css, re.M):
+                if rule.group(1).strip() in {prefix + sel for sel in selectors}:
+                    for prop in ("background", "color"):
+                        value = self._decl(rule.group(2), prop)
+                        if value:
+                            style[prop] = value
+        return style
+
+    @pytest.mark.parametrize("kind", ["note", "decision", "action"])
+    def test_all_themes_meet_aa(self, kind):
+        import meeting
+        from renderer import THEME_CSS
+        css = (meeting.STATIC_DIR / "meeting.css").read_text(encoding="utf-8")
+        failures = []
+        for theme, theme_css in THEME_CSS.items():
+            text, page = self._theme_colors(theme_css)
+            style = self._mark_style(css, theme, kind)
+            mark_rgb, alpha = self._rgb(style["background"])
+            behind = tuple(round(m * alpha + p * (1 - alpha)) for m, p in zip(mark_rgb, page))
+            fg = text if style.get("color", "inherit") == "inherit" else self._rgb(style["color"])[0]
+            ratio = self._contrast(fg, behind)
+            if ratio < 4.5:
+                failures.append(f"{theme}: {ratio:.2f}")
+        assert not failures, failures
+
+
 class _TextCollector(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)

@@ -553,3 +553,25 @@ test('nextUpdatedAt: 과거 값이나 없는 값이면 지금 시각 이상', ()
   assert.ok(Date.parse(core.nextUpdatedAt(null)) >= before);
   assert.ok(Date.parse(core.nextUpdatedAt({ updated_at: '깨짐' })) >= before);
 });
+
+test('importSummary: 모두 저장되면 건수만 알리고 오류가 아니다', () => {
+  const res = { added: [memo()], updated: [], restored: [], skipped: [memo(), memo()] };
+  const s = core.importSummary(res, 1, { failed: 0, stale: 0 });
+  assert.equal(s.isError, false);
+  assert.equal(s.text, '추가 1, 갱신 0, 복원 0, 건너뜀 2, 형식 오류로 제외 1');
+});
+
+test('importSummary: 저장 실패가 있으면 화면 전용 상태를 오류로 알린다', () => {
+  const res = { added: [memo(), memo()], updated: [], restored: [], skipped: [] };
+  const s = core.importSummary(res, 0, { failed: 2, stale: 0 });
+  assert.equal(s.isError, true);
+  assert.match(s.text, /^추가 2, 갱신 0, 복원 0, 건너뜀 0, 형식 오류로 제외 0\. /);
+  assert.match(s.text, /저장하지 못한 메모 2건은 화면에만 남아 있어 새로고침하면 사라집니다/);
+});
+
+test('importSummary: 더 최신 내용 때문에 저장하지 않은 건수도 함께 알린다', () => {
+  const res = { added: [], updated: [memo()], restored: [], skipped: [] };
+  const s = core.importSummary(res, 0, { failed: 0, stale: 1 });
+  assert.equal(s.isError, true);
+  assert.match(s.text, /다른 탭의 더 최신 내용이 있어 저장하지 않은 메모 1건/);
+});

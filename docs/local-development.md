@@ -23,7 +23,7 @@
 
 ```bash
 # macOS 기준
-brew install minikube helm kubectl docker mkcert
+brew install minikube helm kubectl docker mkcert node
 ```
 
 | 도구 | 최소 버전 | 용도 |
@@ -33,6 +33,7 @@ brew install minikube helm kubectl docker mkcert
 | kubectl | 1.28+ | K8s CLI |
 | docker | 24+ | 이미지 빌드 |
 | mkcert | 1.4+ | 로컬 CA 인증서 생성 (TLS) |
+| node | 18+ | 회의 모드 JS 단위 테스트 (`node --test`, `make test`) |
 
 minikube 리소스 권장: CPU 4코어, RAM 8GB, 디스크 30GB
 
