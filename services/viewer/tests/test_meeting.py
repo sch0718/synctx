@@ -202,6 +202,14 @@ class TestStaticAssets:
         assert "</script" not in source.lower()
         assert BACKSLASH + "u" not in source
 
+    @pytest.mark.parametrize("name", ["memo-core.js", "meeting.js"])
+    def test_inlined_sources_have_no_script_state_literals(self, name):
+        import meeting
+        source = (meeting.STATIC_DIR / name).read_text(encoding="utf-8").lower()
+        assert "<!--" not in source
+        assert "<script" not in source
+        assert "</script" not in source
+
 
 from html.parser import HTMLParser
 
