@@ -349,3 +349,181 @@ test('parseImport: 태그마다 window.MEETING_EMBED가 붙어 있어도(대입 
   assert.ok(result.error);
   assert.ok(ms < 200, 'took ' + ms + 'ms');
 });
+
+function sharedStore() {
+  return new Map();
+}
+
+function tab(map) {
+  const counter = { writes: 0 };
+  const storage = {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => { map.set(k, String(v)); counter.writes += 1; },
+    removeItem: (k) => { map.delete(k); },
+    key: (i) => Array.from(map.keys())[i] ?? null,
+    get length() { return map.size; },
+  };
+  return { storage, counter, lastWritten: {}, display: {} };
+}
+
+const PREFIX = 'synctx-meeting:test-repo:dx-21:v1:memo:';
+const key = (id) => PREFIX + id;
+
+function apply(t, id, r) {
+  if (r.removed) { delete t.display[id]; delete t.lastWritten[id]; return; }
+  t.display[id] = r.display;
+  t.lastWritten[id] = r.lastWritten;
+}
+
+function save(t, m) {
+  const r = core.writeMemo(t.storage, key(m.id), m, t.lastWritten[m.id] || null);
+  apply(t, m.id, r);
+  return r;
+}
+
+function receive(t, id) {
+  const r = core.reconcileMemo(t.storage, key(id), t.lastWritten[id] || null);
+  apply(t, id, r);
+  return r;
+}
+
+test('저장 배치: 두 탭이 같은 상태를 읽은 뒤 서로 다른 메모를 저장해도 둘 다 남는다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  const B = tab(map);
+  assert.deepEqual(core.listMemos(A.storage, PREFIX), []);
+  assert.deepEqual(core.listMemos(B.storage, PREFIX), []);
+  save(A, memo({ id: 'm_tabA0001', text: 'A' }));
+  save(B, memo({ id: 'm_tabB0001', text: 'B' }));
+  assert.deepEqual(core.listMemos(A.storage, PREFIX).map(m => m.id).sort(), ['m_tabA0001', 'm_tabB0001']);
+});
+
+test('같은 메모: 저장값이 더 최신이면 오래된 쪽은 쓰지 않고 저장값을 보여준다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  const B = tab(map);
+  save(A, memo({ id: 'm_same0001', text: '새 값', updated_at: '2026-10-08T06:00:00.000Z' }));
+  const r = save(B, memo({ id: 'm_same0001', text: '오래된 값', updated_at: '2026-10-08T05:00:00.000Z' }));
+  assert.equal(r.written, false);
+  assert.equal(B.counter.writes, 0);
+  assert.equal(B.display.m_same0001.text, '새 값');
+  assert.equal(core.readMemo(A.storage, key('m_same0001')).text, '새 값');
+});
+
+test('삭제 표시 후 오래된 탭의 수정 저장은 거부된다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  const B = tab(map);
+  save(A, memo({ id: 'm_del00001', deleted_at: '2026-10-08T06:00:00.000Z', updated_at: '2026-10-08T06:00:00.000Z' }));
+  save(B, memo({ id: 'm_del00001', text: '오래된 수정', updated_at: '2026-10-08T05:30:00.000Z' }));
+  assert.ok(core.readMemo(A.storage, key('m_del00001')).deleted_at);
+});
+
+test('검사와 쓰기가 교차해도 최신 값으로 수렴하고 오래된 쪽은 다시 쓰지 않는다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  const B = tab(map);
+  const fresh = memo({ id: 'm_race0001', text: '새 값', updated_at: '2026-10-08T06:00:00.000Z' });
+  const stale = memo({ id: 'm_race0001', text: '오래된 값', updated_at: '2026-10-08T05:00:00.000Z' });
+  // A 검사 → B 검사(둘 다 빈 저장소를 봄) → A 쓰기 → B 쓰기
+  save(A, fresh);
+  B.storage.setItem(key(stale.id), JSON.stringify(stale));
+  B.lastWritten[stale.id] = stale;
+  B.display[stale.id] = stale;
+  const bWritesBefore = B.counter.writes;
+  // 각 탭에 상대 쓰기의 storage 이벤트 전달
+  const ra = receive(A, 'm_race0001');
+  assert.equal(ra.rewrite, true);
+  const rb = receive(B, 'm_race0001');
+  assert.equal(rb.rewrite, false);
+  assert.equal(core.readMemo(A.storage, key('m_race0001')).text, '새 값');
+  assert.equal(A.display.m_race0001.text, '새 값');
+  assert.equal(B.display.m_race0001.text, '새 값');
+  assert.equal(B.counter.writes, bWritesBefore, 'B는 다시 쓰지 않는다');
+});
+
+test('바로잡기 전에 새 값 탭이 닫히면 저장값과 남은 탭 화면이 같다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  const B = tab(map);
+  save(A, memo({ id: 'm_race0002', text: '새 값', updated_at: '2026-10-08T06:00:00.000Z' }));
+  const stale = memo({ id: 'm_race0002', text: '오래된 값', updated_at: '2026-10-08T05:00:00.000Z' });
+  B.storage.setItem(key(stale.id), JSON.stringify(stale));
+  B.lastWritten[stale.id] = stale;
+  receive(B, 'm_race0002');
+  assert.equal(B.display.m_race0002.text, core.readMemo(B.storage, key('m_race0002')).text);
+});
+
+test('바로잡기는 초안이 아니라 lastWritten을 다시 쓴다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  const v1 = memo({ id: 'm_drft0001', text: 'v1', updated_at: '2026-10-08T06:00:00.000Z' });
+  save(A, v1);
+  const draft = { text: 'v2(저장 대기)' };
+  const v0 = memo({ id: 'm_drft0001', text: 'v0', updated_at: '2026-10-08T05:00:00.000Z' });
+  map.set(key(v0.id), JSON.stringify(v0));
+  const r = receive(A, 'm_drft0001');
+  assert.equal(r.rewrite, true);
+  assert.equal(core.readMemo(A.storage, key('m_drft0001')).text, 'v1');
+  assert.equal(draft.text, 'v2(저장 대기)');
+  const v2 = { ...v1, text: draft.text, updated_at: '2026-10-08T06:01:00.000Z' };
+  save(A, v2);
+  assert.equal(core.readMemo(A.storage, key('m_drft0001')).text, 'v2(저장 대기)');
+});
+
+test('키가 지워지면 lastWritten과 화면에서 빼고 다시 만들지 않는다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  save(A, memo({ id: 'm_gone0001' }));
+  const writes = A.counter.writes;
+  map.delete(key('m_gone0001'));
+  const r = receive(A, 'm_gone0001');
+  assert.equal(r.removed, true);
+  assert.equal(A.counter.writes, writes);
+  assert.equal(map.has(key('m_gone0001')), false);
+  assert.equal('m_gone0001' in A.lastWritten, false);
+  assert.equal('m_gone0001' in A.display, false);
+});
+
+test('쓰기 후 확인: 저장값이 다르면 저장값 기준으로 판단한다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  const newer = memo({ id: 'm_post0001', text: '다른 탭(최신)', updated_at: '2026-10-08T07:00:00.000Z' });
+  const original = A.storage.setItem;
+  A.storage.setItem = (k, v) => { original(k, v); map.set(k, JSON.stringify(newer)); };
+  const r = save(A, memo({ id: 'm_post0001', text: '내 값', updated_at: '2026-10-08T06:00:00.000Z' }));
+  assert.equal(r.display.text, '다른 탭(최신)');
+});
+
+test('깨진 저장값은 lastWritten으로 바로잡는다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  save(A, memo({ id: 'm_brkn0001', text: '정상' }));
+  map.set(key('m_brkn0001'), '{깨짐');
+  const r = receive(A, 'm_brkn0001');
+  assert.equal(r.rewrite, true);
+  assert.equal(core.readMemo(A.storage, key('m_brkn0001')).text, '정상');
+});
+
+test('purgeTombstones: 30일 지난 삭제 표시만 지운다', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  const now = Date.parse('2026-11-10T00:00:00.000Z');
+  save(A, memo({ id: 'm_old00001', deleted_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z' }));
+  save(A, memo({ id: 'm_new00001', deleted_at: '2026-11-01T00:00:00.000Z', updated_at: '2026-11-01T00:00:00.000Z' }));
+  save(A, memo({ id: 'm_live0001' }));
+  map.set('다른 키', 'x');
+  const removed = core.purgeTombstones(A.storage, PREFIX, now);
+  assert.deepEqual(removed, [key('m_old00001')]);
+  assert.deepEqual(core.listMemos(A.storage, PREFIX).map(m => m.id).sort(), ['m_live0001', 'm_new00001']);
+  assert.equal(core.TOMBSTONE_TTL_MS, 30 * 24 * 60 * 60 * 1000);
+});
+
+test('listMemos: 접두어가 다른 키와 깨진 값은 무시', () => {
+  const map = sharedStore();
+  const A = tab(map);
+  save(A, memo({ id: 'm_list0001' }));
+  map.set(PREFIX + 'm_broken01', '{');
+  map.set('synctx-meeting:other:v1:memo:m_other001', JSON.stringify(memo({ id: 'm_other001' })));
+  assert.deepEqual(core.listMemos(A.storage, PREFIX).map(m => m.id), ['m_list0001']);
+});

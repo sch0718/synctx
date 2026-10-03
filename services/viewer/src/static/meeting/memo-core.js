@@ -6,6 +6,7 @@
   var SCHEMA = 1;
   var LIMITS = { text: 10000, owner: 200, quote: 1000 };
   var KINDS = ['note', 'decision', 'action'];
+  var TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   var SCRIPT_UNSAFE_RE = new RegExp('[<>&' + String.fromCharCode(0x2028, 0x2029) + ']', 'g');
   var ID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -324,6 +325,87 @@
     return result;
   }
 
+  function readMemo(storage, key) {
+    var raw = storage.getItem(key);
+    if (raw == null) return null;
+    try {
+      var value = JSON.parse(raw);
+      return value && typeof value === 'object' ? value : undefined;
+    } catch (e) {
+      return undefined;
+    }
+  }
+
+  function writeRaw(storage, key, memo) {
+    storage.setItem(key, JSON.stringify(stripRuntime(memo)));
+  }
+
+  function sameMemo(a, b) {
+    return !!a && !!b && JSON.stringify(stripRuntime(a)) === JSON.stringify(stripRuntime(b));
+  }
+
+  function reconcileMemo(storage, key, lastWritten) {
+    var stored = readMemo(storage, key);
+    if (stored === null) {
+      return { written: false, rewrite: false, removed: true, display: null, lastWritten: null };
+    }
+    var storedIsOlder = stored !== undefined && lastWritten && compareTime(stored.updated_at, lastWritten.updated_at) < 0;
+    if (stored === undefined || storedIsOlder) {
+      if (!lastWritten) {
+        return { written: false, rewrite: false, removed: true, display: null, lastWritten: null };
+      }
+      writeRaw(storage, key, lastWritten);
+      return { written: true, rewrite: true, removed: false, display: lastWritten, lastWritten: lastWritten };
+    }
+    return { written: false, rewrite: false, removed: false, display: stored, lastWritten: lastWritten || null };
+  }
+
+  function writeMemo(storage, key, memo, lastWritten) {
+    var stored = readMemo(storage, key);
+    if (stored && compareTime(stored.updated_at, memo.updated_at) > 0) {
+      return reconcileMemo(storage, key, lastWritten);
+    }
+    var clean = stripRuntime(memo);
+    writeRaw(storage, key, clean);
+    var after = readMemo(storage, key);
+    if (sameMemo(after, clean)) {
+      return { written: true, rewrite: false, removed: false, display: clean, lastWritten: clean };
+    }
+    var result = reconcileMemo(storage, key, clean);
+    result.written = true;
+    return result;
+  }
+
+  function keysWithPrefix(storage, prefix) {
+    var keys = [];
+    for (var i = 0; i < storage.length; i++) {
+      var k = storage.key(i);
+      if (k && k.indexOf(prefix) === 0) keys.push(k);
+    }
+    return keys;
+  }
+
+  function listMemos(storage, prefix) {
+    var memos = [];
+    keysWithPrefix(storage, prefix).forEach(function (k) {
+      var m = readMemo(storage, k);
+      if (m && typeof m === 'object') memos.push(m);
+    });
+    return memos;
+  }
+
+  function purgeTombstones(storage, prefix, nowMs) {
+    var removed = [];
+    keysWithPrefix(storage, prefix).forEach(function (k) {
+      var m = readMemo(storage, k);
+      if (m && m.deleted_at && nowMs - Date.parse(m.deleted_at) > TOMBSTONE_TTL_MS) {
+        storage.removeItem(k);
+        removed.push(k);
+      }
+    });
+    return removed;
+  }
+
   root.SynctxMemoCore = {
     SCHEMA: SCHEMA,
     LIMITS: LIMITS,
@@ -343,6 +425,12 @@
     toMarkdown: toMarkdown,
     validateMemo: validateMemo,
     parseImport: parseImport,
-    merge: merge
+    merge: merge,
+    TOMBSTONE_TTL_MS: TOMBSTONE_TTL_MS,
+    readMemo: readMemo,
+    writeMemo: writeMemo,
+    reconcileMemo: reconcileMemo,
+    listMemos: listMemos,
+    purgeTombstones: purgeTombstones
   };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
