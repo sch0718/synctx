@@ -24,7 +24,7 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 - **서비스 추가**: README(다이어그램 + 테이블 + 프로젝트 구조), architecture.md(다이어그램 + 테이블 + 모듈), production-service-design.md(설정 + API + 보안 + 메트릭 + Alert + 테스트 + Phase 체크리스트)
 - **Secret 추가**: Secrets 테이블, .synctx.yaml 스키마, Runbook
 - **Role 추가**: Roles 테이블, authz 설정 예시
-- **Phase 변경**: 3개 문서의 Phase 번호와 순서 일치 (1-4 코어 → 5 운영 준비 → 6 하네스/스크럼 → 7 Outbound Feedback)
+- **Phase 변경**: 3개 문서의 Phase 번호와 순서 일치 (1-4 코어 → 5 운영 준비 → 6 하네스/스크럼 → 7 Outbound Feedback → 8 협업 통합)
 
 ### 검토 출력 형식
 
@@ -44,7 +44,7 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 ## 설정 파일
 
 - `.synctx.yaml`: 동기화 설정 (저장소별). `sync:`, `harness:`, `outbound_feedback:` 블록
-- Front Matter: `synctx:` 네임스페이스. `type`(task/doc/report 등)과 `route`(openproject/xwiki/both)로 라우팅
+- Front Matter: `synctx:` 네임스페이스. `type`(task/doc/report/meeting 등)과 `route`(openproject/xwiki/both)로 라우팅. 회의 문서는 `synctx.meeting` 블록(id·title·starts_at·channel 필수)
 
 ## Mermaid 다이어그램 규칙
 

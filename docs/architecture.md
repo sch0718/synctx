@@ -282,6 +282,7 @@ GET /api/repos                      저장소 목록
 GET /api/repos/{id}/tree            트리 탐색
 GET /api/repos/{id}/render          마크다운 렌더링
 GET /api/repos/{id}/download        HTML/PDF 다운로드
+GET /api/repos/{id}/meeting-export  회의 메모 포함 HTML 틀(오프라인, 메모 없음)
 POST /api/repos/{id}/webhook        Git push 알림
 ```
 
@@ -298,6 +299,8 @@ POST /api/repos/{id}/webhook        Git push 알림
 | HTML 다운로드 | 자체 완결형 HTML 생성 | 있음 (재활용) |
 | PDF 다운로드 | Chrome CDP 기반 | 있음 (재활용) |
 | Marp 연동 | "PDF 변환" / "출판" 버튼 | **신규** |
+| 회의 모드 | `?mode=meeting`: 메모·형광펜·회의 정리, `.md`·메모 포함 HTML 내보내기/가져오기. 서버 판단은 `meeting.py`, 화면은 `static/meeting/` | **신규 (Phase 8.1a)** |
+| front matter 분리 | 렌더링 전에 front matter를 본문에서 떼어 냄(일반 보기 포함) | **신규 (Phase 8.1a)** |
 
 ### 3.4 Marp 연동
 
@@ -1090,3 +1093,12 @@ helm upgrade synctx ./helm/synctx \
 2. 내부 Exporter: 변경 감지, redaction, HMAC 서명, 메일 발송 구현
 3. 외부 Importer: 메일 수신, 서명 검증, replay 방지, Markdown 변경 PR 생성 구현
 4. PR 리뷰와 merge 후 기존 외부→내부 동기화로 재반영되는 폐루프 검증
+
+### Phase 8: 협업 통합 (회의 모드 · Jitsi · 메신저)
+
+1. 8.1a 회의 모드 기반: front matter 분리, `synctx.meeting` 검증, `repositories[].collab.enabled`, 메모·형광펜·회의 정리, `.md`·메모 포함 HTML 내보내기/가져오기
+2. 8.1b 근거 미리보기·근거 모음(저장소 간 링크 해석)
+3. 8.1c 회의 문서 대시보드
+4. 8.2 Jitsi 내장과 발표자 따라가기
+5. 8.3 Collab Gateway(메신저 어댑터, 회의 안내·알림)
+6. 8.4 `/synctx` 명령과 채널

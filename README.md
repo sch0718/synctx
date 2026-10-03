@@ -129,6 +129,7 @@ flowchart TB
 - **코드 하이라이팅** — highlight.js 기반 190+ 언어 구문 강조
 - **HTML/PDF 다운로드** — 자체 완결형 HTML, Chrome CDP 기반 PDF
 - **완전 오프라인** — 모든 외부 라이브러리를 CDN Service에서 로딩
+- **회의 모드** — 회의 문서(`synctx.type: meeting`)에서 메모·형광펜·회의 정리(결정·액션 아이템), `.md`·메모 포함 HTML(읽기 전용) 내보내기와 가져오기. 메모는 브라우저(localStorage)에만 저장 (Phase 8.1a)
 
 ## CDN Service (내부 CDN)
 
@@ -288,6 +289,8 @@ synctx/
 │   │   └── src/
 │   │       ├── app.py                 # FastAPI 서버 (라우트 통합, lifespan, 칸반)
 │   │       ├── renderer.py            # Markdown → HTML 렌더링
+│   │       ├── meeting.py             # 회의 모드 판단·설정 JSON·메모 포함 HTML 조립
+│   │       ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·CSS
 │   │       ├── converters/pdf.py      # PDF 변환 유틸리티
 │   │       └── static/style.css       # 프론트엔드 스타일시트
 │   │
