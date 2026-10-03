@@ -13,8 +13,14 @@
   var ID_RE = /^m_[A-Za-z0-9]{6,32}$/;
   var DUE_RE = /^\d{4}-\d{2}-\d{2}$/;
   var ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
-  var MD_DATA_RE = new RegExp('<!--' + '\\s*' + 'synctx-' + 'memo-data' + '\\s+([\\s\\S]*?)\\s*-->', 'g');
-  var EMBED_RE = new RegExp('<script id="' + EMBED_SCRIPT_ID + '">\\s*window\\.MEETING_EMBED\\s*=\\s*([\\s\\S]*?);?\\s*</' + 'script>', 'g');
+  var WS_RE = /\s/;
+  var EMBED_ASSIGN_RE = /^\s*=\s*/;
+  var MD_MARKER = 'synctx-' + 'memo-data';
+  var MD_OPEN = '<!--';
+  var MD_CLOSE = '-->';
+  var EMBED_OPEN = '<script id="' + EMBED_SCRIPT_ID + '">';
+  var SCRIPT_CLOSE = '</' + 'script>';
+  var EMBED_VAR = 'window.MEETING_EMBED';
 
   function nowIso() {
     return new Date().toISOString();
@@ -148,8 +154,8 @@
     var groups = summarize(payload.memos, meta.positions);
     var title = (store.doc && store.doc.title) || '회의';
     var out = ['# ' + oneLine(title) + ' — 회의 메모', ''];
-    if (meta.starts_at) out.push('- 회의 일시: ' + meta.starts_at);
-    out.push('- 내보낸 시각: ' + exportedAt, '', '## 결정사항', '');
+    if (meta.starts_at) out.push('- 회의 일시: ' + oneLine(meta.starts_at));
+    out.push('- 내보낸 시각: ' + oneLine(exportedAt), '', '## 결정사항', '');
     if (groups.decisions.length) {
       groups.decisions.forEach(function (m, i) { out.push((i + 1) + '. ' + oneLine(m.text) + quoteSuffix(m)); });
     } else {
@@ -203,21 +209,53 @@
     return null;
   }
 
-  function lastMatch(re, text) {
-    re.lastIndex = 0;
-    var found = null;
-    var m;
-    while ((m = re.exec(text))) found = m;
-    return found;
+  // 정규식 백트래킹을 피하려고 indexOf/lastIndexOf로 선형 탐색한다
+  function findMarkdownData(text) {
+    var lastClose = text.lastIndexOf(MD_CLOSE);
+    var idx = text.lastIndexOf(MD_MARKER);
+    while (idx !== -1) {
+      var from = idx + MD_MARKER.length;
+      var before = idx;
+      while (before > 0 && WS_RE.test(text.charAt(before - 1))) before--;
+      var opened = before >= MD_OPEN.length && text.slice(before - MD_OPEN.length, before) === MD_OPEN;
+      if (opened && from < text.length && WS_RE.test(text.charAt(from)) && lastClose >= from) {
+        return text.slice(from, text.indexOf(MD_CLOSE, from)).trim();
+      }
+      idx = idx === 0 ? -1 : text.lastIndexOf(MD_MARKER, idx - 1);
+    }
+    return null;
+  }
+
+  function findEmbedData(text) {
+    var lastClose = text.lastIndexOf(SCRIPT_CLOSE);
+    var idx = text.lastIndexOf(EMBED_OPEN);
+    while (idx !== -1) {
+      var from = idx + EMBED_OPEN.length;
+      if (lastClose >= from) {
+        var content = text.slice(from, text.indexOf(SCRIPT_CLOSE, from)).trim();
+        if (content.slice(0, EMBED_VAR.length) === EMBED_VAR) {
+          var rest = content.slice(EMBED_VAR.length);
+          var assign = EMBED_ASSIGN_RE.exec(rest);
+          if (assign) {
+            var data = rest.slice(assign[0].length);
+            if (data.charAt(data.length - 1) === ';') data = data.slice(0, -1);
+            return data.trim();
+          }
+        }
+      }
+      idx = idx === 0 ? -1 : text.lastIndexOf(EMBED_OPEN, idx - 1);
+    }
+    return null;
   }
 
   function parseImport(fileText) {
     // 데이터 블록은 내보낸 파일의 맨 끝에 있으므로 마지막 것을 쓴다
-    var match = lastMatch(MD_DATA_RE, fileText) || lastMatch(EMBED_RE, fileText);
-    if (!match) return { error: '메모 데이터를 찾지 못했습니다' };
+    var raw = findMarkdownData(fileText);
+    if (raw === null) raw = findEmbedData(fileText);
+    if (raw === null) return { error: '메모 데이터를 찾지 못했습니다' };
     var data;
     try {
-      data = JSON.parse(match[1]);
+      data = JSON.parse(raw);
     } catch (e) {
       return { error: '메모 데이터 형식이 올바르지 않습니다' };
     }

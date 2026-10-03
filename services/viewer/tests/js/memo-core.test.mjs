@@ -310,3 +310,28 @@ test('merge: 삭제 이후에 편집된 메모(파일 쪽이 더 최신)는 되�
   assert.deepEqual(r.deletedConflicts, []);
   assert.equal(r.memos[0].deleted_at, undefined);
 });
+
+function elapsedMs(fn) {
+  const t0 = performance.now();
+  const result = fn();
+  return { result, ms: performance.now() - t0 };
+}
+
+test('parseImport: 닫는 주석이 없는 긴 공백 입력도 선형 시간에 끝난다', () => {
+  const { result, ms } = elapsedMs(() => core.parseImport('<!-- synctx-' + 'memo-data ' + ' '.repeat(50000) + 'x'));
+  assert.ok(result.error);
+  assert.ok(ms < 200, 'took ' + ms + 'ms');
+});
+
+test('parseImport: 닫는 script가 없는 긴 공백 임베드도 선형 시간에 끝난다', () => {
+  const { result, ms } = elapsedMs(() => core.parseImport('<script id="' + core.EMBED_SCRIPT_ID + '">window.MEETING_EMBED = ' + ' '.repeat(50000)));
+  assert.ok(result.error);
+  assert.ok(ms < 200, 'took ' + ms + 'ms');
+});
+
+test('toMarkdown: 회의 일시 줄도 주석 구분자를 escape하고 왕복된다', () => {
+  const md = core.toMarkdown({ doc: DOC, memos: [memo()] }, { starts_at: 'x --> y <!-- z' });
+  assert.equal(md.split('<!--').length - 1, 1);
+  assert.ok(md.includes('- 회의 일시: x --&gt; y &lt;!-- z'));
+  assert.deepEqual(core.parseImport(md).memos.map(m => m.id), ['m_abcdef1234']);
+});
