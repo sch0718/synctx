@@ -323,7 +323,7 @@ cdn-data/
 ├── mermaid/10.9.1/mermaid.min.js
 ├── highlight.js/11.9.0/
 │   ├── highlight.min.js
-│   └── styles/github.min.css
+│   └── styles/{github,github-dark,monokai,atom-one-light}.min.css
 └── chart.js/4.4.4/chart.umd.min.js
 ```
 
@@ -348,9 +348,9 @@ curl -X POST "http://cdn-service:8000/api/cdn/upload" \
 
 # 다중 파일
 curl -X POST "http://cdn-service:8000/api/cdn/upload" \
-  -F "files=@highlight.min.js" \
   -F "files=@github.min.css" \
-  -F "base_path=highlight.js/11.9.0/"
+  -F "files=@github-dark.min.css" \
+  -F "base_path=highlight.js/11.9.0/styles/"
 ```
 
 ### 4.4 캐시 전략

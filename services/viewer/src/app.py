@@ -421,7 +421,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
     </script>
     <style>{theme_vars_css}</style>
     <style>{theme_css}</style>
-    <link rel="stylesheet" href="{cdn_base}/highlight.js/11.9.0/{hljs_theme}.min.css">
+    <link rel="stylesheet" href="{cdn_base}/highlight.js/11.9.0/styles/{hljs_theme}.min.css">
     <style>
         body {{ margin: 0; padding: 0; }}
         .viewer-sidebar {{

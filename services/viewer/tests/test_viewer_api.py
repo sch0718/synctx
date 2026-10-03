@@ -2,7 +2,7 @@
 
 import json
 from unittest.mock import MagicMock, patch
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import pytest
 from fastapi.testclient import TestClient
@@ -121,6 +121,33 @@ class TestHTMLSanitization:
         result = _sanitize_html('<p>ok</p><script>bad()</script><p>also ok</p>')
         assert "<script" not in result
         assert "ok" in result
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_HLJS_CDN_DIR = _REPO_ROOT / "cdn-data" / "highlight.js" / "11.9.0"
+
+
+class TestHighlightJsCdnAssets:
+    @pytest.mark.parametrize("theme", ["github-light", "github-dark", "hacker", "modernist"])
+    def test_theme_css_links_styles_dir(self, client, mock_repo_manager, theme):
+        from renderer import THEME_HLJS
+        mock_repo_manager.read_file_text.return_value = "# Title\n\n```python\nprint(1)\n```\n"
+        resp = client.get(f"/test-repo/docs/code.md?theme={theme}")
+        assert resp.status_code == 200
+        assert f'href="/cdn/highlight.js/11.9.0/styles/{THEME_HLJS[theme]}.min.css"' in resp.text
+        assert '<script src="/cdn/highlight.js/11.9.0/highlight.min.js"></script>' in resp.text
+
+    @pytest.mark.skipif(not _HLJS_CDN_DIR.is_dir(), reason="cdn-data 미포함 환경")
+    def test_cdn_highlight_js_is_browser_bundle(self):
+        script = (_HLJS_CDN_DIR / "highlight.min.js").read_text(encoding="utf-8")
+        assert "require(" not in script
+        assert "var hljs=" in script
+
+    @pytest.mark.skipif(not _HLJS_CDN_DIR.is_dir(), reason="cdn-data 미포함 환경")
+    def test_cdn_has_every_theme_css(self):
+        from renderer import THEME_HLJS
+        missing = [name for name in set(THEME_HLJS.values()) if not (_HLJS_CDN_DIR / "styles" / f"{name}.min.css").is_file()]
+        assert missing == []
 
 
 class TestRawMarkdownScript:
