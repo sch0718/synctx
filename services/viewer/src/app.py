@@ -407,7 +407,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
             background: var(--primary); color: var(--on-primary); text-decoration: none; font-size: 13px;
         }}
         .viewer-toolbar .btn:hover {{ background: var(--primary-dark); }}
-        .viewer-toolbar .btn-secondary {{ background: #6c757d; }}
+        .viewer-toolbar .btn-secondary {{ background: #6c757d; color: #ffffff; }}
         .viewer-toolbar .btn-secondary:hover {{ background: #5a6268; }}
         @media (max-width: 768px) {{
             .viewer-sidebar {{ display: none; }}

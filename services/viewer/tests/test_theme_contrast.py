@@ -46,6 +46,35 @@ def test_primary_buttons_use_on_primary_text():
     assert re.search(r"(?<![-\w])color:\s*var\(--on-primary\)", rule)
 
 
+def _toolbar_rule(selector):
+    pattern = rf"\.viewer-toolbar {re.escape(selector)} \{{\{{([^}}]*)\}}\}}"
+    return re.search(pattern, _app_source()).group(1)
+
+
+def _decl(rule, prop):
+    m = re.search(rf"(?<![-\w]){prop}:\s*([^;]+);", rule)
+    return m.group(1).strip() if m else None
+
+
+def _resolve(value, values):
+    ref = re.fullmatch(r"var\((--[\w-]+)\)", value)
+    return values[ref.group(1)] if ref else value
+
+
+@pytest.mark.parametrize("state", ["", ":hover"])
+def test_secondary_button_text_meets_aa(state):
+    base = _toolbar_rule(".btn-secondary")
+    background = _decl(_toolbar_rule(f".btn-secondary{state}"), "background") if state else _decl(base, "background")
+    color = _decl(base, "color") or _decl(_toolbar_rule(".btn"), "color")
+    failures = []
+    for theme in _themes():
+        values = theme_vars(theme)
+        ratio = contrast(rgb(_resolve(color, values))[0], rgb(_resolve(background, values))[0])
+        if ratio < 4.5:
+            failures.append(f"{theme}: {ratio:.2f}")
+    assert not failures, failures
+
+
 def test_text_disabled_is_only_used_for_icons():
     lines = [line.strip() for line in _app_source().splitlines()
              if re.search(r"(?<![-\w])color:\s*var\(--text-disabled\)", line)]
