@@ -171,9 +171,7 @@ class TestWebhookToken:
         assert resp.json()["head_sha"] == "sha456"
 
 
-class TestBoardEscaping:
-    """/{repo_id}/{path:path} 라우트가 board 라우트를 가리므로 핸들러를 직접 호출한다."""
-
+class TestBoardRoute:
     @pytest.fixture
     def board_repo(self, mock_repo_manager, monkeypatch):
         import app as viewer_app
@@ -187,21 +185,33 @@ class TestBoardEscaping:
             mock_repo_manager.read_file_text.return_value = (
                 f"---\ntitle: Task\nsynctx:\n  type: task\n  version: {json.dumps(version)}\n---\nbody\n"
             )
-            return viewer_app.render_board(repo_id, version).body.decode()
 
         return _setup
 
-    def test_malicious_version_is_escaped(self, board_repo):
-        body = board_repo("test-repo", "</title><script>alert(1)</script>")
-        assert "<script" not in body
-        assert "<title>Scrum Board - &lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>" in body
-        assert "<h2>Scrum Board: &lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</h2>" in body
+    def test_board_not_shadowed_by_permalink(self, client, board_repo):
+        board_repo("test-repo", "v1")
+        resp = client.get("/api/repos/test-repo/board/v1")
+        assert resp.status_code == 200
+        assert "<title>Scrum Board - v1</title>" in resp.text
+        assert "IN_PROGRESS (0)" in resp.text
 
-    def test_malicious_repo_id_is_escaped(self, board_repo):
-        body = board_repo("<script>'x", "v1")
-        assert "<script" not in body
-        assert "<p>Repository: &lt;script&gt;&#x27;x</p>" in body
+    def test_malicious_version_is_escaped(self, client, board_repo):
+        version = "<script>alert(1)<img src=x onerror=alert(1)>"
+        board_repo("test-repo", version)
+        resp = client.get("/api/repos/test-repo/board/%3Cscript%3Ealert(1)%3Cimg%20src=x%20onerror=alert(1)%3E")
+        assert resp.status_code == 200
+        assert "<script" not in resp.text
+        assert "<img" not in resp.text
+        assert "<title>Scrum Board - &lt;script&gt;alert(1)&lt;img src=x onerror=alert(1)&gt;</title>" in resp.text
+        assert "<h2>Scrum Board: &lt;script&gt;alert(1)&lt;img src=x onerror=alert(1)&gt;</h2>" in resp.text
+
+    def test_malicious_repo_id_is_escaped(self, client, board_repo):
+        board_repo("<script>'x", "v1")
+        resp = client.get("/api/repos/%3Cscript%3E%27x/board/v1")
+        assert resp.status_code == 200
+        assert "<script" not in resp.text
+        assert "<p>Repository: &lt;script&gt;&#x27;x</p>" in resp.text
         assert (
             "onclick=\"window.location.href='/api/repos/%3Cscript%3E%27x/render?path=docs/it%27s%20task.md'\""
-            in body
+            in resp.text
         )

@@ -1139,13 +1139,6 @@ def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str |
     return _render_file_response(repo_id, path, theme, ref=ref)
 
 
-@app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
-def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
-    if repo_id in RESERVED_PATHS:
-        raise HTTPException(status_code=404, detail="Not found")
-    return _render_file_response(repo_id, path, theme, ref=ref)
-
-
 # ── Kanban Board ──
 
 KANBAN_TEMPLATE = """<!DOCTYPE html>
@@ -1237,3 +1230,11 @@ def render_board(repo_id: str, version: str):
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# catch-all이므로 다른 모든 라우트 뒤에 등록해야 한다.
+@app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
+def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
+    if repo_id in RESERVED_PATHS:
+        raise HTTPException(status_code=404, detail="Not found")
+    return _render_file_response(repo_id, path, theme, ref=ref)
