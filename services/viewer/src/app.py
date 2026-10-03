@@ -1155,15 +1155,15 @@ KANBAN_TEMPLATE = """<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scrum Board - {version}</title>
     <style>
-        body { font-family: sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }
-        .board { display: flex; gap: 20px; overflow-x: auto; padding-bottom: 20px; }
-        .column { background: #e9ecef; border-radius: 6px; width: 300px; min-width: 300px; padding: 10px; }
-        .column h3 { margin-top: 0; font-size: 16px; color: #333; padding-bottom: 10px; border-bottom: 2px solid #ccc; }
-        .card { background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 10px; cursor: pointer; }
-        .card:hover { box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-        .card-title { font-weight: bold; margin-bottom: 8px; font-size: 14px; }
-        .card-meta { font-size: 12px; color: #666; }
-        .badge { display: inline-block; padding: 2px 6px; border-radius: 12px; font-size: 11px; background: #007bff; color: white; }
+        body {{ font-family: sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }}
+        .board {{ display: flex; gap: 20px; overflow-x: auto; padding-bottom: 20px; }}
+        .column {{ background: #e9ecef; border-radius: 6px; width: 300px; min-width: 300px; padding: 10px; }}
+        .column h3 {{ margin-top: 0; font-size: 16px; color: #333; padding-bottom: 10px; border-bottom: 2px solid #ccc; }}
+        .card {{ background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 10px; cursor: pointer; }}
+        .card:hover {{ box-shadow: 0 2px 5px rgba(0,0,0,0.2); }}
+        .card-title {{ font-weight: bold; margin-bottom: 8px; font-size: 14px; }}
+        .card-meta {{ font-size: 12px; color: #666; }}
+        .badge {{ display: inline-block; padding: 2px 6px; border-radius: 12px; font-size: 11px; background: #007bff; color: white; }}
     </style>
 </head>
 <body>
@@ -1205,15 +1205,20 @@ def render_board(repo_id: str, version: str):
                         })
 
         import html
+        from urllib.parse import quote
+        safe_version = html.escape(version)
+        safe_repo_id = html.escape(repo_id)
+        url_repo_id = html.escape(quote(repo_id, safe=""))
         columns_html = ""
         for col_name, cards in columns.items():
             cards_html = ""
             for card in cards:
                 safe_title = html.escape(card['title'])
                 safe_path = html.escape(card['path'])
+                url_path = html.escape(quote(card['path']))
                 safe_priority = html.escape(card['priority'])
                 cards_html += f"""
-                <div class="card" onclick="window.location.href='/api/repos/{repo_id}/render?path={safe_path}'">
+                <div class="card" onclick="window.location.href='/api/repos/{url_repo_id}/render?path={url_path}'">
                     <div class="card-title">{safe_title}</div>
                     <div class="card-meta">
                         <span class="badge">{safe_priority}</span>
@@ -1228,7 +1233,7 @@ def render_board(repo_id: str, version: str):
             </div>
             """
 
-        html = KANBAN_TEMPLATE.format(version=version, repo_id=repo_id, columns_html=columns_html)
+        html = KANBAN_TEMPLATE.format(version=safe_version, repo_id=safe_repo_id, columns_html=columns_html)
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

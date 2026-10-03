@@ -1,5 +1,6 @@
 """Viewer API 단위 테스트."""
 
+import json
 from unittest.mock import MagicMock, patch
 from pathlib import PurePosixPath
 
@@ -168,3 +169,39 @@ class TestWebhookToken:
         )
         assert resp.status_code == 200
         assert resp.json()["head_sha"] == "sha456"
+
+
+class TestBoardEscaping:
+    """/{repo_id}/{path:path} 라우트가 board 라우트를 가리므로 핸들러를 직접 호출한다."""
+
+    @pytest.fixture
+    def board_repo(self, mock_repo_manager, monkeypatch):
+        import app as viewer_app
+        from types import SimpleNamespace
+
+        def _setup(repo_id, version):
+            monkeypatch.setattr(viewer_app, "repo_managers", {repo_id: mock_repo_manager})
+            mock_repo_manager.list_tree.return_value = [
+                SimpleNamespace(type="file", name="task.md", path="docs/it's task.md"),
+            ]
+            mock_repo_manager.read_file_text.return_value = (
+                f"---\ntitle: Task\nsynctx:\n  type: task\n  version: {json.dumps(version)}\n---\nbody\n"
+            )
+            return viewer_app.render_board(repo_id, version).body.decode()
+
+        return _setup
+
+    def test_malicious_version_is_escaped(self, board_repo):
+        body = board_repo("test-repo", "</title><script>alert(1)</script>")
+        assert "<script" not in body
+        assert "<title>Scrum Board - &lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>" in body
+        assert "<h2>Scrum Board: &lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</h2>" in body
+
+    def test_malicious_repo_id_is_escaped(self, board_repo):
+        body = board_repo("<script>'x", "v1")
+        assert "<script" not in body
+        assert "<p>Repository: &lt;script&gt;&#x27;x</p>" in body
+        assert (
+            "onclick=\"window.location.href='/api/repos/%3Cscript%3E%27x/render?path=docs/it%27s%20task.md'\""
+            in body
+        )
