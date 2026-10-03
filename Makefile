@@ -50,6 +50,8 @@ test:
 		services/marp/tests/ \
 		services/sync/tests/ \
 		services/slides/tests/ \
+		services/viewer/tests/ \
+		services/cdn/tests/ \
 		scripts/tests/ \
 		-q
 

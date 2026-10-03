@@ -1,5 +1,6 @@
 """Viewer API 단위 테스트."""
 
+import json
 from unittest.mock import MagicMock, patch
 from pathlib import PurePosixPath
 
@@ -168,3 +169,49 @@ class TestWebhookToken:
         )
         assert resp.status_code == 200
         assert resp.json()["head_sha"] == "sha456"
+
+
+class TestBoardRoute:
+    @pytest.fixture
+    def board_repo(self, mock_repo_manager, monkeypatch):
+        import app as viewer_app
+        from types import SimpleNamespace
+
+        def _setup(repo_id, version):
+            monkeypatch.setattr(viewer_app, "repo_managers", {repo_id: mock_repo_manager})
+            mock_repo_manager.list_tree.return_value = [
+                SimpleNamespace(type="file", name="task.md", path="docs/it's task.md"),
+            ]
+            mock_repo_manager.read_file_text.return_value = (
+                f"---\ntitle: Task\nsynctx:\n  type: task\n  version: {json.dumps(version)}\n---\nbody\n"
+            )
+
+        return _setup
+
+    def test_board_not_shadowed_by_permalink(self, client, board_repo):
+        board_repo("test-repo", "v1")
+        resp = client.get("/api/repos/test-repo/board/v1")
+        assert resp.status_code == 200
+        assert "<title>Scrum Board - v1</title>" in resp.text
+        assert "IN_PROGRESS (0)" in resp.text
+
+    def test_malicious_version_is_escaped(self, client, board_repo):
+        version = "<script>alert(1)<img src=x onerror=alert(1)>"
+        board_repo("test-repo", version)
+        resp = client.get("/api/repos/test-repo/board/%3Cscript%3Ealert(1)%3Cimg%20src=x%20onerror=alert(1)%3E")
+        assert resp.status_code == 200
+        assert "<script" not in resp.text
+        assert "<img" not in resp.text
+        assert "<title>Scrum Board - &lt;script&gt;alert(1)&lt;img src=x onerror=alert(1)&gt;</title>" in resp.text
+        assert "<h2>Scrum Board: &lt;script&gt;alert(1)&lt;img src=x onerror=alert(1)&gt;</h2>" in resp.text
+
+    def test_malicious_repo_id_is_escaped(self, client, board_repo):
+        board_repo("<script>'x", "v1")
+        resp = client.get("/api/repos/%3Cscript%3E%27x/board/v1")
+        assert resp.status_code == 200
+        assert "<script" not in resp.text
+        assert "<p>Repository: &lt;script&gt;&#x27;x</p>" in resp.text
+        assert (
+            "onclick=\"window.location.href='/view/api/repos/%3Cscript%3E%27x/render?path=docs/it%27s%20task.md'\""
+            in resp.text
+        )
