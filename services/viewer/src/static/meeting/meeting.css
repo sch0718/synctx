@@ -19,6 +19,8 @@ mark.meeting-hl { background: rgba(255, 212, 0, 0.35); color: inherit; box-shado
 mark.meeting-hl--decision { box-shadow: inset 0 -2px 0 #0b5cad; }
 mark.meeting-hl--action { background: rgba(255, 170, 80, 0.3); box-shadow: inset 0 -2px 0 #8a4600; }
 mark.meeting-hl--flash { outline: 2px solid var(--primary, #0969da); }
+[data-theme="hacker"] mark.meeting-hl { color: #ffffff; }
+[data-theme="cayman"] mark.meeting-hl--action { background: rgba(255, 170, 80, 0.25); }
 .meeting-toggle {
   position: fixed; right: 20px; bottom: 20px; z-index: 999; padding: 8px 16px;
   border: none; border-radius: 999px; background: #0b5cad; color: #ffffff; font-size: 14px;
