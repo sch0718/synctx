@@ -95,6 +95,11 @@ def render_notice(ctx: MeetingContext) -> str:
 
 
 _DOCUMENT_END = "</body>\n</html>"
+_HEAD_OPEN = "<head>"
+_CSP_META = (
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
+    "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:\">"
+)
 
 
 class ExportAssemblyError(RuntimeError):
@@ -110,6 +115,11 @@ def build_export_html(body_markdown: str, theme: str, config: dict, sanitize: Ca
     document = render_download_html(body_markdown, theme=theme, html_filter=sanitize).rstrip()
     if not document.endswith(_DOCUMENT_END):
         raise ExportAssemblyError("오프라인 HTML이 </body></html>로 끝나지 않습니다")
+    body_at = document.find("<body")
+    if body_at == -1 or document[:body_at].count(_HEAD_OPEN) != 1:
+        raise ExportAssemblyError("오프라인 HTML의 <head>를 하나로 특정하지 못했습니다")
+    head_at = document.index(_HEAD_OPEN) + len(_HEAD_OPEN)
+    document = f"{document[:head_at]}{_CSP_META}{document[head_at:]}"
     # 인라인된 mermaid.min.js 안에도 "</body>" 문자열이 있으므로 마지막 것을 기준으로 끼운다
     head, closing, tail = document.rpartition("</body>")
     staged = f"{head}<style>{_static_text('meeting.css')}</style>\n{EMBED_MARKER}\n"

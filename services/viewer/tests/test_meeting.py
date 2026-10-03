@@ -281,6 +281,16 @@ class TestMeetingExport:
         assert 'src="http' not in html and "href=\"http" not in html
         assert "본문 스크립트" not in article(html)
 
+    def test_csp_meta_in_head(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=RICH_BODY)
+        html = self._get(client).text
+        csp = (
+            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
+            "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:\">"
+        )
+        assert html.count(csp) == 1
+        assert html.index("<head>") < html.index(csp) < html.index("</head>")
+
     def test_article_text_matches_viewer(self, client, manager):
         manager.read_file_text.return_value = meeting_doc(body=RICH_BODY)
         viewer_html = client.get("/test-repo/docs/m.md?mode=meeting").text
