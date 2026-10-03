@@ -527,3 +527,29 @@ test('listMemos: 접두어가 다른 키와 깨진 값은 무시', () => {
   map.set('synctx-meeting:other:v1:memo:m_other001', JSON.stringify(memo({ id: 'm_other001' })));
   assert.deepEqual(core.listMemos(A.storage, PREFIX).map(m => m.id), ['m_list0001']);
 });
+
+test('nextUpdatedAt: 저장값이 미래 시각이어도 그보다 1ms 이상 늦은 시각을 만든다', () => {
+  const future = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const stored = memo({ id: 'm_futr0001', text: '가져온 값', updated_at: future });
+  const map = sharedStore();
+  const A = tab(map);
+  save(A, stored);
+  const next = core.nextUpdatedAt(stored);
+  assert.ok(Date.parse(next) > Date.parse(stored.updated_at));
+  assert.ok(Date.parse(next) >= Date.now() - 1000);
+  const r = save(A, memo({ id: 'm_futr0001', text: '내 수정', updated_at: next }));
+  assert.equal(r.written, true);
+  assert.equal(core.readMemo(A.storage, key('m_futr0001')).text, '내 수정');
+  const del = save(A, memo({ id: 'm_futr0001', text: '내 수정', deleted_at: core.nowIso(), updated_at: core.nextUpdatedAt(r.display) }));
+  assert.equal(del.written, true);
+  assert.ok(core.readMemo(A.storage, key('m_futr0001')).deleted_at);
+});
+
+test('nextUpdatedAt: 과거 값이나 없는 값이면 지금 시각 이상', () => {
+  const before = Date.now();
+  const past = core.nextUpdatedAt(memo());
+  assert.ok(Date.parse(past) >= before);
+  assert.ok(Date.parse(core.nextUpdatedAt({})) >= before);
+  assert.ok(Date.parse(core.nextUpdatedAt(null)) >= before);
+  assert.ok(Date.parse(core.nextUpdatedAt({ updated_at: '깨짐' })) >= before);
+});

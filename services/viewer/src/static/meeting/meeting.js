@@ -287,13 +287,13 @@
 
   // ── 저장(메모별 키, 설계 3.6) ──
 
-  function applyResult(id, r, fromOtherTab) {
+  function applyResult(id, r) {
     if (r.removed) {
       delete state.memos[id];
       delete state.lastWritten[id];
       return;
     }
-    if (fromOtherTab && core.validateMemo(r.display) !== null) {
+    if (core.validateMemo(r.display) !== null) {
       delete state.memos[id];
       delete state.lastWritten[id];
       return;
@@ -305,7 +305,12 @@
 
   function persist(memo) {
     try {
-      applyResult(memo.id, core.writeMemo(storage, memoPrefix + memo.id, memo, state.lastWritten[memo.id] || null));
+      var r = core.writeMemo(storage, memoPrefix + memo.id, memo, state.lastWritten[memo.id] || null);
+      applyResult(memo.id, r);
+      if (!r.written && !r.removed) {
+        setStatus('다른 탭이나 가져온 파일의 더 최신 내용이 있어 저장하지 않았습니다', true);
+        if (ui.cards[memo.id] && state.memos[memo.id]) fillCard(ui.cards[memo.id], state.memos[memo.id]);
+      }
     } catch (e) {
       state.memos[memo.id] = memo;
       setStatus('메모를 저장하지 못했습니다(저장 공간 부족 등). 화면에만 남아 있습니다.', true);
@@ -353,7 +358,7 @@
     if (!fields || !base) return;
     delete state.drafts[id];
     if (state.conflicts[id] === 'changed') delete state.conflicts[id];
-    persist(Object.assign(core.stripRuntime(base), sanitizeFields(fields, base), { updated_at: core.nowIso() }));
+    persist(Object.assign(core.stripRuntime(base), sanitizeFields(fields, base), { updated_at: core.nextUpdatedAt(base) }));
     refresh({ keepCard: id });
   }
 
@@ -373,7 +378,7 @@
     if (conflict === 'deleted' && m && m.deleted_at && window.confirm('다른 탭에서 지운 메모입니다. 다시 살릴까요?')) {
       var revived = core.stripRuntime(m);
       delete revived.deleted_at;
-      revived.updated_at = core.nowIso();
+      revived.updated_at = core.nextUpdatedAt(m);
       persist(revived);
     }
     refresh();
@@ -387,7 +392,7 @@
     delete state.drafts[id];
     delete state.conflicts[id];
     var now = core.nowIso();
-    persist(Object.assign(core.stripRuntime(m), { deleted_at: now, updated_at: now }));
+    persist(Object.assign(core.stripRuntime(m), { deleted_at: now, updated_at: core.nextUpdatedAt(m, now) }));
     refresh();
   }
 
@@ -396,7 +401,7 @@
     var editing = isEditing(id);
     var fields = state.drafts[id] || (editing && ui.cards[id] ? readCardFields(ui.cards[id]) : null);
     var r = core.reconcileMemo(storage, memoPrefix + id, state.lastWritten[id] || null);
-    applyResult(id, r, true);
+    applyResult(id, r);
     if (r.removed && editing && before) {
       clearTimeout(state.timers[id]);
       delete state.timers[id];

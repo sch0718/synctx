@@ -16,14 +16,22 @@
   var ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
   var WS_RE = /\s/;
   var MD_MARKER = 'synctx-' + 'memo-data';
-  var MD_OPEN = '<!--';
+  var MD_OPEN = '<!' + '--';
   var MD_CLOSE = '-->';
-  var EMBED_OPEN = '<script id="' + EMBED_SCRIPT_ID + '">';
+  var EMBED_OPEN = '<' + 'script id="' + EMBED_SCRIPT_ID + '">';
   var SCRIPT_CLOSE = '</' + 'script>';
   var EMBED_VAR = 'window.MEETING_EMBED';
 
   function nowIso() {
     return new Date().toISOString();
+  }
+
+  // 저장값이 미래 시각(시계가 빠른 PC에서 가져온 값)이어도 내 저장이 이기도록 base보다 1ms 늦게 잡는다
+  function nextUpdatedAt(base, now) {
+    var nowMs = timeOf(now || nowIso());
+    var baseMs = base && typeof base.updated_at === 'string' ? Date.parse(base.updated_at) : NaN;
+    var ms = isNaN(baseMs) ? nowMs : Math.max(nowMs, baseMs + 1);
+    return new Date(ms).toISOString();
   }
 
   function newId() {
@@ -132,7 +140,7 @@
 
   // 사람이 읽는 부분에 HTML 주석 구분자가 들어가면 데이터 주석과 섞이고 렌더링에서 글이 숨는다
   function readable(value) {
-    return String(value == null ? '' : value).replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;');
+    return String(value == null ? '' : value).replace(/<!-{2}/g, '&lt;!--').replace(/-{2}>/g, '--&gt;');
   }
 
   function oneLine(value) {
@@ -183,7 +191,7 @@
     } else {
       out.push('없음');
     }
-    out.push('', '<!-- ' + 'synctx-' + 'memo-data ' + encodeForScript(payload) + ' -->', '');
+    out.push('', '<!' + '-- ' + 'synctx-' + 'memo-data ' + encodeForScript(payload) + ' -->', '');
     return out.join('\n');
   }
 
@@ -307,7 +315,7 @@
         if (opts.restoreDeleted) {
           var revived = stripRuntime(inc);
           delete revived.deleted_at;
-          revived.updated_at = now;
+          revived.updated_at = nextUpdatedAt(cur, now);
           result.memos[index[inc.id]] = revived;
           result.restored.push(revived);
         } else {
@@ -412,6 +420,7 @@
     KINDS: KINDS,
     EMBED_SCRIPT_ID: EMBED_SCRIPT_ID,
     nowIso: nowIso,
+    nextUpdatedAt: nextUpdatedAt,
     newId: newId,
     compareTime: compareTime,
     stripRuntime: stripRuntime,
