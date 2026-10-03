@@ -14,7 +14,6 @@
   var DUE_RE = /^\d{4}-\d{2}-\d{2}$/;
   var ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
   var WS_RE = /\s/;
-  var EMBED_ASSIGN_RE = /^\s*=\s*/;
   var MD_MARKER = 'synctx-' + 'memo-data';
   var MD_OPEN = '<!--';
   var MD_CLOSE = '-->';
@@ -226,24 +225,39 @@
     return null;
   }
 
-  function findEmbedData(text) {
-    var lastClose = text.lastIndexOf(SCRIPT_CLOSE);
-    var idx = text.lastIndexOf(EMBED_OPEN);
+  function allIndexes(text, needle) {
+    var found = [];
+    var idx = text.indexOf(needle);
     while (idx !== -1) {
-      var from = idx + EMBED_OPEN.length;
-      if (lastClose >= from) {
-        var content = text.slice(from, text.indexOf(SCRIPT_CLOSE, from)).trim();
-        if (content.slice(0, EMBED_VAR.length) === EMBED_VAR) {
-          var rest = content.slice(EMBED_VAR.length);
-          var assign = EMBED_ASSIGN_RE.exec(rest);
-          if (assign) {
-            var data = rest.slice(assign[0].length);
-            if (data.charAt(data.length - 1) === ';') data = data.slice(0, -1);
-            return data.trim();
-          }
-        }
-      }
-      idx = idx === 0 ? -1 : text.lastIndexOf(EMBED_OPEN, idx - 1);
+      found.push(idx);
+      idx = text.indexOf(needle, idx + needle.length);
+    }
+    return found;
+  }
+
+  function skipSpaces(text, pos) {
+    while (pos < text.length && WS_RE.test(text.charAt(pos))) pos++;
+    return pos;
+  }
+
+  // 여는 태그를 뒤에서부터 보며 투 포인터로 각 태그 뒤의 첫 닫는 태그를 찾는다
+  function findEmbedData(text) {
+    var opens = allIndexes(text, EMBED_OPEN);
+    var closes = allIndexes(text, SCRIPT_CLOSE);
+    var j = closes.length;
+    for (var i = opens.length - 1; i >= 0; i--) {
+      var from = opens[i] + EMBED_OPEN.length;
+      while (j > 0 && closes[j - 1] >= from) j--;
+      if (j === closes.length) continue;
+      var close = closes[j];
+      var pos = skipSpaces(text, from);
+      if (text.substr(pos, EMBED_VAR.length) !== EMBED_VAR) continue;
+      pos = skipSpaces(text, pos + EMBED_VAR.length);
+      if (text.charAt(pos) !== '=') continue;
+      pos = skipSpaces(text, pos + 1);
+      var data = text.slice(pos, close).trim();
+      if (data.charAt(data.length - 1) === ';') data = data.slice(0, -1);
+      return data.trim();
     }
     return null;
   }

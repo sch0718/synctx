@@ -335,3 +335,17 @@ test('toMarkdown: 회의 일시 줄도 주석 구분자를 escape하고 왕복�
   assert.ok(md.includes('- 회의 일시: x --&gt; y &lt;!-- z'));
   assert.deepEqual(core.parseImport(md).memos.map(m => m.id), ['m_abcdef1234']);
 });
+
+test('parseImport: 여는 embed 태그가 매우 많고 닫는 태그가 하나뿐이어도 선형 시간에 끝난다', () => {
+  const open = '<script id="' + core.EMBED_SCRIPT_ID + '">';
+  const { result, ms } = elapsedMs(() => core.parseImport(open.repeat(30000) + '</' + 'script>'));
+  assert.ok(result.error);
+  assert.ok(ms < 200, 'took ' + ms + 'ms');
+});
+
+test('parseImport: 태그마다 window.MEETING_EMBED가 붙어 있어도(대입 없음) 선형 시간에 끝난다', () => {
+  const open = '<script id="' + core.EMBED_SCRIPT_ID + '">window.MEETING_EMBED ';
+  const { result, ms } = elapsedMs(() => core.parseImport(open.repeat(30000) + '</' + 'script>'));
+  assert.ok(result.error);
+  assert.ok(ms < 200, 'took ' + ms + 'ms');
+});
