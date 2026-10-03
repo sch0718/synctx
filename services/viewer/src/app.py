@@ -1034,6 +1034,9 @@ def view_repo(repo_id: str, ref: str | None = None):
     return HTMLResponse(content=html)
 
 
+_encode_for_script = meeting_mode.encode_for_script
+
+
 def _sanitize_html(html_str: str) -> str:
     """사용자 생성 HTML에서 위험한 태그를 제거."""
     import re
@@ -1147,7 +1150,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             theme_options=theme_options,
             toolbar_buttons=toolbar_buttons,
             html_body=rendered.get("html", ""),
-            raw_markdown_json=json.dumps({"markdown": content}),
+            raw_markdown_json=_encode_for_script({"markdown": content}),
             mermaid_scripts=mermaid_scripts,
             ref_param_first=ref_param_first,
             meeting_head=meeting_head,
@@ -1194,13 +1197,6 @@ def meeting_export(repo_id: str, path: str, theme: str = "github-light"):
     return HTMLResponse(content=document)
 
 
-@app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
-def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
-    if repo_id in RESERVED_PATHS:
-        raise HTTPException(status_code=404, detail="Not found")
-    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
-
-
 # ── Kanban Board ──
 
 KANBAN_TEMPLATE = """<!DOCTYPE html>
@@ -1210,15 +1206,15 @@ KANBAN_TEMPLATE = """<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scrum Board - {version}</title>
     <style>
-        body { font-family: sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }
-        .board { display: flex; gap: 20px; overflow-x: auto; padding-bottom: 20px; }
-        .column { background: #e9ecef; border-radius: 6px; width: 300px; min-width: 300px; padding: 10px; }
-        .column h3 { margin-top: 0; font-size: 16px; color: #333; padding-bottom: 10px; border-bottom: 2px solid #ccc; }
-        .card { background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 10px; cursor: pointer; }
-        .card:hover { box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-        .card-title { font-weight: bold; margin-bottom: 8px; font-size: 14px; }
-        .card-meta { font-size: 12px; color: #666; }
-        .badge { display: inline-block; padding: 2px 6px; border-radius: 12px; font-size: 11px; background: #007bff; color: white; }
+        body {{ font-family: sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }}
+        .board {{ display: flex; gap: 20px; overflow-x: auto; padding-bottom: 20px; }}
+        .column {{ background: #e9ecef; border-radius: 6px; width: 300px; min-width: 300px; padding: 10px; }}
+        .column h3 {{ margin-top: 0; font-size: 16px; color: #333; padding-bottom: 10px; border-bottom: 2px solid #ccc; }}
+        .card {{ background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 10px; cursor: pointer; }}
+        .card:hover {{ box-shadow: 0 2px 5px rgba(0,0,0,0.2); }}
+        .card-title {{ font-weight: bold; margin-bottom: 8px; font-size: 14px; }}
+        .card-meta {{ font-size: 12px; color: #666; }}
+        .badge {{ display: inline-block; padding: 2px 6px; border-radius: 12px; font-size: 11px; background: #007bff; color: white; }}
     </style>
 </head>
 <body>
@@ -1260,15 +1256,20 @@ def render_board(repo_id: str, version: str):
                         })
 
         import html
+        from urllib.parse import quote
+        safe_version = html.escape(version)
+        safe_repo_id = html.escape(repo_id)
+        url_repo_id = html.escape(quote(repo_id, safe=""))
         columns_html = ""
         for col_name, cards in columns.items():
             cards_html = ""
             for card in cards:
                 safe_title = html.escape(card['title'])
                 safe_path = html.escape(card['path'])
+                url_path = html.escape(quote(card['path']))
                 safe_priority = html.escape(card['priority'])
                 cards_html += f"""
-                <div class="card" onclick="window.location.href='/api/repos/{repo_id}/render?path={safe_path}'">
+                <div class="card" onclick="window.location.href='{VIEW_PREFIX}/api/repos/{url_repo_id}/render?path={url_path}'">
                     <div class="card-title">{safe_title}</div>
                     <div class="card-meta">
                         <span class="badge">{safe_priority}</span>
@@ -1283,7 +1284,15 @@ def render_board(repo_id: str, version: str):
             </div>
             """
 
-        html = KANBAN_TEMPLATE.format(version=version, repo_id=repo_id, columns_html=columns_html)
+        html = KANBAN_TEMPLATE.format(version=safe_version, repo_id=safe_repo_id, columns_html=columns_html)
         return HTMLResponse(content=html)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# catch-all이므로 다른 모든 라우트 뒤에 등록해야 한다.
+@app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
+def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
+    if repo_id in RESERVED_PATHS:
+        raise HTTPException(status_code=404, detail="Not found")
+    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)

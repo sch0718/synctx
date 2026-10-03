@@ -50,9 +50,10 @@ test:
 		services/marp/tests/ \
 		services/sync/tests/ \
 		services/slides/tests/ \
+		services/viewer/tests/ \
+		services/cdn/tests/ \
 		scripts/tests/ \
 		-q
-	python -m pytest services/viewer/tests/ -q
 	node --test services/viewer/tests/js/memo-core.test.mjs
 
 # ──────────────────────────── Helm ────────────────────────────
