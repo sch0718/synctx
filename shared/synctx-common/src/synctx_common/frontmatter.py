@@ -110,7 +110,7 @@ def validate_meeting(front_matter: Dict[str, Any]) -> Tuple[Optional[MeetingFron
     meeting_id = raw.get("id")
     if meeting_id is None or (isinstance(meeting_id, str) and not meeting_id.strip()):
         errors.append("meeting.id가 없습니다")
-    elif not isinstance(meeting_id, str) or not _MEETING_ID_RE.match(meeting_id):
+    elif not isinstance(meeting_id, str) or not _MEETING_ID_RE.fullmatch(meeting_id):
         errors.append("meeting.id 형식이 올바르지 않습니다(영문·숫자·.·_·- 128자 이하)")
 
     title = raw.get("title")
@@ -128,7 +128,7 @@ def validate_meeting(front_matter: Dict[str, Any]) -> Tuple[Optional[MeetingFron
     channel = raw.get("channel")
     if channel is None or (isinstance(channel, str) and not channel.strip()):
         errors.append("meeting.channel이 없습니다")
-    elif not isinstance(channel, str) or not _CHANNEL_RE.match(channel):
+    elif not isinstance(channel, str) or not _CHANNEL_RE.fullmatch(channel):
         errors.append("meeting.channel 형식이 올바르지 않습니다(영문 소문자·숫자·_·- 64자 이하)")
 
     presenters = raw.get("presenters", [])

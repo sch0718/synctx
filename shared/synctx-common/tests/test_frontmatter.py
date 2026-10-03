@@ -199,6 +199,14 @@ class TestValidateMeeting:
         _, errors = validate_meeting(_fm(channel=_MISSING))
         assert "meeting.channel이 없습니다" in errors
 
+    def test_id_with_trailing_newline_rejected(self):
+        _, errors = validate_meeting(_fm(id="abc\n"))
+        assert any("meeting.id 형식" in e for e in errors)
+
+    def test_channel_with_trailing_newline_rejected(self):
+        _, errors = validate_meeting(_fm(channel="dx-team\n"))
+        assert any("channel 형식" in e for e in errors)
+
     def test_presenters_must_be_string_list(self):
         _, errors = validate_meeting(_fm(presenters=["sch0718", 3]))
         assert "presenters는 문자열 목록이어야 합니다" in errors
