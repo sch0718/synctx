@@ -126,3 +126,187 @@ test('stripRuntime: _로 시작하는 키 제외', () => {
   assert.equal('_loc' in m, false);
   assert.equal(m.id, 'm_abcdef1234');
 });
+
+const DOC = { repo_id: 'test-repo', meeting_id: 'dx-21', path: 'docs/m.md', title: 'DX 21번 검토' };
+
+function sampleMemos() {
+  return [
+    memo({ id: 'm_dec0001', kind: 'decision', text: '월 1회 보고로 확정', anchor: { start: 10, end: 20, quote: '백업 결과 보고' } }),
+    memo({ id: 'm_act0001', kind: 'action', text: '양식 | 초안\n작성', owner: '홍길동', due: '2026-10-15', anchor: { start: 30, end: 40, quote: '양식' } }),
+    memo({ id: 'm_not0001', kind: 'note', text: '참고 -->  주석 깨기 시도', anchor: { start: 5, end: 8, quote: '참고' } }),
+    memo({ id: 'm_gen0001', kind: 'note', text: '전체 의견', anchor: null }),
+    memo({ id: 'm_del0001', kind: 'note', text: '지운 메모', deleted_at: '2026-10-08T06:00:00.000Z', updated_at: '2026-10-08T06:00:00.000Z' }),
+  ];
+}
+
+test('exportPayload: 삭제 표시 제외, 런타임 키 제외', () => {
+  const memos = sampleMemos();
+  memos[0]._lost = true;
+  const p = core.exportPayload({ doc: DOC, memos }, '2026-10-08T07:00:00.000Z');
+  assert.equal(p.schema, 1);
+  assert.deepEqual(p.doc, DOC);
+  assert.equal(p.exported_at, '2026-10-08T07:00:00.000Z');
+  assert.equal(p.memos.some(m => m.id === 'm_del0001'), false);
+  assert.equal(p.memos.some(m => '_lost' in m), false);
+});
+
+test('serialize: created_at 순 정렬, 런타임 키 제외', () => {
+  const a = memo({ id: 'm_later01', created_at: '2026-10-08T06:00:00.000Z', _x: 1 });
+  const b = memo({ id: 'm_early01', created_at: '2026-10-08T04:00:00.000Z' });
+  const out = JSON.parse(core.serialize({ doc: DOC, memos: [a, b] }));
+  assert.deepEqual(out.memos.map(m => m.id), ['m_early01', 'm_later01']);
+  assert.equal('_x' in out.memos[1], false);
+});
+
+test('toMarkdown: 사람이 읽는 부분과 데이터 주석', () => {
+  const md = core.toMarkdown({ doc: DOC, memos: sampleMemos() }, {
+    exported_at: '2026-10-08T07:00:00.000Z', starts_at: '2026-10-08T14:00:00+09:00',
+    positions: { m_dec0001: 10, m_act0001: 30, m_not0001: 5 },
+  });
+  assert.ok(md.startsWith('# DX 21번 검토 — 회의 메모\n'));
+  assert.ok(md.includes('- 회의 일시: 2026-10-08T14:00:00+09:00'));
+  assert.ok(md.includes('## 결정사항\n\n1. 월 1회 보고로 확정 — 인용: "백업 결과 보고"'));
+  assert.ok(md.includes('| 할 일 | 담당자 | 기한 | 인용 |'));
+  assert.ok(md.includes('| 양식 ' + BACKSLASH + '| 초안<br>작성 | 홍길동 | 2026-10-15 | 양식 |'));
+  assert.ok(md.includes('## 전체 메모\n\n- 전체 의견'));
+  assert.equal(md.includes('지운 메모'), false);
+  const comments = md.match(/<!--/g);
+  assert.equal(comments.length, 1, '데이터 주석이 하나만 있어야 한다');
+  assert.equal(md.trimEnd().endsWith('-->'), true);
+});
+
+test('toMarkdown → parseImport 왕복', () => {
+  const md = core.toMarkdown({ doc: DOC, memos: sampleMemos() }, { exported_at: '2026-10-08T07:00:00.000Z' });
+  const r = core.parseImport(md);
+  assert.equal(r.error, undefined);
+  assert.deepEqual(r.doc, DOC);
+  assert.deepEqual(r.invalid, []);
+  const expected = core.exportPayload({ doc: DOC, memos: sampleMemos() }, 'x').memos;
+  assert.deepEqual(r.memos, expected);
+});
+
+test('parseImport: 메모 포함 HTML의 MEETING_EMBED', () => {
+  const payload = core.exportPayload({ doc: DOC, memos: sampleMemos() }, '2026-10-08T07:00:00.000Z');
+  const embed = { ...payload, readonly: true };
+  const html = '<!DOCTYPE html><html><body>'
+    + '<script>var decoy = "window.MEETING_EMBED = {}";</script>'
+    + '<script id="' + core.EMBED_SCRIPT_ID + '">window.MEETING_EMBED = ' + core.encodeForScript(embed) + ';</script>'
+    + '</body></html>';
+  const r = core.parseImport(html);
+  assert.equal(r.error, undefined);
+  assert.deepEqual(r.memos, payload.memos);
+});
+
+test('parseImport: 메모 내용의 가짜 데이터 주석은 무시하고 사람이 읽는 부분에서 escape한다', () => {
+  const fake = memo({ id: 'm_fake0001', text: '<!-- synctx-memo-data {} -->' });
+  const md = core.toMarkdown({ doc: DOC, memos: [fake] }, {});
+  assert.equal(md.match(/<!--/g).length, 1);
+  assert.ok(md.includes('&lt;!-- synctx-memo-data {} --&gt;'));
+  const r = core.parseImport(md);
+  assert.equal(r.error, undefined);
+  assert.equal(r.memos[0].text, fake.text);
+});
+
+test('parseImport: 데이터 주석이 여러 개면 마지막 것을 쓴다', () => {
+  const good = core.toMarkdown({ doc: DOC, memos: [memo()] }, {});
+  const r = core.parseImport('<!-- synctx-memo-data {} -->\n' + good);
+  assert.equal(r.error, undefined);
+  assert.equal(r.memos.length, 1);
+});
+
+test('parseImport: 악성 문자열 메모 왕복', () => {
+  const evil = memo({ id: 'm_evil0001', text: '</script><script>alert(1)</script> <!-- --> & ' + LS + PS });
+  const md = core.toMarkdown({ doc: DOC, memos: [evil] }, {});
+  assert.equal(core.parseImport(md).memos[0].text, evil.text);
+  const embedHtml = '<script id="' + core.EMBED_SCRIPT_ID + '">window.MEETING_EMBED = '
+    + core.encodeForScript(core.exportPayload({ doc: DOC, memos: [evil] }, 'x')) + ';</script>';
+  assert.equal(core.parseImport(embedHtml).memos[0].text, evil.text);
+});
+
+test('parseImport: 파일 전체 오류', () => {
+  assert.ok(core.parseImport('# 그냥 문서').error);
+  const wrap = (obj) => '<!-- synctx-memo-data ' + JSON.stringify(obj) + ' -->';
+  assert.ok(core.parseImport('<!-- synctx-memo-data {깨진 json} -->').error);
+  assert.match(core.parseImport(wrap({ schema: 2, doc: DOC, memos: [] })).error, /schema/);
+  assert.match(core.parseImport(wrap({ schema: 1, doc: DOC, memos: {} })).error, /memos/);
+  assert.match(core.parseImport(wrap({ schema: 1, doc: { repo_id: 'r' }, memos: [] })).error, /doc/);
+});
+
+test('parseImport: 메모 단위 오류는 invalid로 빠지고 나머지는 가져온다', () => {
+  const good = memo();
+  const bad = [
+    ['id', memo({ id: 'bad' })],
+    ['kind', memo({ id: 'm_kind0001', kind: 'todo' })],
+    ['text', memo({ id: 'm_text0001', text: 'x'.repeat(10001) })],
+    ['owner', memo({ id: 'm_ownr0001', owner: 'o'.repeat(201) })],
+    ['due', memo({ id: 'm_duee0001', due: '10/15' })],
+    ['created_at', memo({ id: 'm_crea0001', created_at: 'yesterday' })],
+    ['updated_at', memo({ id: 'm_updt0001', updated_at: '2026-10-08' })],
+    ['deleted_at', memo({ id: 'm_dele0001', deleted_at: 'never' })],
+    ['anchor', memo({ id: 'm_anch0001', anchor: { start: 5, end: 2, quote: 'x' } })],
+    ['anchor.quote', memo({ id: 'm_quot0001', anchor: { start: 0, end: 1001, quote: 'q'.repeat(1001) } })],
+  ];
+  const text = '<!-- synctx-memo-data ' + core.encodeForScript({ schema: 1, doc: DOC, memos: [good, ...bad.map(b => b[1])] }) + ' -->';
+  const r = core.parseImport(text);
+  assert.deepEqual(r.memos.map(m => m.id), [good.id]);
+  assert.deepEqual(r.invalid.map(i => i.reason), bad.map(b => b[0]));
+});
+
+test('길이 제한 경계값 왕복', () => {
+  const text = 'x'.repeat(2000);
+  const memos = [
+    memo({ id: 'm_lim00001', text: 't'.repeat(10000) }),
+    memo({ id: 'm_lim00002', kind: 'action', owner: 'o'.repeat(200) }),
+    memo({ id: 'm_lim00003', anchor: core.makeAnchor(text, 0, 1000) }),
+    memo({ id: 'm_lim00004', anchor: core.makeAnchor(text, 0, 1001) }),
+  ];
+  const r = core.parseImport(core.toMarkdown({ doc: DOC, memos }, {}));
+  assert.deepEqual(r.invalid, []);
+  assert.equal(r.memos.length, 4);
+  assert.equal(r.memos[3].anchor.quote.length, 1000);
+  assert.equal(r.memos[3].anchor.end, 1001);
+});
+
+test('merge: 추가·최신 우선·건너뜀', () => {
+  const cur = [memo({ id: 'm_same0001', text: '현재', updated_at: '2026-10-08T05:00:00.000Z' })];
+  const inc = [
+    memo({ id: 'm_same0001', text: '파일(최신)', updated_at: '2026-10-08T06:00:00.000Z' }),
+    memo({ id: 'm_new00001', text: '새 메모' }),
+  ];
+  const r = core.merge(cur, inc);
+  assert.deepEqual(r.added.map(m => m.id), ['m_new00001']);
+  assert.deepEqual(r.updated.map(m => m.id), ['m_same0001']);
+  assert.equal(r.memos.find(m => m.id === 'm_same0001').text, '파일(최신)');
+
+  const r2 = core.merge(cur, [memo({ id: 'm_same0001', text: '파일(오래됨)', updated_at: '2026-10-08T04:00:00.000Z' })]);
+  assert.deepEqual(r2.skipped.map(m => m.id), ['m_same0001']);
+  assert.equal(r2.memos[0].text, '현재');
+});
+
+test('merge: 삭제 표시가 더 최신이면 삭제 유지하고 deletedConflicts에 넣는다', () => {
+  const cur = [memo({ id: 'm_del00001', deleted_at: '2026-10-08T06:00:00.000Z', updated_at: '2026-10-08T06:00:00.000Z' })];
+  const inc = [memo({ id: 'm_del00001', text: '파일', updated_at: '2026-10-08T05:00:00.000Z' })];
+  const r = core.merge(cur, inc);
+  assert.deepEqual(r.deletedConflicts.map(m => m.id), ['m_del00001']);
+  assert.ok(r.memos[0].deleted_at);
+  assert.deepEqual(r.restored, []);
+});
+
+test('merge: restoreDeleted면 되살리고 updated_at을 지금 시각으로', () => {
+  const cur = [memo({ id: 'm_del00001', deleted_at: '2026-10-08T06:00:00.000Z', updated_at: '2026-10-08T06:00:00.000Z' })];
+  const inc = [memo({ id: 'm_del00001', text: '파일', updated_at: '2026-10-08T05:00:00.000Z' })];
+  const r = core.merge(cur, inc, { restoreDeleted: true, now: '2026-10-09T00:00:00.000Z' });
+  assert.deepEqual(r.restored.map(m => m.id), ['m_del00001']);
+  assert.equal('deleted_at' in r.memos[0], false);
+  assert.equal(r.memos[0].text, '파일');
+  assert.equal(r.memos[0].updated_at, '2026-10-09T00:00:00.000Z');
+});
+
+test('merge: 삭제 이후에 편집된 메모(파일 쪽이 더 최신)는 되살린다', () => {
+  const cur = [memo({ id: 'm_del00001', deleted_at: '2026-10-08T06:00:00.000Z', updated_at: '2026-10-08T06:00:00.000Z' })];
+  const inc = [memo({ id: 'm_del00001', text: '삭제 후 편집', updated_at: '2026-10-08T07:00:00.000Z' })];
+  const r = core.merge(cur, inc);
+  assert.deepEqual(r.updated.map(m => m.id), ['m_del00001']);
+  assert.deepEqual(r.deletedConflicts, []);
+  assert.equal(r.memos[0].deleted_at, undefined);
+});
