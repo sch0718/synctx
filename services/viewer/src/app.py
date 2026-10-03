@@ -381,7 +381,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
         .viewer-sidebar .path-info {{ font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; word-break: break-all; }}
         .viewer-sidebar .path-info a {{ color: var(--primary); text-decoration: none; }}
         .viewer-sidebar hr {{ border: none; border-top: 1px solid var(--border-color); margin: 0 0 16px; }}
-        .viewer-sidebar .toc-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-disabled); margin-bottom: 8px; }}
+        .viewer-sidebar .toc-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 8px; }}
         .viewer-sidebar .toc ul {{ list-style: none; padding-left: 14px; margin: 0; }}
         .viewer-sidebar .toc > ul {{ padding-left: 0; }}
         .viewer-sidebar .toc li {{ margin: 3px 0; }}
@@ -404,7 +404,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
         }}
         .viewer-toolbar .btn {{
             padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
-            background: var(--primary); color: white; text-decoration: none; font-size: 13px;
+            background: var(--primary); color: var(--on-primary); text-decoration: none; font-size: 13px;
         }}
         .viewer-toolbar .btn:hover {{ background: var(--primary-dark); }}
         .viewer-toolbar .btn-secondary {{ background: #6c757d; }}
@@ -568,7 +568,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             border-right: 1px solid var(--border-color); padding: 24px 16px; overflow-y: auto;
             position: fixed; top: var(--header-height); bottom: 0; left: 0;
         }}
-        .sidebar-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-disabled); margin-bottom: 12px; padding: 0 8px; }}
+        .sidebar-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 12px; padding: 0 8px; }}
 
         .repo-select, .branch-select {{
             width: 100%; padding: 10px 12px; border: 1px solid var(--border-color);
@@ -645,7 +645,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         .empty-state svg {{ width: 64px; height: 64px; color: var(--text-disabled); margin-bottom: 16px; }}
         .empty-state p {{ font-size: 14px; }}
 
-        .sidebar-hint {{ padding: 20px 8px; font-size: 13px; color: var(--text-disabled); text-align: center; }}
+        .sidebar-hint {{ padding: 20px 8px; font-size: 13px; color: var(--text-secondary); text-align: center; }}
 
         @media (max-width: 768px) {{
             .sidebar {{ display: none; }}
@@ -771,7 +771,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                             '<span class="name">' + f.name + '</span></div>';
                     }}
                 }}
-                container.innerHTML = html || '<div style="padding:8px;color:var(--text-disabled);font-size:13px;">Empty</div>';
+                container.innerHTML = html || '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty</div>';
             }} catch(err) {{
                 container.innerHTML = '<div style="padding:8px;color:#E01E1F;">Failed to load</div>';
             }}
@@ -891,7 +891,7 @@ def _build_tree_html(repo_id, path, ref=None):
             <span class="name">{e.name}</span>
         </div>'''
     if not html:
-        html = '<div style="padding:8px;color:var(--text-disabled);font-size:13px;">Empty repository</div>'
+        html = '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty repository</div>'
     return html
 
 

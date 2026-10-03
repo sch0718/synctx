@@ -661,6 +661,7 @@ THEME_VARS_CSS = """
     --primary: #0969da; --primary-light: #4493f8; --primary-lighter: #ddf4ff; --primary-dark: #0550ae;
     --bg-default: #ffffff; --bg-neutral: #f6f8fa; --bg-card: #ffffff;
     --text-primary: #1f2328; --text-secondary: #57606a; --text-disabled: #8b949e;
+    --on-primary: #ffffff;
     --border-color: rgba(208,215,222,0.5);
     --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
     --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
@@ -669,22 +670,25 @@ THEME_VARS_CSS = """
     --primary: #58a6ff; --primary-light: #79c0ff; --primary-lighter: #0d1117; --primary-dark: #388bfd;
     --bg-default: #0d1117; --bg-neutral: #161b22; --bg-card: #161b22;
     --text-primary: #e6edf3; --text-secondary: #8b949e; --text-disabled: #484f58;
+    --on-primary: #0d1117;
     --border-color: rgba(48,54,61,0.6);
     --shadow-card: 0 0 2px 0 rgba(0,0,0,0.4), 0 12px 24px -4px rgba(0,0,0,0.3);
     --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
 }
 [data-theme="cayman"] {
-    --primary: #159957; --primary-light: #1e9b52; --primary-lighter: #e6f9ef; --primary-dark: #0e7a42;
+    --primary: #128049; --primary-light: #1e9b52; --primary-lighter: #e6f9ef; --primary-dark: #0e7a42;
     --bg-default: #ffffff; --bg-neutral: #f3f6fa; --bg-card: #ffffff;
-    --text-primary: #606c71; --text-secondary: #819198; --text-disabled: #9aa6ac;
+    --text-primary: #606c71; --text-secondary: #627178; --text-disabled: #9aa6ac;
+    --on-primary: #ffffff;
     --border-color: rgba(220,230,240,0.5);
     --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
     --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
 }
 [data-theme="minimal"] {
-    --primary: #4183c4; --primary-light: #6ba4d9; --primary-lighter: #e8f0fa; --primary-dark: #2e6da4;
+    --primary: #3774b0; --primary-light: #6ba4d9; --primary-lighter: #e8f0fa; --primary-dark: #2e6da4;
     --bg-default: #ffffff; --bg-neutral: #f8f8f8; --bg-card: #ffffff;
-    --text-primary: #333333; --text-secondary: #777777; --text-disabled: #999999;
+    --text-primary: #333333; --text-secondary: #6f6f6f; --text-disabled: #999999;
+    --on-primary: #ffffff;
     --border-color: rgba(222,222,222,0.5);
     --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
     --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
@@ -693,22 +697,25 @@ THEME_VARS_CSS = """
     --primary: #b5e853; --primary-light: #c4ee7e; --primary-lighter: #1a2a1a; --primary-dark: #8fc43e;
     --bg-default: #151515; --bg-neutral: #1a1a1a; --bg-card: #1a1a1a;
     --text-primary: #b0b0b0; --text-secondary: #888888; --text-disabled: #666666;
+    --on-primary: #151515;
     --border-color: rgba(51,51,51,0.6);
     --shadow-card: 0 0 2px 0 rgba(0,0,0,0.4), 0 12px 24px -4px rgba(0,0,0,0.3);
     --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
 }
 [data-theme="modernist"] {
-    --primary: #4276b6; --primary-light: #6694c8; --primary-lighter: #e8f0fa; --primary-dark: #325fa0;
+    --primary: #3d6ca7; --primary-light: #6694c8; --primary-lighter: #e8f0fa; --primary-dark: #325fa0;
     --bg-default: #f1f1f1; --bg-neutral: #e8f0fa; --bg-card: #ffffff;
-    --text-primary: #474747; --text-secondary: #7a8a96; --text-disabled: #9aa6ac;
+    --text-primary: #474747; --text-secondary: #5e6c77; --text-disabled: #9aa6ac;
+    --on-primary: #ffffff;
     --border-color: rgba(197,209,219,0.5);
     --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
     --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
 }
 [data-theme="corporate"] {
-    --primary: #E01E1F; --primary-light: #E84A4B; --primary-lighter: #FDE8E8; --primary-dark: #B01819;
+    --primary: #D91D1E; --primary-light: #E84A4B; --primary-lighter: #FDE8E8; --primary-dark: #B01819;
     --bg-default: #ffffff; --bg-neutral: #F4F6F8; --bg-card: #ffffff;
     --text-primary: #1C252E; --text-secondary: #637381; --text-disabled: #919EAB;
+    --on-primary: #ffffff;
     --border-color: rgba(145,158,171,0.2);
     --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);
     --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
