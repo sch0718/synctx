@@ -317,10 +317,13 @@
       if (!r.written && !r.removed) {
         setStatus('다른 탭이나 가져온 파일의 더 최신 내용이 있어 저장하지 않았습니다', true);
         if (ui.cards[memo.id] && state.memos[memo.id]) fillCard(ui.cards[memo.id], state.memos[memo.id]);
+        return 'stale';
       }
+      return 'saved';
     } catch (e) {
       state.memos[memo.id] = memo;
       setStatus('메모를 저장하지 못했습니다(저장 공간 부족 등). 화면에만 남아 있습니다.', true);
+      return 'failed';
     }
   }
 
@@ -841,10 +844,14 @@
       var restore = dry.deletedConflicts.length > 0 &&
         window.confirm('이 브라우저에서 삭제한 메모 ' + dry.deletedConflicts.length + '건이 파일에 있습니다. 복원할까요?');
       var res = core.merge(current, parsed.memos, { restoreDeleted: restore });
-      [].concat(res.added, res.updated, res.restored).forEach(persist);
+      var unsaved = { failed: 0, stale: 0 };
+      [].concat(res.added, res.updated, res.restored).forEach(function (m) {
+        var outcome = persist(m);
+        if (outcome in unsaved) unsaved[outcome] += 1;
+      });
       refresh();
-      setStatus('추가 ' + res.added.length + ', 갱신 ' + res.updated.length + ', 복원 ' + res.restored.length +
-        ', 건너뜀 ' + res.skipped.length + ', 형식 오류로 제외 ' + parsed.invalid.length);
+      var summary = core.importSummary(res, parsed.invalid.length, unsaved);
+      setStatus(summary.text, summary.isError);
     }).catch(function (err) {
       setStatus('파일을 읽지 못했습니다: ' + err.message, true);
     });
