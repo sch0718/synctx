@@ -3,6 +3,7 @@ import json
 import html as html_lib
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, Query
 from fastapi.responses import HTMLResponse, Response
@@ -14,6 +15,8 @@ from synctx_common.git_manager import GitRepoManager
 from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 from renderer import render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
+
+import meeting as meeting_mode
 
 __version__ = "0.1.0"
 configure_logging(service_name="viewer")
@@ -470,6 +473,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
             .viewer-toolbar {{ padding: 10px 15px; }}
         }}
     </style>
+    {meeting_head}
 </head>
 <body>
     <div class="viewer-sidebar">
@@ -492,6 +496,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
                 {toolbar_buttons}
             </div>
         </div>
+        {meeting_notice}
         <article class="markdown-body">{html_body}</article>
     </div>
 
@@ -566,6 +571,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
             }} catch (e) {{ alert(e.message); }}
         }}
     </script>
+    {meeting_body}
 </body>
 </html>"""
 
@@ -1107,6 +1113,22 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
         if not toolbar_buttons:
             toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}{ref_param}">다운로드</a>'
+        if is_md:
+            meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
+        else:
+            meeting_ctx = meeting_mode.MeetingContext(False, None, None)
+        meeting_active = mode == "meeting" and meeting_ctx.enabled
+        meeting_head = meeting_body = meeting_notice = ""
+        if meeting_active:
+            meeting_cfg = meeting_mode.build_config(
+                repo_id, path, meeting_ctx.meeting, readonly=False,
+                export_url=meeting_mode.export_url(VIEW_PREFIX, repo_id, path),
+            )
+            meeting_head, meeting_body = meeting_mode.render_assets(VIEW_PREFIX, meeting_cfg)
+        elif meeting_ctx.enabled:
+            toolbar_buttons += f'<a class="btn btn-secondary" href="{VIEW_PREFIX}/{repo_id}/{quote(path)}?mode=meeting">회의 모드</a>'
+        elif mode == "meeting":
+            meeting_notice = meeting_mode.render_notice(meeting_ctx)
 
         html = VIEWER_TEMPLATE.format(
             title=html_lib.escape(rendered.get("title", "Document")),
@@ -1126,6 +1148,9 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             raw_markdown_json=json.dumps({"markdown": content}),
             mermaid_scripts=mermaid_scripts,
             ref_param_first=ref_param_first,
+            meeting_head=meeting_head,
+            meeting_notice=meeting_notice,
+            meeting_body=meeting_body,
         )
         return HTMLResponse(content=html)
     except HTTPException:
@@ -1135,15 +1160,15 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 
 
 @app.get("/api/repos/{repo_id}/render", dependencies=[Depends(verify_viewer_access)])
-def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
-    return _render_file_response(repo_id, path, theme, ref=ref)
+def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
+    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
 
 
 @app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
-def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
+def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
-    return _render_file_response(repo_id, path, theme, ref=ref)
+    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
 
 
 # ── Kanban Board ──
