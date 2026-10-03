@@ -21,6 +21,7 @@ mark.meeting-hl--action { background: rgba(255, 170, 80, 0.3); box-shadow: inset
 mark.meeting-hl--flash { outline: 2px solid var(--primary, #0969da); }
 [data-theme="hacker"] mark.meeting-hl { color: #ffffff; }
 [data-theme="cayman"] mark.meeting-hl--action { background: rgba(255, 170, 80, 0.25); }
+mark.meeting-hl mark.meeting-hl { background: transparent; }
 .meeting-toggle {
   position: fixed; right: 20px; bottom: 20px; z-index: 999; padding: 8px 16px;
   border: none; border-radius: 999px; background: #0b5cad; color: #ffffff; font-size: 14px;

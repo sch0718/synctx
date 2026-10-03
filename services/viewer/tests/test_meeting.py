@@ -256,17 +256,33 @@ class TestHighlightContrast:
         background = self._rgb(doc_bg)[0]
         return text, background
 
-    def _mark_style(self, css, theme, kind):
+    def _mark_style(self, css, theme, kind, nested=False):
         selectors = ["mark.meeting-hl"] + ([f"mark.meeting-hl--{kind}"] if kind != "note" else [])
+        passes = [{sel for sel in selectors}, {f'[data-theme="{theme}"] {sel}' for sel in selectors}]
+        if nested:
+            passes.append({"mark.meeting-hl mark.meeting-hl"})
         style = {}
-        for prefix in ("", f'[data-theme="{theme}"] '):
+        for wanted in passes:
             for rule in re.finditer(r"^(\S[^{}]*)\{([^}]*)\}", css, re.M):
-                if rule.group(1).strip() in {prefix + sel for sel in selectors}:
+                if rule.group(1).strip() in wanted:
                     for prop in ("background", "color"):
                         value = self._decl(rule.group(2), prop)
                         if value:
                             style[prop] = value
         return style
+
+    def _composite(self, style, behind):
+        background = style["background"]
+        if background == "transparent":
+            return behind
+        mark_rgb, alpha = self._rgb(background)
+        return tuple(round(m * alpha + b * (1 - alpha)) for m, b in zip(mark_rgb, behind))
+
+    def _text(self, styles, text):
+        for style in styles:
+            if style.get("color", "inherit") != "inherit":
+                text = self._rgb(style["color"])[0]
+        return text
 
     @pytest.mark.parametrize("kind", ["note", "decision", "action"])
     def test_all_themes_meet_aa(self, kind):
@@ -277,10 +293,24 @@ class TestHighlightContrast:
         for theme, theme_css in THEME_CSS.items():
             text, page = self._theme_colors(theme_css)
             style = self._mark_style(css, theme, kind)
-            mark_rgb, alpha = self._rgb(style["background"])
-            behind = tuple(round(m * alpha + p * (1 - alpha)) for m, p in zip(mark_rgb, page))
-            fg = text if style.get("color", "inherit") == "inherit" else self._rgb(style["color"])[0]
-            ratio = self._contrast(fg, behind)
+            ratio = self._contrast(self._text([style], text), self._composite(style, page))
+            if ratio < 4.5:
+                failures.append(f"{theme}: {ratio:.2f}")
+        assert not failures, failures
+
+    @pytest.mark.parametrize("outer", ["note", "decision", "action"])
+    @pytest.mark.parametrize("inner", ["note", "decision", "action"])
+    def test_overlapping_memos_do_not_stack_backgrounds(self, outer, inner):
+        import meeting
+        from renderer import THEME_CSS
+        css = (meeting.STATIC_DIR / "meeting.css").read_text(encoding="utf-8")
+        failures = []
+        for theme, theme_css in THEME_CSS.items():
+            text, page = self._theme_colors(theme_css)
+            outer_style = self._mark_style(css, theme, outer)
+            inner_style = self._mark_style(css, theme, inner, nested=True)
+            behind = self._composite(inner_style, self._composite(outer_style, page))
+            ratio = self._contrast(self._text([outer_style, inner_style], text), behind)
             if ratio < 4.5:
                 failures.append(f"{theme}: {ratio:.2f}")
         assert not failures, failures
@@ -353,6 +383,12 @@ class TestMeetingExport:
         assert 'src="http' not in html and "href=\"http" not in html
         assert "본문 스크립트" not in article(html)
 
+    def test_export_carries_theme_attribute(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=RICH_BODY)
+        resp = client.get("/api/repos/test-repo/meeting-export", params={"path": "docs/m.md", "theme": "hacker"})
+        assert resp.status_code == 200
+        assert '<html lang="ko" data-theme="hacker">' in resp.text
+
     def test_csp_meta_in_head(self, client, manager):
         manager.read_file_text.return_value = meeting_doc(body=RICH_BODY)
         html = self._get(client).text
@@ -405,6 +441,13 @@ class TestRenderDownloadHtml:
         html = render_download_html("# 제목\n\n```mermaid\nflowchart LR\n A-->B\n```\n", html_filter=lambda s: s.replace("제목", "필터됨"))
         assert "필터됨" in html
         assert "<script>" in html
+
+    def test_html_carries_known_theme_only(self):
+        from renderer import render_download_html
+        assert '<html lang="ko" data-theme="hacker">' in render_download_html("본문", theme="hacker")
+        unknown = render_download_html("본문", theme='"><script>x()</script>')
+        assert '<html lang="ko" data-theme="github-light">' in unknown
+        assert "x()" not in unknown
 
     def test_title_escaped(self):
         from renderer import render_download_html

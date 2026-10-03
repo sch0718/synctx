@@ -209,7 +209,7 @@ def render_markdown(md_text):
 
 
 DOWNLOAD_TEMPLATE = """<!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-theme="{theme}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -691,7 +691,9 @@ def render_download_html(md_text, theme="github-light", html_filter=None):
     """다운로드용 자체 완결형 HTML을 생성한다. html_filter는 렌더링한 본문 HTML에만 적용한다."""
     result = render_markdown(md_text)
     body_html = html_filter(result["html"]) if html_filter else result["html"]
-    css = THEME_CSS.get(theme, GITHUB_LIGHT_CSS)
+    if theme not in THEME_CSS:
+        theme = "github-light"
+    css = THEME_CSS[theme]
     hljs_theme = THEME_HLJS.get(theme, "github")
     mermaid_theme = THEME_MERMAID.get(theme, "default")
 
@@ -707,6 +709,7 @@ def render_download_html(md_text, theme="github-light", html_filter=None):
         mermaid_block = ""
 
     return DOWNLOAD_TEMPLATE.format(
+        theme=theme,
         title=html_lib.escape(result["title"]),
         css=css,
         hljs_css=_get_hljs_css(hljs_theme),
