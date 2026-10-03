@@ -187,3 +187,17 @@ class TestRenderModes:
         for ch in ("<", ">", "&", chr(0x2028)):
             assert ch not in raw
         assert json.loads(raw)["meeting"]["title"] == title
+
+
+class TestStaticAssets:
+    @pytest.mark.parametrize("name", ["meeting.css", "memo-core.js", "meeting.js"])
+    def test_served(self, client, name):
+        resp = client.get(f"/static/meeting/{name}")
+        assert resp.status_code == 200
+
+    def test_meeting_js_has_no_literal_markers(self):
+        import meeting
+        source = (meeting.STATIC_DIR / "meeting.js").read_text(encoding="utf-8")
+        assert "synctx-meeting-embed" not in source
+        assert "</script" not in source.lower()
+        assert BACKSLASH + "u" not in source
