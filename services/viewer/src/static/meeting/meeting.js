@@ -133,10 +133,15 @@
     return { start: Math.min(a, b), end: Math.max(a, b) };
   }
 
-  function charPoint(index, offset) {
-    for (var i = 0; i < index.entries.length; i++) {
+  function lastVisibleChar(index, off) {
+    for (var i = index.entries.length - 1; i >= 0; i--) {
       var e = index.entries[i];
-      if (offset >= e.start && offset < e.end) return { node: e.node, offset: offset - e.start };
+      if (e.start >= off.end || e.end <= off.start) continue;
+      var parent = e.node.parentNode;
+      if (!parent || BLOCKED_PARENTS[parent.nodeName]) continue;
+      for (var pos = Math.min(off.end, e.end) - 1; pos >= Math.max(off.start, e.start); pos--) {
+        if (/\S/.test(index.text.charAt(pos))) return { node: e.node, offset: pos - e.start };
+      }
     }
     return null;
   }
@@ -176,7 +181,7 @@
         class: 'meeting-hl meeting-hl--' + memo.kind,
         'data-memo-id': memo.id,
         title: KIND_LABEL[memo.kind] + ' 메모',
-        onclick: function () { openPanel('memos'); focusCard(memo.id); }
+        onclick: function (e) { e.stopPropagation(); openPanel('memos'); focusCard(memo.id); }
       });
       target.parentNode.insertBefore(mark, target);
       mark.appendChild(target);
@@ -243,13 +248,16 @@
     var index = buildIndex();
     var off = rangeToOffsets(index, range);
     if (!off || off.end <= off.start || !index.text.slice(off.start, off.end).trim()) return;
-    // 선택 끝이 다음 칸 시작(offset 0)에 걸리는 경우를 피하려고 마지막 글자 하나로 위치를 잡는다
-    var point = charPoint(index, off.end - 1);
-    if (!point) return;
-    var last = document.createRange();
-    last.setStart(point.node, point.offset);
-    last.setEnd(point.node, point.offset + 1);
-    var rect = last.getBoundingClientRect();
+    // 선택 끝이 칸 사이의 줄바꿈 노드에 걸리면 좌표가 0이 되므로, 보이는 마지막 글자 하나로 위치를 잡는다
+    var point = lastVisibleChar(index, off);
+    var rect = null;
+    if (point) {
+      var last = document.createRange();
+      last.setStart(point.node, point.offset);
+      last.setEnd(point.node, point.offset + 1);
+      rect = last.getBoundingClientRect();
+    }
+    if (!rect || (rect.width === 0 && rect.height === 0)) rect = range.getBoundingClientRect();
     ui.pendingSelection = off;
     ui.selBtn.style.top = (window.scrollY + rect.bottom + 6) + 'px';
     ui.selBtn.style.left = (window.scrollX + rect.left) + 'px';
@@ -280,6 +288,11 @@
 
   function applyResult(id, r) {
     if (r.removed) {
+      delete state.memos[id];
+      delete state.lastWritten[id];
+      return;
+    }
+    if (core.validateMemo(r.display) !== null) {
       delete state.memos[id];
       delete state.lastWritten[id];
       return;
@@ -337,6 +350,7 @@
     var memo = Object.assign(core.stripRuntime(old), fields || {}, { id: core.newId(), created_at: now, updated_at: now });
     delete memo.deleted_at;
     persist(memo);
+    return memo.id;
   }
 
   function resolveConflictOnBlur(id) {
@@ -365,6 +379,8 @@
     refresh();
   }
 
+  var revivedId = null;
+
   function reconcileFromStorage(id) {
     var before = state.memos[id];
     var editing = isEditing(id);
@@ -375,7 +391,7 @@
       clearTimeout(state.timers[id]);
       delete state.timers[id];
       delete state.drafts[id];
-      if (window.confirm('다른 탭에서 정리된 메모입니다. 새 메모로 다시 저장할까요?')) reviveAsNew(before, fields);
+      if (window.confirm('다른 탭에서 정리된 메모입니다. 새 메모로 다시 저장할까요?')) revivedId = reviveAsNew(before, fields);
     } else if (!r.removed && editing && before && r.display.updated_at !== before.updated_at) {
       state.conflicts[id] = r.display.deleted_at ? 'deleted' : 'changed';
     }
@@ -385,6 +401,7 @@
   function onStorage(e) {
     if (e.storageArea !== window.localStorage) return;
     var keep = null;
+    revivedId = null;
     if (e.key === null) {
       // localStorage.clear(): key가 null로 온다. 알고 있던 메모를 모두 다시 확인한다
       Object.keys(state.memos).forEach(function (id) {
@@ -397,6 +414,7 @@
       return;
     }
     refresh({ keepCard: keep });
+    if (revivedId) focusCard(revivedId);
   }
 
   // ── 패널 ──
@@ -598,8 +616,11 @@
     var card = h('article', { class: 'meeting-card', 'data-memo-id': m.id });
     card.addEventListener('focusout', function (e) {
       if (card.contains(e.relatedTarget)) return;
-      if (state.timers[m.id]) commit(m.id);
-      resolveConflictOnBlur(m.id);
+      // 포커스가 다른 카드로 옮겨간 뒤에 처리해야 그 카드가 편집 중으로 보호된다
+      setTimeout(function () {
+        if (state.timers[m.id]) commit(m.id);
+        resolveConflictOnBlur(m.id);
+      }, 0);
     });
     fillCard(card, m);
     return card;
@@ -714,7 +735,8 @@
   }
 
   function scrollToMemo(id) {
-    var marks = root.querySelectorAll('mark.meeting-hl[data-memo-id="' + id + '"]');
+    var safeId = window.CSS && CSS.escape ? CSS.escape(id) : id;
+    var marks = root.querySelectorAll('mark.meeting-hl[data-memo-id="' + safeId + '"]');
     if (!marks.length) return;
     marks[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
     Array.prototype.forEach.call(marks, function (mark) { mark.classList.add('meeting-hl--flash'); });
@@ -829,7 +851,9 @@
       persistent = opened.persistent;
       try { storage.setItem(docKey, JSON.stringify({ schema: core.SCHEMA, doc: docInfo() })); } catch (e) { /* 저장 실패는 아래 안내로 대신 */ }
       core.purgeTombstones(storage, memoPrefix, Date.now());
-      core.listMemos(storage, memoPrefix).forEach(function (m) { state.memos[m.id] = m; });
+      core.listMemos(storage, memoPrefix).forEach(function (m) {
+        if (core.validateMemo(m) === null) state.memos[m.id] = m;
+      });
       addBlockButtons();
       setupSelection();
       window.addEventListener('storage', onStorage);
