@@ -10,7 +10,7 @@
   var SAVE_DELAY_MS = 300;
   var MIN_PANEL_WIDTH = 300;
 
-  var cfg, root, embed, readonly, storage, persistent;
+  var cfg, root, embed, readonly, storage, persistent, storageFull;
   var memoPrefix, docKey, widthKey;
   var chosenWidth = 400;
   var revivedId = null;
@@ -59,14 +59,21 @@
   }
 
   function openStorage() {
+    var s;
+    var probe = '__synctx_meeting_probe__';
     try {
-      var s = window.localStorage;
-      var probe = '__synctx_meeting_probe__';
+      s = window.localStorage;
+      s.getItem(probe);
+    } catch (e) {
+      return { storage: memoryStorage(), persistent: false, full: false };
+    }
+    try {
       s.setItem(probe, '1');
       s.removeItem(probe);
-      return { storage: s, persistent: true };
+      return { storage: s, persistent: true, full: false };
     } catch (e) {
-      return { storage: memoryStorage(), persistent: false };
+      // 저장 공간이 가득 차도 이미 저장된 메모는 읽을 수 있어야 한다
+      return { storage: s, persistent: true, full: true };
     }
   }
 
@@ -864,6 +871,7 @@
       var opened = openStorage();
       storage = opened.storage;
       persistent = opened.persistent;
+      storageFull = opened.full;
       try { storage.setItem(docKey, JSON.stringify({ schema: core.SCHEMA, doc: docInfo() })); } catch (e) { /* 저장 실패는 아래 안내로 대신 */ }
       core.purgeTombstones(storage, memoPrefix, Date.now());
       core.listMemos(storage, memoPrefix).forEach(function (m) {
@@ -879,6 +887,7 @@
     setDisplayedWidth(chosenWidth);
     if (readonly) showNotice('읽기 전용 사본입니다. 내 메모로 합치려면 Viewer 회의 모드의 「가져오기」에서 이 파일을 선택하세요');
     else if (!persistent) showNotice('이 브라우저에서는 메모가 저장되지 않습니다');
+    else if (storageFull) showNotice('브라우저 저장 공간이 부족해 메모를 저장하지 못할 수 있습니다');
     refresh();
     if (readonly && window.innerWidth >= 1500) openPanel('memos');
   }
