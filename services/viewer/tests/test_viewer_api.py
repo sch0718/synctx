@@ -123,6 +123,28 @@ class TestHTMLSanitization:
         assert "ok" in result
 
 
+class TestRawMarkdownScript:
+    def test_script_breakout_is_escaped(self, client, mock_repo_manager):
+        import re
+        markdown = "# Title\n\n```\n</script><script>alert(1)</script>\n```\n"
+        mock_repo_manager.read_file_text.return_value = markdown
+        resp = client.get("/test-repo/docs/breakout.md")
+        assert resp.status_code == 200
+        match = re.search(r'<script type="application/json" id="raw-markdown-json">(.*?)</script>', resp.text, re.S)
+        assert match is not None
+        payload = match.group(1)
+        assert "<" not in payload
+        assert json.loads(payload) == {"markdown": markdown}
+
+    def test_encode_for_script_escapes_unsafe_chars(self):
+        from app import _encode_for_script
+        value = {"markdown": "a<b>c&d" + chr(0x2028) + chr(0x2029) + "한글"}
+        encoded = _encode_for_script(value)
+        for ch in ("<", ">", "&", chr(0x2028), chr(0x2029)):
+            assert ch not in encoded
+        assert json.loads(encoded) == value
+
+
 class TestAPIRoutes:
     def test_repos_list(self, client):
         resp = client.get("/api/repos")

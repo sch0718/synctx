@@ -1024,6 +1024,18 @@ def view_repo(repo_id: str, ref: str | None = None):
     return HTMLResponse(content=html)
 
 
+_BACKSLASH = chr(92)
+_SCRIPT_UNSAFE = ("<", ">", "&", chr(0x2028), chr(0x2029))
+
+
+def _encode_for_script(value) -> str:
+    """<script> 안에 넣을 JSON. <, >, &, U+2028, U+2029를 6글자 유니코드 이스케이프로 바꾼다."""
+    text = json.dumps(value, ensure_ascii=False)
+    for ch in _SCRIPT_UNSAFE:
+        text = text.replace(ch, f"{_BACKSLASH}u{ord(ch):04x}")
+    return text
+
+
 def _sanitize_html(html_str: str) -> str:
     """사용자 생성 HTML에서 위험한 태그를 제거."""
     import re
@@ -1123,7 +1135,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             theme_options=theme_options,
             toolbar_buttons=toolbar_buttons,
             html_body=rendered.get("html", ""),
-            raw_markdown_json=json.dumps({"markdown": content}),
+            raw_markdown_json=_encode_for_script({"markdown": content}),
             mermaid_scripts=mermaid_scripts,
             ref_param_first=ref_param_first,
         )
