@@ -23,7 +23,7 @@ scripts/
         ├── infra.sh           # minikube + ingress + cert-manager + CA
         ├── build.sh           # Docker 이미지 빌드 + minikube 로드
         ├── deploy-deps.sh     # XWiki, OpenProject, Mailpit 배포
-        └── deploy-synctx.sh   # synctx Helm 배포
+        └── deploy-synctx.sh   # synctx Helm 배포 + CDN vendor 파일 시딩
 ```
 
 ## 운영 스크립트

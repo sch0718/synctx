@@ -54,12 +54,14 @@ download "${JSDELIVR}/chart.js@${CHARTJS_VER}/dist/chart.umd.min.js" \
 
 # ── highlight.js ───────────────────────────────────────────────
 log "--- highlight.js@${HIGHLIGHT_VER} ---"
-download "${JSDELIVR}/highlight.js@${HIGHLIGHT_VER}/lib/index.js" \
+# highlight.js 패키지의 lib/index.js는 CommonJS 진입점이라 브라우저에서 동작하지 않는다.
+HLJS_ASSETS="${JSDELIVR}/@highlightjs/cdn-assets@${HIGHLIGHT_VER}"
+download "${HLJS_ASSETS}/highlight.min.js" \
          "${CDN_DIR}/highlight.js/${HIGHLIGHT_VER}/highlight.min.js"
-download "${JSDELIVR}/highlight.js@${HIGHLIGHT_VER}/styles/github.min.css" \
-         "${CDN_DIR}/highlight.js/${HIGHLIGHT_VER}/styles/github.min.css"
-download "${JSDELIVR}/highlight.js@${HIGHLIGHT_VER}/styles/github-dark.min.css" \
-         "${CDN_DIR}/highlight.js/${HIGHLIGHT_VER}/styles/github-dark.min.css"
+for style in github github-dark monokai atom-one-light; do
+  download "${HLJS_ASSETS}/styles/${style}.min.css" \
+           "${CDN_DIR}/highlight.js/${HIGHLIGHT_VER}/styles/${style}.min.css"
+done
 
 # ── 편의 심링크: 최신 버전 별칭 ─────────────────────────────────
 # latest/ → 실제 버전 디렉토리 심링크 (nginx가 symlink를 따르므로 동작함)

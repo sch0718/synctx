@@ -2,7 +2,7 @@
 
 import json
 from unittest.mock import MagicMock, patch
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import pytest
 from fastapi.testclient import TestClient
@@ -123,6 +123,33 @@ class TestHTMLSanitization:
         assert "ok" in result
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_HLJS_CDN_DIR = _REPO_ROOT / "cdn-data" / "highlight.js" / "11.9.0"
+
+
+class TestHighlightJsCdnAssets:
+    @pytest.mark.parametrize("theme", ["github-light", "github-dark", "hacker", "modernist"])
+    def test_theme_css_links_styles_dir(self, client, mock_repo_manager, theme):
+        from renderer import THEME_HLJS
+        mock_repo_manager.read_file_text.return_value = "# Title\n\n```python\nprint(1)\n```\n"
+        resp = client.get(f"/test-repo/docs/code.md?theme={theme}")
+        assert resp.status_code == 200
+        assert f'href="/cdn/highlight.js/11.9.0/styles/{THEME_HLJS[theme]}.min.css"' in resp.text
+        assert '<script src="/cdn/highlight.js/11.9.0/highlight.min.js"></script>' in resp.text
+
+    @pytest.mark.skipif(not _HLJS_CDN_DIR.is_dir(), reason="cdn-data 미포함 환경")
+    def test_cdn_highlight_js_is_browser_bundle(self):
+        script = (_HLJS_CDN_DIR / "highlight.min.js").read_text(encoding="utf-8")
+        assert "require(" not in script
+        assert "var hljs=" in script
+
+    @pytest.mark.skipif(not _HLJS_CDN_DIR.is_dir(), reason="cdn-data 미포함 환경")
+    def test_cdn_has_every_theme_css(self):
+        from renderer import THEME_HLJS
+        missing = [name for name in set(THEME_HLJS.values()) if not (_HLJS_CDN_DIR / "styles" / f"{name}.min.css").is_file()]
+        assert missing == []
+
+
 class TestRawMarkdownScript:
     def test_script_breakout_is_escaped(self, client, mock_repo_manager):
         import re
@@ -143,6 +170,56 @@ class TestRawMarkdownScript:
         for ch in ("<", ">", "&", chr(0x2028), chr(0x2029)):
             assert ch not in encoded
         assert json.loads(encoded) == value
+
+
+class TestPathBreadcrumb:
+    @staticmethod
+    def _toolbar_breadcrumb(text):
+        import re
+        match = re.search(r'<div class="breadcrumb">(.*?)</div>', text, re.S)
+        assert match is not None
+        return match.group(1)
+
+    def test_each_folder_links_to_repo_tree(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/sub/readme.md")
+        assert resp.status_code == 200
+        crumb = self._toolbar_breadcrumb(resp.text)
+        assert '<a href="/view/test-repo?path=docs">docs</a>' in crumb
+        assert '<a href="/view/test-repo?path=docs/sub">sub</a>' in crumb
+        assert '<span class="current">readme.md</span>' in crumb
+        assert "path=docs/sub/readme.md" not in crumb
+
+    def test_sidebar_path_info_has_folder_links(self, client, mock_repo_manager):
+        import re
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/sub/readme.md")
+        match = re.search(r'<div class="path-info">(.*?)</div>', resp.text, re.S)
+        assert match is not None
+        assert '<a href="/view/test-repo?path=docs/sub">sub</a>' in match.group(1)
+
+    def test_ref_is_preserved_in_folder_links(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/readme.md?ref=feat/x")
+        assert resp.status_code == 200
+        crumb = self._toolbar_breadcrumb(resp.text)
+        assert '<a href="/view/test-repo?path=docs&amp;ref=feat%2Fx">docs</a>' in crumb
+
+    def test_special_characters_are_escaped(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/%3Cb%3E%26x/a%22b.md")
+        assert resp.status_code == 200
+        crumb = self._toolbar_breadcrumb(resp.text)
+        assert "<b>" not in crumb
+        assert '<a href="/view/test-repo?path=docs/%3Cb%3E%26x">&lt;b&gt;&amp;x</a>' in crumb
+        assert '<span class="current">a&quot;b.md</span>' in crumb
+
+    def test_repo_page_expands_tree_to_path_param(self, client, mock_repo_manager):
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.list_branches.return_value = ["main"]
+        resp = client.get("/test-repo?path=docs/sub")
+        assert resp.status_code == 200
+        assert "expandToPath(" in resp.text
 
 
 class TestAPIRoutes:

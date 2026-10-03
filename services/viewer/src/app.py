@@ -426,7 +426,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
     </script>
     <style>{theme_vars_css}</style>
     <style>{theme_css}</style>
-    <link rel="stylesheet" href="{cdn_base}/highlight.js/11.9.0/{hljs_theme}.min.css">
+    <link rel="stylesheet" href="{cdn_base}/highlight.js/11.9.0/styles/{hljs_theme}.min.css">
     <style>
         body {{ margin: 0; padding: 0; }}
         .viewer-sidebar {{
@@ -481,7 +481,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
     <div class="viewer-sidebar">
         <h3><a href="{view_prefix}">synctx</a></h3>
         <div class="path-info">
-            <a href="{view_prefix}/{repo_id}{ref_param_first}">{repo_id}</a> / {path}
+            <a href="{view_prefix}/{repo_id}{ref_param_first}">{repo_id}</a> / {path_info_trail}
         </div>
         <hr>
         <div class="toc-title">목차</div>
@@ -491,7 +491,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
         <div class="viewer-toolbar">
             <div class="breadcrumb">
                 <a href="{view_prefix}">synctx</a> &rsaquo;
-                <a href="{view_prefix}/{repo_id}{ref_param_first}">{repo_id}</a> &rsaquo; {path}
+                <a href="{view_prefix}/{repo_id}{ref_param_first}">{repo_id}</a> &rsaquo; {breadcrumb_trail}
             </div>
             <div class="actions">
                 <select id="theme-select" onchange="changeTheme(this.value)">{theme_options}</select>
@@ -684,6 +684,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         .icon-code {{ color: #FF9800; }}
         [data-theme="github-dark"] .icon-code, [data-theme="hacker"] .icon-code {{ color: #FFB74D; }}
         .icon-binary {{ color: var(--text-disabled); }}
+        .tree-entry.current {{ background: var(--border-color); font-weight: 600; }}
         .tree-entry.disabled {{ opacity: 0.5; cursor: default; }}
         .tree-entry.disabled:hover {{ background: transparent; }}
 
@@ -843,6 +844,34 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                 el.style.display = !q || name.includes(q) ? '' : 'none';
             }});
         }}
+
+        async function expandToPath(path) {{
+            var parts = path.split('/').filter(Boolean);
+            var current = '';
+            var target = null;
+            for (var i = 0; i < parts.length; i++) {{
+                current = current ? current + '/' + parts[i] : parts[i];
+                var container = Array.prototype.find.call(
+                    document.querySelectorAll('#file-tree .tree-children'),
+                    function(c) {{ return c.dataset.path === current; }}
+                );
+                if (!container) break;
+                var entry = container.previousElementSibling;
+                container.classList.remove('collapsed');
+                entry.querySelector('.tree-toggle').classList.add('open');
+                if (!container.dataset.loaded) await loadSubtree(container, current);
+                target = entry;
+            }}
+            if (target) {{
+                target.classList.add('current');
+                target.scrollIntoView({{ block: 'center' }});
+            }}
+        }}
+
+        (function() {{
+            var initialPath = new URLSearchParams(window.location.search).get('path');
+            if (initialPath && document.getElementById('file-tree')) expandToPath(initialPath);
+        }})();
     </script>
 </body>
 </html>"""
@@ -872,6 +901,19 @@ def _build_branch_options(branches, active_ref, default_ref):
         sel = " selected" if b == active_ref else ""
         html += f'<option value="{b}"{sel}>{label}</option>'
     return html
+
+
+def _build_path_trail(repo_id, path, ref, separator):
+    ref_param = f"&ref={quote(ref, safe='')}" if ref else ""
+    parts = [p for p in path.split("/") if p]
+    items = []
+    for i, name in enumerate(parts[:-1]):
+        folder = "/".join(parts[: i + 1])
+        href = f"{VIEW_PREFIX}/{quote(repo_id, safe='')}?path={quote(folder)}{ref_param}"
+        items.append(f'<a href="{html_lib.escape(href)}">{html_lib.escape(name)}</a>')
+    if parts:
+        items.append(f'<span class="current">{html_lib.escape(parts[-1])}</span>')
+    return separator.join(items)
 
 
 def _build_tree_html(repo_id, path, ref=None):
@@ -1156,6 +1198,8 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             meeting_head=meeting_head,
             meeting_notice=meeting_notice,
             meeting_body=meeting_body,
+            path_info_trail=_build_path_trail(repo_id, path, ref, " / "),
+            breadcrumb_trail=_build_path_trail(repo_id, path, ref, " &rsaquo; "),
         )
         return HTMLResponse(content=html)
     except HTTPException:
