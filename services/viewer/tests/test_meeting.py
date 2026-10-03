@@ -8,6 +8,8 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from contrast import contrast, rgb, theme_vars
+
 BACKSLASH = chr(92)
 
 
@@ -218,30 +220,6 @@ class TestHighlightContrast:
     """형광펜 위 본문 글자는 모든 테마에서 WCAG AA 4.5:1 이상이어야 한다."""
 
     @staticmethod
-    def _rgb(value):
-        value = value.strip()
-        m = re.fullmatch(r"rgba?\(([^)]*)\)", value)
-        if m:
-            parts = [p.strip() for p in m.group(1).split(",")]
-            return tuple(int(p) for p in parts[:3]), float(parts[3]) if len(parts) == 4 else 1.0
-        hex_ = value.lstrip("#")
-        if len(hex_) == 3:
-            hex_ = "".join(c * 2 for c in hex_)
-        return tuple(int(hex_[i:i + 2], 16) for i in (0, 2, 4)), 1.0
-
-    @staticmethod
-    def _luminance(rgb):
-        def channel(v):
-            v /= 255
-            return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
-        r, g, b = (channel(v) for v in rgb)
-        return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-    def _contrast(self, a, b):
-        hi, lo = sorted((self._luminance(a), self._luminance(b)), reverse=True)
-        return (hi + 0.05) / (lo + 0.05)
-
-    @staticmethod
     def _decl(block, prop):
         m = re.search(rf"(?:^|[;{{\s]){prop}\s*:\s*([^;}}]+)", block)
         return m.group(1).strip() if m else None
@@ -249,11 +227,11 @@ class TestHighlightContrast:
     def _theme_colors(self, theme_css):
         body = re.search(r"^body \{([^}]*)\}", theme_css, re.M).group(1)
         doc = re.search(r"^\.markdown-body \{([^}]*)\}", theme_css, re.M).group(1)
-        text = self._rgb(self._decl(body, "color"))[0]
+        text = rgb(self._decl(body, "color"))[0]
         doc_bg = self._decl(doc, "background")
         if not doc_bg or not re.match(r"#|rgb", doc_bg):
             doc_bg = self._decl(body, "background")
-        background = self._rgb(doc_bg)[0]
+        background = rgb(doc_bg)[0]
         return text, background
 
     def _mark_style(self, css, theme, kind, nested=False):
@@ -275,13 +253,13 @@ class TestHighlightContrast:
         background = style["background"]
         if background == "transparent":
             return behind
-        mark_rgb, alpha = self._rgb(background)
+        mark_rgb, alpha = rgb(background)
         return tuple(round(m * alpha + b * (1 - alpha)) for m, b in zip(mark_rgb, behind))
 
     def _text(self, styles, text):
         for style in styles:
             if style.get("color", "inherit") != "inherit":
-                text = self._rgb(style["color"])[0]
+                text = rgb(style["color"])[0]
         return text
 
     @pytest.mark.parametrize("kind", ["note", "decision", "action"])
@@ -293,18 +271,12 @@ class TestHighlightContrast:
         for theme, theme_css in THEME_CSS.items():
             text, page = self._theme_colors(theme_css)
             style = self._mark_style(css, theme, kind)
-            ratio = self._contrast(self._text([style], text), self._composite(style, page))
+            ratio = contrast(self._text([style], text), self._composite(style, page))
             if ratio < 4.5:
                 failures.append(f"{theme}: {ratio:.2f}")
         assert not failures, failures
 
-    @staticmethod
-    def _theme_vars(theme):
-        from renderer import THEME_VARS_CSS
-        block = re.search(rf'\[data-theme="{theme}"\] \{{([^}}]*)\}}', THEME_VARS_CSS).group(1)
-        return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", block))
-
-    def _meeting_color(self, css, theme, name, theme_vars):
+    def _meeting_color(self, css, theme, name, values):
         value = None
         css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
         for rule in re.finditer(r"^(\S[^{}]*)\{([^}]*)\}", css, re.M):
@@ -313,8 +285,8 @@ class TestHighlightContrast:
                 value = self._decl(rule.group(2), name) or value
         ref = re.fullmatch(r"var\((--[\w-]+)(?:,\s*([^)]+))?\)", value)
         if ref:
-            value = theme_vars.get(ref.group(1), ref.group(2))
-        return self._rgb(value)[0]
+            value = values.get(ref.group(1), ref.group(2))
+        return rgb(value)[0]
 
     @pytest.mark.parametrize("name", ["--meeting-danger", "--meeting-muted", "--meeting-link"])
     def test_panel_text_meets_aa_on_panel_backgrounds(self, name):
@@ -323,10 +295,10 @@ class TestHighlightContrast:
         css = (meeting.STATIC_DIR / "meeting.css").read_text(encoding="utf-8")
         failures = []
         for theme in THEME_CSS:
-            theme_vars = self._theme_vars(theme)
-            color = self._meeting_color(css, theme, name, theme_vars)
+            values = theme_vars(theme)
+            color = self._meeting_color(css, theme, name, values)
             for var in ("--bg-default", "--bg-neutral"):
-                ratio = self._contrast(color, self._rgb(theme_vars[var])[0])
+                ratio = contrast(color, rgb(values[var])[0])
                 if ratio < 4.5:
                     failures.append(f"{theme} {var}: {ratio:.2f}")
         assert not failures, failures
@@ -349,7 +321,7 @@ class TestHighlightContrast:
             outer_style = self._mark_style(css, theme, outer)
             inner_style = self._mark_style(css, theme, inner, nested=True)
             behind = self._composite(inner_style, self._composite(outer_style, page))
-            ratio = self._contrast(self._text([outer_style, inner_style], text), behind)
+            ratio = contrast(self._text([outer_style, inner_style], text), behind)
             if ratio < 4.5:
                 failures.append(f"{theme}: {ratio:.2f}")
         assert not failures, failures
