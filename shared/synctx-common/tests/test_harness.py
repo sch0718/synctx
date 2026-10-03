@@ -170,3 +170,50 @@ class TestReportOutput:
         data = json.loads((reports_dir / "latest.json").read_text())
         assert "status" in data
         assert "files_checked" in data
+
+
+MEETING_DOC = """---
+synctx:
+  type: meeting
+  meeting:
+    id: {meeting_id}
+    title: 회의
+    starts_at: {starts_at}
+    channel: {channel}
+---
+# 회의
+
+## 요약
+
+내용
+"""
+
+
+class TestMeetingDocuments:
+    def _write(self, workspace, name, meeting_id="m-1", starts_at="2026-10-08T14:00+09:00", channel="dx-team"):
+        path = workspace / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(MEETING_DOC.format(meeting_id=meeting_id, starts_at=starts_at, channel=channel))
+        return path
+
+    def test_valid_meeting_has_no_meeting_errors(self, workspace, config):
+        self._write(workspace, "meetings/a.md")
+        report = HarnessValidator(config, str(workspace)).validate()
+        assert not any("meeting" in e or "starts_at" in e for e in report["errors"])
+
+    def test_invalid_meeting_reports_path_and_error(self, workspace, config):
+        self._write(workspace, "meetings/a.md", starts_at="2026-10-08T14:00")
+        report = HarnessValidator(config, str(workspace)).validate()
+        assert "meetings/a.md: starts_at에 타임존이 없습니다(예: 2026-10-08T14:00+09:00)" in report["errors"]
+        assert report["status"] == "failed"
+
+    def test_duplicate_meeting_id(self, workspace, config):
+        self._write(workspace, "meetings/a.md", meeting_id="same")
+        self._write(workspace, "meetings/b.md", meeting_id="same")
+        report = HarnessValidator(config, str(workspace)).validate()
+        assert "meeting.id 'same'가 여러 문서에 있습니다: meetings/a.md, meetings/b.md" in report["errors"]
+
+    def test_unmapped_channel_is_not_checked(self, workspace, config):
+        self._write(workspace, "meetings/a.md", channel="no-such-channel")
+        report = HarnessValidator(config, str(workspace)).validate()
+        assert not any("channel" in e for e in report["errors"])

@@ -4,6 +4,7 @@ convert_md_to_html.py에서 핵심 로직을 추출하여 웹 서비스용으로
 """
 
 import hashlib
+import html as html_lib
 import re
 from pathlib import Path, PurePosixPath
 
@@ -224,9 +225,7 @@ DOWNLOAD_TEMPLATE = """<!DOCTYPE html>
   <style>{css}</style>
 </head>
 <body>
-  <article class="markdown-body">
-{body}
-  </article>
+  <article class="markdown-body">{body}</article>
   <script>{hljs_js}</script>
   <script>hljs.highlightAll();</script>
 {mermaid_block}
@@ -688,16 +687,17 @@ THEME_MERMAID = {
 }
 
 
-def render_download_html(md_text, theme="github-light"):
-    """다운로드용 자체 완결형 HTML을 생성한다."""
+def render_download_html(md_text, theme="github-light", html_filter=None):
+    """다운로드용 자체 완결형 HTML을 생성한다. html_filter는 렌더링한 본문 HTML에만 적용한다."""
     result = render_markdown(md_text)
+    body_html = html_filter(result["html"]) if html_filter else result["html"]
     css = THEME_CSS.get(theme, GITHUB_LIGHT_CSS)
     hljs_theme = THEME_HLJS.get(theme, "github")
     mermaid_theme = THEME_MERMAID.get(theme, "default")
 
     # mermaid 블록이 없으면 대용량 mermaid.min.js 임베드를 생략해
     # 다운로드 HTML 크기와 Chromium 스크립트 평가 시간을 줄인다.
-    has_mermaid = 'class="mermaid"' in result["html"]
+    has_mermaid = 'class="mermaid"' in body_html
     if has_mermaid:
         mermaid_block = _MERMAID_BLOCK_TEMPLATE.format(
             mermaid_js=_escape_script_close_tags(_get_mermaid_js()),
@@ -707,10 +707,10 @@ def render_download_html(md_text, theme="github-light"):
         mermaid_block = ""
 
     return DOWNLOAD_TEMPLATE.format(
-        title=result["title"],
+        title=html_lib.escape(result["title"]),
         css=css,
         hljs_css=_get_hljs_css(hljs_theme),
         hljs_js=_escape_script_close_tags(_get_hljs_js()),
         mermaid_block=mermaid_block,
-        body=result["html"],
+        body=body_html,
     )

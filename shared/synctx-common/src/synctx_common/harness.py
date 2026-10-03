@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Tuple
 import logging
 
 from .config import SynctxConfig
-from .frontmatter import parse_frontmatter
+from .frontmatter import parse_frontmatter, validate_meeting
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ class HarnessValidator:
         # 2. Check all markdown files for agent-readiness & version consistency
         versions: Dict[str, List[str]] = {} # version_name -> list of issue paths
         tasks: Dict[str, str] = {} # task_path -> version_name
+        meeting_ids: Dict[str, List[str]] = {}
 
         for md_file in self.workspace_root.rglob("*.md"):
             if ".context" in md_file.parts or "node_modules" in md_file.parts or ".git" in md_file.parts:
@@ -62,8 +63,14 @@ class HarnessValidator:
             if fm and "synctx" in fm:
                 synctx_meta = fm["synctx"]
                 doc_type = synctx_meta.get("type")
-                
-                if doc_type == "version":
+
+                if doc_type == "meeting":
+                    meeting, meeting_errors = validate_meeting(fm)
+                    for err in meeting_errors:
+                        report["errors"].append(f"{rel_path}: {err}")
+                    if meeting:
+                        meeting_ids.setdefault(meeting.id, []).append(rel_path)
+                elif doc_type == "version":
                     v_name = synctx_meta.get("name", fm.get("title", rel_path))
                     issues = synctx_meta.get("issues", [])
                     versions[v_name] = issues
@@ -71,6 +78,12 @@ class HarnessValidator:
                     v_name = synctx_meta.get("version")
                     if v_name:
                         tasks[rel_path] = v_name
+
+        for meeting_id, paths in meeting_ids.items():
+            if len(paths) > 1:
+                report["errors"].append(
+                    f"meeting.id '{meeting_id}'가 여러 문서에 있습니다: {', '.join(sorted(paths))}"
+                )
 
         # 3. Version / Task consistency check
         for task_path, v_name in tasks.items():

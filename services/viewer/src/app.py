@@ -1,6 +1,7 @@
 import os
 import json
 import html as html_lib
+import logging
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -10,16 +11,20 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from synctx_common.config import load_config
+from synctx_common.frontmatter import parse_frontmatter
 from synctx_common.git_manager import GitRepoManager
 from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 from renderer import render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
+
+import meeting as meeting_mode
 
 __version__ = "0.1.0"
 configure_logging(service_name="viewer")
 VIEW_PREFIX = "/view"
 
 config = load_config()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -470,6 +475,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
             .viewer-toolbar {{ padding: 10px 15px; }}
         }}
     </style>
+    {meeting_head}
 </head>
 <body>
     <div class="viewer-sidebar">
@@ -492,6 +498,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
                 {toolbar_buttons}
             </div>
         </div>
+        {meeting_notice}
         <article class="markdown-body">{html_body}</article>
     </div>
 
@@ -566,6 +573,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
             }} catch (e) {{ alert(e.message); }}
         }}
     </script>
+    {meeting_body}
 </body>
 </html>"""
 
@@ -1068,16 +1076,7 @@ def view_repo(repo_id: str, ref: str | None = None):
     return HTMLResponse(content=html)
 
 
-_BACKSLASH = chr(92)
-_SCRIPT_UNSAFE = ("<", ">", "&", chr(0x2028), chr(0x2029))
-
-
-def _encode_for_script(value) -> str:
-    """<script> 안에 넣을 JSON. <, >, &, U+2028, U+2029를 6글자 유니코드 이스케이프로 바꾼다."""
-    text = json.dumps(value, ensure_ascii=False)
-    for ch in _SCRIPT_UNSAFE:
-        text = text.replace(ch, f"{_BACKSLASH}u{ord(ch):04x}")
-    return text
+_encode_for_script = meeting_mode.encode_for_script
 
 
 def _sanitize_html(html_str: str) -> str:
@@ -1095,7 +1094,7 @@ def _sanitize_html(html_str: str) -> str:
     return html_str
 
 
-def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
+def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     manager = get_repo_manager(repo_id)
     effective_ref = ref if ref and ref != manager.profile.default_ref else None
     ref_param = f"&ref={ref}" if ref else ""
@@ -1115,13 +1114,17 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 
         suffix = PurePosixPath(path).suffix.lower()
         is_md = suffix in MARKDOWN_EXTENSIONS
-        if not is_md:
+        front_matter: dict = {}
+        if is_md:
+            front_matter, render_source = parse_frontmatter(content)
+        else:
             language = get_code_language(path)
             if language is None:
                 raise HTTPException(status_code=415, detail="Unsupported file type for viewing")
             content = _wrap_code_as_markdown(path, content, language)
+            render_source = content
 
-        rendered = render_markdown(content)
+        rendered = render_markdown(render_source)
         rendered["html"] = _sanitize_html(rendered.get("html", ""))
         if is_md:
             rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path)
@@ -1148,13 +1151,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 
         toolbar_buttons = ""
         if is_md:
-            from synctx_common.frontmatter import parse_frontmatter
-            try:
-                original_content = manager.read_file_text(path, ref=effective_ref)
-                fm, _ = parse_frontmatter(original_content)
-            except Exception:
-                fm = None
-            is_marp = fm.get("marp", False) if fm else False
+            is_marp = bool(front_matter.get("marp", False))
             if is_marp:
                 toolbar_buttons += '<button class="btn" onclick="convertMarpPdf()">PDF (Marp)</button>'
                 toolbar_buttons += '<button class="btn btn-secondary" onclick="previewMarpSlide()">미리보기 (Marp)</button>'
@@ -1163,9 +1160,25 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
         if not toolbar_buttons:
             toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}{ref_param}">다운로드</a>'
+        if is_md:
+            meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
+        else:
+            meeting_ctx = meeting_mode.MeetingContext(False, None, None)
+        meeting_active = mode == "meeting" and meeting_ctx.enabled
+        meeting_head = meeting_body = meeting_notice = ""
+        if meeting_active:
+            meeting_cfg = meeting_mode.build_config(
+                repo_id, path, meeting_ctx.meeting, readonly=False,
+                export_url=meeting_mode.export_url(VIEW_PREFIX, repo_id, path),
+            )
+            meeting_head, meeting_body = meeting_mode.render_assets(VIEW_PREFIX, meeting_cfg)
+        elif meeting_ctx.enabled:
+            toolbar_buttons += f'<a class="btn btn-secondary" href="{VIEW_PREFIX}/{repo_id}/{quote(path)}?mode=meeting">회의 모드</a>'
+        elif mode == "meeting":
+            meeting_notice = meeting_mode.render_notice(meeting_ctx)
 
         html = VIEWER_TEMPLATE.format(
-            title=rendered.get("title", "Document"),
+            title=html_lib.escape(rendered.get("title", "Document")),
             theme_vars_css=THEME_VARS_CSS,
             active_theme=theme,
             theme_css=theme_css,
@@ -1182,6 +1195,9 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             raw_markdown_json=_encode_for_script({"markdown": content}),
             mermaid_scripts=mermaid_scripts,
             ref_param_first=ref_param_first,
+            meeting_head=meeting_head,
+            meeting_notice=meeting_notice,
+            meeting_body=meeting_body,
             path_info_trail=_build_path_trail(repo_id, path, ref, " / "),
             breadcrumb_trail=_build_path_trail(repo_id, path, ref, " &rsaquo; "),
         )
@@ -1193,8 +1209,36 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 
 
 @app.get("/api/repos/{repo_id}/render", dependencies=[Depends(verify_viewer_access)])
-def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
-    return _render_file_response(repo_id, path, theme, ref=ref)
+def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
+    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
+
+
+@app.get("/api/repos/{repo_id}/meeting-export", dependencies=[Depends(verify_viewer_access)])
+def meeting_export(repo_id: str, path: str, theme: str = "github-light"):
+    manager = get_repo_manager(repo_id)
+    try:
+        blob_size = manager.file_size(path)
+    except Exception:
+        blob_size = 0
+    if blob_size > config.viewer.max_render_size_bytes:
+        raise HTTPException(status_code=413, detail="File too large for rendering")
+    try:
+        content = manager.read_file_text(path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+    front_matter, body = parse_frontmatter(content)
+    ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, None)
+    if not ctx.enabled:
+        raise HTTPException(status_code=404, detail="Meeting mode is not available for this document")
+    if theme not in THEME_CSS:
+        theme = "github-light"
+    meeting_cfg = meeting_mode.build_config(repo_id, path, ctx.meeting, readonly=True, export_url=None)
+    try:
+        document = meeting_mode.build_export_html(body, theme, meeting_cfg, sanitize=_sanitize_html)
+    except meeting_mode.ExportAssemblyError as exc:
+        logger.error("meeting export assembly failed: repo=%s path=%s error=%s", repo_id, path, exc)
+        raise HTTPException(status_code=500, detail="Failed to assemble meeting export")
+    return HTMLResponse(content=document)
 
 
 # ── Kanban Board ──
@@ -1292,7 +1336,7 @@ def render_board(repo_id: str, version: str):
 
 # catch-all이므로 다른 모든 라우트 뒤에 등록해야 한다.
 @app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
-def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
+def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
-    return _render_file_response(repo_id, path, theme, ref=ref)
+    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)

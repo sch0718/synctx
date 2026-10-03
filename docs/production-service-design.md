@@ -245,6 +245,8 @@ repositories:
       - "docs/drafts/**"
       - "_published/**"
       - ".context/**"
+    collab:
+      enabled: false   # 모든 Viewer 사용자에게 공개 가능한 저장소에만 true (회의 모드·협업 연동 대상)
 
 mappings:
   - match:
@@ -509,6 +511,26 @@ synctx:
 _published/slides/{repo_id}/{publish_path}
 ```
 
+### 5.5 회의 문서
+
+```yaml
+---
+synctx:
+  type: meeting
+  meeting:
+    id: dx-ic-21-review-2026-10-08   # 필수, 저장소 안에서 유일
+    title: "팀 문서 21번 검토"     # 필수
+    starts_at: 2026-10-08T14:00+09:00 # 필수, 타임존 포함
+    duration_minutes: 60              # 1~1440
+    channel: team-docs      # 필수, 형식만 검사(매핑은 Collab Gateway)
+    presenters: [sch0718]             # 선택
+    cancelled: false                  # 선택
+---
+```
+
+- Harness Validator가 필드 형식과 `meeting.id` 중복을 검사한다.
+- Viewer 회의 모드는 `repositories[].collab.enabled: true`인 저장소의 기본 브랜치에서만 켜진다.
+
 ## 6. Sync Engine 상세 설계
 
 ### 6.1 실행 흐름
@@ -673,6 +695,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | GET | `/api/repos/{repo_id}/render?ref=&path=` | viewer | Markdown HTML 렌더링 |
 | GET | `/api/repos/{repo_id}/raw?ref=&path=` | viewer | 원본 파일 다운로드 |
 | GET | `/api/repos/{repo_id}/download?format=html|pdf` | viewer | 변환 다운로드 |
+| GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음). 회의 모드 조건 불충족 404 |
 | POST | `/api/repos/{repo_id}/webhook` | service | Git push 알림 |
 
 보안:
@@ -680,6 +703,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - `path`는 repo root 밖으로 벗어날 수 없다.
 - 렌더링 최대 파일 크기를 넘으면 413을 반환한다.
 - HTML은 sanitization 또는 신뢰 저장소 정책 중 하나를 명시한다. 운영 기본값은 신뢰 저장소 + CSP다.
+- 회의 메모는 서버로 보내지 않는다. 브라우저 localStorage에만 저장하고, `<script>` 안 JSON은 `<`·`>`·`&`·U+2028·U+2029를 유니코드 이스케이프로 인코딩한다.
 
 ### 7.3 CDN Service
 
@@ -968,6 +992,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 | Harness | sample `.context` + issues/board/docs | context schema, blueprint, agent-readiness, board 관계 검증 |
 | Outbound Feedback | fake OpenProject + fake SMTP + fake importer | redaction, signature, replay, PR 생성 검증 |
 | Offline build | vendor artifact only | 외부 네트워크 없이 이미지 빌드 |
+| Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
 
 ### 10.2 운영 전 수용 기준
 
@@ -1141,6 +1166,25 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - HMAC signature가 틀리거나 중복 `event_id`인 메일은 외부 Importer가 거부한다.
 - 외부 Importer는 main branch에 직접 push하지 않고 PR만 생성한다.
 - PR merge 후 기존 외부→내부 sync로 OpenProject가 idempotent하게 갱신된다.
+
+### Phase 8: 협업 통합 — 8.1a 회의 모드 기반
+
+- [x] front matter 분리(일반 보기 포함)
+- [x] `synctx.meeting` 검증과 Harness `meeting.id` 중복 검사
+- [x] `repositories[].collab.enabled`
+- [x] 회의 모드 메모·형광펜·회의 정리
+- [x] `.md`·메모 포함 HTML 내보내기/가져오기
+- [ ] 8.1b 근거 미리보기·근거 모음
+- [ ] 8.1c 회의 문서 대시보드
+- [ ] 8.2 Jitsi 내장
+- [ ] 8.3 Collab Gateway
+- [ ] 8.4 `/synctx` 명령과 채널
+
+완료 기준(8.1a):
+
+- 회의 문서를 회의 모드로 열어 메모를 남기고 새로고침해도 위치와 내용이 복원된다.
+- 메모 포함 HTML을 네트워크 없이 열면 읽기 전용으로 메모가 보이고, Viewer에서 다시 가져올 수 있다.
+- 메모 데이터가 서버로 전송되지 않는다.
 
 ## 12. Runbook 초안
 
