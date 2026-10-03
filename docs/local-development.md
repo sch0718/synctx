@@ -175,6 +175,8 @@ minikube tunnel
 
 `helm/synctx/values-local.yaml`을 사용하여 배포한다.
 
+배포 후 `cdn-data/`의 vendor 파일(Mermaid, Chart.js, highlight.js)을 CDN 업로드 API(`POST /api/cdn/upload`)로 PVC에 적재한다. `kubectl port-forward`(기본 포트 `18081`, `CDN_SEED_PORT`로 변경)를 사용하며, 내용이 같은 파일은 건너뛰고 다른 파일은 `force=true`로 덮어쓴다.
+
 ## 6. 설정 파일
 
 ### 6.1 values-local.yaml
@@ -309,7 +311,7 @@ https://mail.synctx.local 에서 Feedback Exporter가 발송한 메일을 확인
 | `scripts/local/steps/infra.sh` | 인프라 설정 (minikube, ingress, cert-manager, CA) |
 | `scripts/local/steps/build.sh` | 이미지 빌드 + minikube 로드 |
 | `scripts/local/steps/deploy-deps.sh` | 의존성 배포 (XWiki, OpenProject, Mailhog) |
-| `scripts/local/steps/deploy-synctx.sh` | synctx Helm 배포 |
+| `scripts/local/steps/deploy-synctx.sh` | synctx Helm 배포 + CDN vendor 파일 시딩 |
 
 ## 10. 문제 해결
 
