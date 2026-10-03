@@ -1,5 +1,6 @@
 import os
 import json
+import html as html_lib
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 
@@ -8,6 +9,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from synctx_common.config import load_config
+from synctx_common.frontmatter import parse_frontmatter
 from synctx_common.git_manager import GitRepoManager
 from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
@@ -1039,7 +1041,7 @@ def _sanitize_html(html_str: str) -> str:
     return html_str
 
 
-def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None):
+def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     manager = get_repo_manager(repo_id)
     effective_ref = ref if ref and ref != manager.profile.default_ref else None
     ref_param = f"&ref={ref}" if ref else ""
@@ -1059,13 +1061,17 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 
         suffix = PurePosixPath(path).suffix.lower()
         is_md = suffix in MARKDOWN_EXTENSIONS
-        if not is_md:
+        front_matter: dict = {}
+        if is_md:
+            front_matter, render_source = parse_frontmatter(content)
+        else:
             language = get_code_language(path)
             if language is None:
                 raise HTTPException(status_code=415, detail="Unsupported file type for viewing")
             content = _wrap_code_as_markdown(path, content, language)
+            render_source = content
 
-        rendered = render_markdown(content)
+        rendered = render_markdown(render_source)
         rendered["html"] = _sanitize_html(rendered.get("html", ""))
         if is_md:
             rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path)
@@ -1092,13 +1098,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 
         toolbar_buttons = ""
         if is_md:
-            from synctx_common.frontmatter import parse_frontmatter
-            try:
-                original_content = manager.read_file_text(path, ref=effective_ref)
-                fm, _ = parse_frontmatter(original_content)
-            except Exception:
-                fm = None
-            is_marp = fm.get("marp", False) if fm else False
+            is_marp = bool(front_matter.get("marp", False))
             if is_marp:
                 toolbar_buttons += '<button class="btn" onclick="convertMarpPdf()">PDF (Marp)</button>'
                 toolbar_buttons += '<button class="btn btn-secondary" onclick="previewMarpSlide()">미리보기 (Marp)</button>'
@@ -1109,7 +1109,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}{ref_param}">다운로드</a>'
 
         html = VIEWER_TEMPLATE.format(
-            title=rendered.get("title", "Document"),
+            title=html_lib.escape(rendered.get("title", "Document")),
             theme_vars_css=THEME_VARS_CSS,
             active_theme=theme,
             theme_css=theme_css,
