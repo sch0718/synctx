@@ -131,11 +131,15 @@ def validate_meeting(front_matter: Dict[str, Any]) -> Tuple[Optional[MeetingFron
     elif not isinstance(channel, str) or not _CHANNEL_RE.fullmatch(channel):
         errors.append("meeting.channel 형식이 올바르지 않습니다(영문 소문자·숫자·_·- 64자 이하)")
 
-    presenters = raw.get("presenters", [])
+    presenters = raw.get("presenters")
+    if presenters is None:
+        presenters = []
     if not isinstance(presenters, list) or not all(isinstance(p, str) for p in presenters):
         errors.append("presenters는 문자열 목록이어야 합니다")
 
-    cancelled = raw.get("cancelled", False)
+    cancelled = raw.get("cancelled")
+    if cancelled is None:
+        cancelled = False
     if not isinstance(cancelled, bool):
         errors.append("cancelled는 true 또는 false여야 합니다")
 

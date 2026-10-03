@@ -216,6 +216,16 @@ class TestValidateMeeting:
         assert errors == []
         assert meeting.presenters == ["sch0718"]
 
+    def test_presenters_none_uses_default(self):
+        meeting, errors = validate_meeting(_fm(presenters=None))
+        assert errors == []
+        assert meeting.presenters == []
+
+    def test_cancelled_none_uses_default(self):
+        meeting, errors = validate_meeting(_fm(cancelled=None))
+        assert errors == []
+        assert meeting.cancelled is False
+
     def test_cancelled_must_be_bool(self):
         _, errors = validate_meeting(_fm(cancelled="yes"))
         assert "cancelled는 true 또는 false여야 합니다" in errors
