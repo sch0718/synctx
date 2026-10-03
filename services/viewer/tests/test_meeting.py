@@ -298,6 +298,35 @@ class TestHighlightContrast:
                 failures.append(f"{theme}: {ratio:.2f}")
         assert not failures, failures
 
+    @staticmethod
+    def _theme_vars(theme):
+        from renderer import THEME_VARS_CSS
+        block = re.search(rf'\[data-theme="{theme}"\] \{{([^}}]*)\}}', THEME_VARS_CSS).group(1)
+        return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", block))
+
+    def _danger(self, css, theme):
+        danger = None
+        css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+        for rule in re.finditer(r"^(\S[^{}]*)\{([^}]*)\}", css, re.M):
+            selectors = {sel.strip() for sel in rule.group(1).split(",")}
+            if selectors & {":root", f'[data-theme="{theme}"]'}:
+                danger = self._decl(rule.group(2), "--meeting-danger") or danger
+        return danger
+
+    def test_danger_text_meets_aa_on_panel_backgrounds(self):
+        import meeting
+        from renderer import THEME_CSS
+        css = (meeting.STATIC_DIR / "meeting.css").read_text(encoding="utf-8")
+        failures = []
+        for theme in THEME_CSS:
+            theme_vars = self._theme_vars(theme)
+            danger = self._rgb(self._danger(css, theme))[0]
+            for var in ("--bg-default", "--bg-neutral"):
+                ratio = self._contrast(danger, self._rgb(theme_vars[var])[0])
+                if ratio < 4.5:
+                    failures.append(f"{theme} {var}: {ratio:.2f}")
+        assert not failures, failures
+
     @pytest.mark.parametrize("outer", ["note", "decision", "action"])
     @pytest.mark.parametrize("inner", ["note", "decision", "action"])
     def test_overlapping_memos_do_not_stack_backgrounds(self, outer, inner):
@@ -388,6 +417,13 @@ class TestMeetingExport:
         resp = client.get("/api/repos/test-repo/meeting-export", params={"path": "docs/m.md", "theme": "hacker"})
         assert resp.status_code == 200
         assert '<html lang="ko" data-theme="hacker">' in resp.text
+
+    def test_export_includes_theme_variables(self, client, manager):
+        from renderer import THEME_VARS_CSS
+        manager.read_file_text.return_value = meeting_doc(body=RICH_BODY)
+        html = client.get("/api/repos/test-repo/meeting-export", params={"path": "docs/m.md", "theme": "hacker"}).text
+        assert html.count(THEME_VARS_CSS) == 1
+        assert html.index(THEME_VARS_CSS) < html.index("meeting-panel")
 
     def test_csp_meta_in_head(self, client, manager):
         manager.read_file_text.return_value = meeting_doc(body=RICH_BODY)

@@ -12,7 +12,7 @@ from urllib.parse import quote
 from synctx_common.config import RepoProfile
 from synctx_common.frontmatter import MeetingFrontMatter, validate_meeting
 
-from renderer import _escape_script_close_tags, render_download_html
+from renderer import THEME_VARS_CSS, _escape_script_close_tags, render_download_html
 
 ROOT_SELECTOR = "article.markdown-body"
 STATIC_DIR = Path(__file__).resolve().parent / "static" / "meeting"
@@ -122,7 +122,7 @@ def build_export_html(body_markdown: str, theme: str, config: dict, sanitize: Ca
     document = f"{document[:head_at]}{_CSP_META}{document[head_at:]}"
     # 인라인된 mermaid.min.js 안에도 "</body>" 문자열이 있으므로 마지막 것을 기준으로 끼운다
     head, closing, tail = document.rpartition("</body>")
-    staged = f"{head}<style>{_static_text('meeting.css')}</style>\n{EMBED_MARKER}\n"
+    staged = f"{head}<style>{THEME_VARS_CSS}{_static_text('meeting.css')}</style>\n{EMBED_MARKER}\n"
     if staged.count(EMBED_MARKER) != 1:
         raise ExportAssemblyError("메모 자리표시가 문서에 1개가 아닙니다")
     scripts = (
