@@ -212,6 +212,6 @@ class TestBoardRoute:
         assert "<script" not in resp.text
         assert "<p>Repository: &lt;script&gt;&#x27;x</p>" in resp.text
         assert (
-            "onclick=\"window.location.href='/api/repos/%3Cscript%3E%27x/render?path=docs/it%27s%20task.md'\""
+            "onclick=\"window.location.href='/view/api/repos/%3Cscript%3E%27x/render?path=docs/it%27s%20task.md'\""
             in resp.text
         )

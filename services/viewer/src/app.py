@@ -1211,7 +1211,7 @@ def render_board(repo_id: str, version: str):
                 url_path = html.escape(quote(card['path']))
                 safe_priority = html.escape(card['priority'])
                 cards_html += f"""
-                <div class="card" onclick="window.location.href='/api/repos/{url_repo_id}/render?path={url_path}'">
+                <div class="card" onclick="window.location.href='{VIEW_PREFIX}/api/repos/{url_repo_id}/render?path={url_path}'">
                     <div class="card-title">{safe_title}</div>
                     <div class="card-meta">
                         <span class="badge">{safe_priority}</span>
