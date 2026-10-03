@@ -201,3 +201,128 @@ class TestStaticAssets:
         assert "synctx-meeting-embed" not in source
         assert "</script" not in source.lower()
         assert BACKSLASH + "u" not in source
+
+
+from html.parser import HTMLParser
+
+
+class _TextCollector(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def article_text(html: str) -> str:
+    collector = _TextCollector()
+    collector.feed(article(html))
+    return "".join(collector.parts)
+
+
+RICH_BODY = (
+    "# 회의 자료\n\n"
+    "## 안건\n\n"
+    "백업 결과를 월 1회 보고한다. [다른 문서](other.md)\n\n"
+    "| 항목 | 담당 |\n|---|---|\n| 백업 | IT |\n\n"
+    "```python\nprint('x')\n```\n\n"
+    "<script>alert('본문 스크립트')</script>\n"
+)
+
+MERMAID_BODY = "# 다이어그램\n\n```mermaid\nflowchart LR\n  A --> B\n```\n\n뒤의 문장\n"
+
+
+class TestMeetingExport:
+    def _get(self, client, path="docs/m.md"):
+        return client.get("/api/repos/test-repo/meeting-export", params={"path": path})
+
+    def test_404_when_not_meeting(self, client, manager):
+        manager.read_file_text.return_value = "# 일반 문서"
+        assert self._get(client, "docs/a.md").status_code == 404
+
+    def test_404_when_collab_disabled(self, client, manager):
+        manager.profile = _profile(collab=False)
+        manager.read_file_text.return_value = meeting_doc()
+        assert self._get(client).status_code == 404
+
+    def test_413_when_too_large(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        manager.file_size.return_value = 10_000_000
+        assert self._get(client).status_code == 413
+
+    def test_assembled_document(self, client, manager):
+        import meeting
+        manager.read_file_text.return_value = meeting_doc(body=RICH_BODY)
+        resp = self._get(client)
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/html")
+        html = resp.text
+        cfg = json.loads(config_json(html))
+        assert cfg["readonly"] is True
+        assert cfg["export_url"] is None
+        assert cfg["storage_key"] == "synctx-meeting:test-repo:dx-21:v1"
+        assert html.count(meeting.EMBED_MARKER) == 1
+        css = (meeting.STATIC_DIR / "meeting.css").read_text(encoding="utf-8")
+        assert html.count(css) == 1
+        assert html.count("root.SynctxMemoCore = {") == 1
+        assert html.count("synctx 회의 모드 화면") == 1
+        marker_at = html.index(meeting.EMBED_MARKER)
+        assert marker_at < html.index('id="meeting-config"') < html.index("root.SynctxMemoCore = {")
+        assert html.rstrip().endswith("</body>\n</html>")
+        assert 'src="http' not in html and "href=\"http" not in html
+        assert "본문 스크립트" not in article(html)
+
+    def test_article_text_matches_viewer(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=RICH_BODY)
+        viewer_html = client.get("/test-repo/docs/m.md?mode=meeting").text
+        export_html = self._get(client).text
+        assert article_text(export_html) == article_text(viewer_html)
+
+    def test_mermaid_document_exports(self, client, manager):
+        import meeting
+        manager.read_file_text.return_value = meeting_doc(body=MERMAID_BODY)
+        resp = self._get(client)
+        assert resp.status_code == 200
+        assert resp.text.count(meeting.EMBED_MARKER) == 1
+        viewer_html = client.get("/test-repo/docs/m.md?mode=meeting").text
+        assert article_text(resp.text) == article_text(viewer_html)
+
+    def test_malicious_title_encoded_in_export(self, client, manager):
+        # validate_meeting이 제목 앞뒤 공백(U+2028 포함)을 strip하므로 U+2028은 안쪽에 둔다
+        title = "</script><script>alert(1)</script> <!-- --> &amp; " + chr(0x2028) + " 끝"
+        manager.read_file_text.return_value = meeting_doc(title=title)
+        raw = config_json(self._get(client).text)
+        for ch in ("<", ">", "&", chr(0x2028)):
+            assert ch not in raw
+        assert json.loads(raw)["meeting"]["title"] == title
+
+    def test_malicious_heading_title_escaped(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body="# </title><script>alert(1)</script>\n\n본문\n")
+        html = self._get(client).text
+        head = html.split("</head>")[0]
+        assert "<script>alert(1)</script>" not in head
+        assert "<title>&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>" in head
+
+    def test_marker_in_body_fails_assembly(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body="# 회의\n\n<!--synctx-meeting-embed-->\n")
+        assert self._get(client).status_code == 500
+
+
+class TestRenderDownloadHtml:
+    def test_html_filter_applies_to_body_only(self):
+        from renderer import render_download_html
+        html = render_download_html("# 제목\n\n```mermaid\nflowchart LR\n A-->B\n```\n", html_filter=lambda s: s.replace("제목", "필터됨"))
+        assert "필터됨" in html
+        assert "<script>" in html
+
+    def test_title_escaped(self):
+        from renderer import render_download_html
+        html = render_download_html("# </title><script>x()</script>\n")
+        assert "<title>&lt;/title&gt;&lt;script&gt;x()&lt;/script&gt;</title>" in html
+
+    def test_article_has_no_padding_whitespace(self):
+        from renderer import render_download_html
+        html = render_download_html("본문")
+        assert '<article class="markdown-body"><p>' in html
+        assert "</p></article>" in html

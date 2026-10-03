@@ -1,6 +1,7 @@
 import os
 import json
 import html as html_lib
+import logging
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -23,6 +24,7 @@ configure_logging(service_name="viewer")
 VIEW_PREFIX = "/view"
 
 config = load_config()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -1162,6 +1164,34 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 @app.get("/api/repos/{repo_id}/render", dependencies=[Depends(verify_viewer_access)])
 def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
+
+
+@app.get("/api/repos/{repo_id}/meeting-export", dependencies=[Depends(verify_viewer_access)])
+def meeting_export(repo_id: str, path: str, theme: str = "github-light"):
+    manager = get_repo_manager(repo_id)
+    try:
+        blob_size = manager.file_size(path)
+    except Exception:
+        blob_size = 0
+    if blob_size > config.viewer.max_render_size_bytes:
+        raise HTTPException(status_code=413, detail="File too large for rendering")
+    try:
+        content = manager.read_file_text(path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="File not found")
+    front_matter, body = parse_frontmatter(content)
+    ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, None)
+    if not ctx.enabled:
+        raise HTTPException(status_code=404, detail="Meeting mode is not available for this document")
+    if theme not in THEME_CSS:
+        theme = "github-light"
+    meeting_cfg = meeting_mode.build_config(repo_id, path, ctx.meeting, readonly=True, export_url=None)
+    try:
+        document = meeting_mode.build_export_html(body, theme, meeting_cfg, sanitize=_sanitize_html)
+    except meeting_mode.ExportAssemblyError as exc:
+        logger.error("meeting export assembly failed: repo=%s path=%s error=%s", repo_id, path, exc)
+        raise HTTPException(status_code=500, detail="Failed to assemble meeting export")
+    return HTMLResponse(content=document)
 
 
 @app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])

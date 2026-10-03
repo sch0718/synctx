@@ -6,11 +6,13 @@ import html
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import quote
 
 from synctx_common.config import RepoProfile
 from synctx_common.frontmatter import MeetingFrontMatter, validate_meeting
+
+from renderer import _escape_script_close_tags, render_download_html
 
 ROOT_SELECTOR = "article.markdown-body"
 STATIC_DIR = Path(__file__).resolve().parent / "static" / "meeting"
@@ -90,3 +92,32 @@ def render_notice(ctx: MeetingContext) -> str:
     if not ctx.reason:
         return ""
     return f'<div class="meeting-notice" role="status" style="{_NOTICE_STYLE}">{html.escape(ctx.reason)}</div>'
+
+
+_DOCUMENT_END = "</body>\n</html>"
+
+
+class ExportAssemblyError(RuntimeError):
+    """메모 포함 HTML의 틀을 조립하지 못했다."""
+
+
+def _static_text(name: str) -> str:
+    return (STATIC_DIR / name).read_text(encoding="utf-8")
+
+
+def build_export_html(body_markdown: str, theme: str, config: dict, sanitize: Callable[[str], str]) -> str:
+    """오프라인 HTML 틀을 만든다. 메모는 넣지 않는다(브라우저가 자리표시를 MEETING_EMBED로 바꾼다)."""
+    document = render_download_html(body_markdown, theme=theme, html_filter=sanitize).rstrip()
+    if not document.endswith(_DOCUMENT_END):
+        raise ExportAssemblyError("오프라인 HTML이 </body></html>로 끝나지 않습니다")
+    # 인라인된 mermaid.min.js 안에도 "</body>" 문자열이 있으므로 마지막 것을 기준으로 끼운다
+    head, closing, tail = document.rpartition("</body>")
+    staged = f"{head}<style>{_static_text('meeting.css')}</style>\n{EMBED_MARKER}\n"
+    if staged.count(EMBED_MARKER) != 1:
+        raise ExportAssemblyError("메모 자리표시가 문서에 1개가 아닙니다")
+    scripts = (
+        f'<script type="application/json" id="meeting-config">{encode_for_script(config)}</script>\n'
+        f"<script>{_escape_script_close_tags(_static_text('memo-core.js'))}</script>\n"
+        f"<script>{_escape_script_close_tags(_static_text('meeting.js'))}</script>\n"
+    )
+    return staged + scripts + closing + tail + "\n"
