@@ -38,6 +38,10 @@ class RepoAuthConfig(BaseModel):
     ssh_key_file: Optional[str] = None
 
 
+class CollabRepoConfig(BaseModel):
+    enabled: bool = False
+
+
 class RepoProfile(BaseModel):
     id: str
     name: str
@@ -49,6 +53,7 @@ class RepoProfile(BaseModel):
     storage_mode: Literal["full", "shallow", "blobless", "treeless"] = "full"
     shallow_depth: int = 0
     sparse_paths: List[str] = Field(default_factory=list)
+    collab: CollabRepoConfig = Field(default_factory=CollabRepoConfig)
 
 
 class TargetMatchConfig(BaseModel):
