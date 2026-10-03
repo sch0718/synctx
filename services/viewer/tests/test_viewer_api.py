@@ -145,6 +145,56 @@ class TestRawMarkdownScript:
         assert json.loads(encoded) == value
 
 
+class TestPathBreadcrumb:
+    @staticmethod
+    def _toolbar_breadcrumb(text):
+        import re
+        match = re.search(r'<div class="breadcrumb">(.*?)</div>', text, re.S)
+        assert match is not None
+        return match.group(1)
+
+    def test_each_folder_links_to_repo_tree(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/sub/readme.md")
+        assert resp.status_code == 200
+        crumb = self._toolbar_breadcrumb(resp.text)
+        assert '<a href="/view/test-repo?path=docs">docs</a>' in crumb
+        assert '<a href="/view/test-repo?path=docs/sub">sub</a>' in crumb
+        assert '<span class="current">readme.md</span>' in crumb
+        assert "path=docs/sub/readme.md" not in crumb
+
+    def test_sidebar_path_info_has_folder_links(self, client, mock_repo_manager):
+        import re
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/sub/readme.md")
+        match = re.search(r'<div class="path-info">(.*?)</div>', resp.text, re.S)
+        assert match is not None
+        assert '<a href="/view/test-repo?path=docs/sub">sub</a>' in match.group(1)
+
+    def test_ref_is_preserved_in_folder_links(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/readme.md?ref=feat/x")
+        assert resp.status_code == 200
+        crumb = self._toolbar_breadcrumb(resp.text)
+        assert '<a href="/view/test-repo?path=docs&amp;ref=feat%2Fx">docs</a>' in crumb
+
+    def test_special_characters_are_escaped(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/%3Cb%3E%26x/a%22b.md")
+        assert resp.status_code == 200
+        crumb = self._toolbar_breadcrumb(resp.text)
+        assert "<b>" not in crumb
+        assert '<a href="/view/test-repo?path=docs/%3Cb%3E%26x">&lt;b&gt;&amp;x</a>' in crumb
+        assert '<span class="current">a&quot;b.md</span>' in crumb
+
+    def test_repo_page_expands_tree_to_path_param(self, client, mock_repo_manager):
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.list_branches.return_value = ["main"]
+        resp = client.get("/test-repo?path=docs/sub")
+        assert resp.status_code == 200
+        assert "expandToPath(" in resp.text
+
+
 class TestAPIRoutes:
     def test_repos_list(self, client):
         resp = client.get("/api/repos")
