@@ -62,6 +62,13 @@ def test_render_for_xwiki_is_single_macro_without_braces():
     assert "```synctx-html" not in out
 
 
+def test_render_for_xwiki_keeps_block_inside_list_item():
+    body = "1. 첫째\n\n   ```synctx-html\n   src: ./motion/index.html\n   ```\n\n2. 둘째\n"
+    out = render_for_xwiki(body, analyze(body, "docs/a.md", POLICY, reader(FILES)))
+    assert out.startswith('1. 첫째\n\n   {{html clean="false"}}<iframe class="synctx-html"')
+    assert out.endswith("{{/html}}\n\n2. 둘째\n")
+
+
 def test_render_for_openproject():
     out = render_for_openproject(BODY, "https://synctx.synctx.local/view/r/docs/a.md")
     assert "> 인터랙티브 콘텐츠: [Viewer에서 보기](https://synctx.synctx.local/view/r/docs/a.md)" in out

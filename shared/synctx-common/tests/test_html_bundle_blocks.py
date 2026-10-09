@@ -43,6 +43,20 @@ def test_find_blocks_ignores_other_languages_and_unclosed():
     assert find_blocks("```synctx-html\nsrc: a.html\n") == []
 
 
+LIST_MD = "1. 항목\n\n   ```synctx-html\n   src: ./m/index.html\n   ```\n\n2. 다음\n"
+
+
+def test_find_blocks_in_list_item_strips_fence_indent_from_body():
+    [block] = find_blocks(LIST_MD)
+    assert block.indent == "   "
+    assert block.body == "src: ./m/index.html\n"
+    assert parse_block(block.body, "docs/a.md").src == "docs/m/index.html"
+
+
+def test_replace_blocks_keeps_list_item_indent():
+    assert replace_blocks(LIST_MD, lambda i, b: "A\n\nB") == "1. 항목\n\n   A\n\n   B\n\n2. 다음\n"
+
+
 def test_replace_blocks_renders_each_in_order():
     text = MD + "\n```synctx-html\nsrc: b.html\n```\n"
     out = replace_blocks(text, lambda i, b: f"[{i}]")

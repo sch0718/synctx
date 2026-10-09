@@ -46,6 +46,7 @@ class BlockMatch:
     start: int
     end: int
     body: str
+    indent: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,23 +78,38 @@ def find_blocks(md_text: str) -> list:
             if match:
                 marker, info = match.group(2), match.group(3).strip()
                 if not (marker[0] == "`" and "`" in info):
-                    fence = (marker[0], len(marker), info == "synctx-html", pos, pos + len(line))
+                    indent = match.group(1)
+                    fence = (marker[0], len(marker), info == "synctx-html", indent, pos + len(indent), pos + len(line))
         else:
-            char, length, is_block, start, body_start = fence
+            char, length, is_block, indent, start, body_start = fence
             if match and match.group(2)[0] == char and len(match.group(2)) >= length and not match.group(3).strip():
                 if is_block:
-                    blocks.append(BlockMatch(start, pos + len(content), md_text[body_start:pos]))
+                    body = _dedent(md_text[body_start:pos], len(indent))
+                    blocks.append(BlockMatch(start, pos + len(content), body, indent))
                 fence = None
         pos += len(line)
     return blocks
 
 
+def _dedent(body: str, width: int) -> str:
+    """CommonMark처럼 여는 펜스의 들여쓰기만큼 본문 각 줄의 앞 공백을 걷어낸다."""
+    if not width:
+        return body
+    return "".join(
+        line[min(width, len(line) - len(line.lstrip(" "))):] for line in body.splitlines(keepends=True)
+    )
+
+
 def replace_blocks(md_text: str, render: Callable[[int, BlockMatch], str]) -> str:
+    """목록 항목 안의 블록은 치환 결과의 각 줄에도 같은 들여쓰기를 붙여 항목 밖으로 빠지지 않게 한다."""
     out = []
     last = 0
     for index, block in enumerate(find_blocks(md_text)):
         out.append(md_text[last:block.start])
-        out.append(render(index, block))
+        rendered = render(index, block)
+        if block.indent:
+            rendered = re.sub(r"\n(?=[^\r\n])", "\n" + block.indent, rendered)
+        out.append(rendered)
         last = block.end
     out.append(md_text[last:])
     return "".join(out)
