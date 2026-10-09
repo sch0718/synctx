@@ -130,6 +130,7 @@ flowchart TB
 - **HTML/PDF 다운로드** — 자체 완결형 HTML, Chrome CDP 기반 PDF
 - **완전 오프라인** — 모든 외부 라이브러리를 CDN Service에서 로딩
 - **회의 모드** — 회의 문서(`synctx.type: meeting`)에서 메모·형광펜·회의 정리(결정·액션 아이템), `.md`·메모 포함 HTML(읽기 전용) 내보내기와 가져오기. 메모는 브라우저(localStorage)에만 저장 (Phase 8.1a)
+- **인터랙티브 HTML 임베드** — Markdown의 ` ```synctx-html ` 블록이 가리키는 저장소 HTML 묶음(모션 그래픽 등)을 한 파일로 합쳐 sandbox iframe으로 재생. 운영자가 지정한 신뢰 저장소에서만 동작 (Phase 9)
 
 ## CDN Service (내부 CDN)
 
@@ -229,6 +230,7 @@ Git 저장소의 마크다운과 메타데이터를 내부 협업 도구에 자�
 | 요건 정의 | Markdown | XWiki / OpenProject | REST API |
 | 회의록/의사결정 | Markdown | XWiki | REST API |
 | 다이어그램 | Mermaid / draw.io | XWiki (첨부파일) | SVG 변환 → 첨부 API |
+| 인터랙티브 HTML | Markdown의 `synctx-html` 블록 + 저장소 HTML 묶음 | XWiki / OpenProject | XWiki html 매크로 안 sandbox iframe, OpenProject는 Viewer 링크 (Phase 9) |
 
 ## Draw.io Service (다이어그램 편집기)
 

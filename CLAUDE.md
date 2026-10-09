@@ -24,7 +24,7 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 - **서비스 추가**: README(다이어그램 + 테이블 + 프로젝트 구조), architecture.md(다이어그램 + 테이블 + 모듈), production-service-design.md(설정 + API + 보안 + 메트릭 + Alert + 테스트 + Phase 체크리스트)
 - **Secret 추가**: Secrets 테이블, .synctx.yaml 스키마, Runbook
 - **Role 추가**: Roles 테이블, authz 설정 예시
-- **Phase 변경**: 3개 문서의 Phase 번호와 순서 일치 (1-4 코어 → 5 운영 준비 → 6 하네스/스크럼 → 7 Outbound Feedback → 8 협업 통합)
+- **Phase 변경**: 3개 문서의 Phase 번호와 순서 일치 (1-4 코어 → 5 운영 준비 → 6 하네스/스크럼 → 7 Outbound Feedback → 8 협업 통합 → 9 인터랙티브 HTML 임베드)
 
 ### 검토 출력 형식
 

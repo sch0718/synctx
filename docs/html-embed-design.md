@@ -108,11 +108,17 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 | `<script defer src="상대경로">` | 문서에 module 스크립트가 없을 때만 지원한다. `<body>`의 마지막 자식 뒤로 옮겨 넣고, 여러 개면 원래 순서를 지킨다. 문서를 다 읽은 뒤 실행되고 다른 classic 스크립트보다 나중이라는 순서는 유지된다. 실행 순간의 `document.readyState`는 `interactive`가 아니라 `loading`이다 |
 | `<script defer>`와 `<script type="module">`이 함께 있음 | 오류 (지원하지 않음). 둘은 문서를 다 읽은 뒤 등장 순서대로 실행되는 같은 대기열을 쓴다. defer만 classic 인라인으로 바꾸면 module보다 먼저 실행된다 |
 | `<script async src="…">` | 오류 (지원하지 않음). 인라인 스크립트에서는 `async`가 무시되어 실행 시점이 달라지기 때문이다 |
-| `<script type="module">` | 같은 자리에 넣는다(인라인 module도 기본으로 지연 실행된다). 안에 상대 경로 `import`가 있으면 오류 |
+| `<script type="module">` | 같은 자리에 넣는다(인라인 module도 기본으로 지연 실행된다) |
+| import | module의 정적 import와 모든 인라인 스크립트의 동적 `import()`는 허용 출처의 https 문자열 리터럴만 허용한다. 상대 경로·bare specifier·템플릿 치환·리터럴이 아닌 인자(연산자·메서드 호출이 붙은 경우 포함)는 오류다. 주석이 끼어 있어도 검사한다. 판단할 수 없으면 거부하는 보수적 규칙이라 문자열 안의 import 비슷한 글자도 거부될 수 있다 |
+| `<script defer>`와 외부 defer 스크립트가 함께 있음 | 오류 (지원하지 않음). 실행 순서를 보존할 수 없다 |
+| `<video>`·`<audio>`·`<source>`·`<iframe>`·`<object>`·`<embed>`·`<base>`, SVG `<image>`·`<use>`의 외부 참조 | 오류 (지원하지 않음) |
+| `<link rel="icon">` | `data:` URI로 바꾼다. 그 밖의 상대 경로 `<link>`(preload 등)는 오류 |
 | CSS `url(상대경로)`, `<img src>` | `data:` URI로 바꾼다. MIME은 확장자로 정한다. 글꼴(`woff`, `woff2`, `ttf`)도 포함하며, Viewer CSP의 `font-src`에 `data:`를 더한다(6장 5번) |
 | CSS `@import` | 오류 (지원하지 않음) |
 | `http(s)://`, `//` 절대 주소 | 출처(스킴 + 호스트 + 포트)가 `allowed_origins`의 항목과 정확히 같으면 그대로 두고, 아니면 오류. `//`로 시작하는 주소는 srcdoc에서 스킴이 정해지지 않으므로 오류. `http://`는 항목에 올 수 없으므로 항상 오류 |
 | `data:`, `#fragment`, `about:` | 그대로 둔다 |
+
+해석할 수 없는 주소(`https://[` 등)는 `disallowed_host`, 해석할 수 없는 상대 경로는 `unsupported`로 처리한다.
 
 - 상대 경로의 기준은 그 경로가 적힌 파일이다.
   - HTML의 속성, `<style>`, `style` 속성 안의 경로는 진입 HTML 위치를 기준으로 푼다.
@@ -123,7 +129,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 
 ### 실행 중 네트워크 정책 (CSP meta 주입)
 
-정적 검사는 JS가 실행 중에 만든 주소(`fetch`, `Image.src`, 동적 `<script>`)를 잡지 못한다. 출처가 `null`이어도 요청 송신 자체는 막히지 않는다. 그래서 합본의 `<head>` 맨 앞, 즉 모든 스크립트보다 앞에 CSP meta를 넣는다. `<head>`가 없으면 만든다.
+정적 검사는 JS가 실행 중에 만든 주소(`fetch`, `Image.src`, 동적 `<script>`)를 잡지 못한다. 출처가 `null`이어도 요청 송신 자체는 막히지 않는다. 그래서 모든 스크립트보다 앞에 CSP meta를 넣는다. 위치는 앞에 공백·주석만 있는 doctype이면 그 바로 뒤, 아니면 문서 맨 앞이다. 스크립트 뒤에 온 doctype은 따라가지 않는다. 브라우저는 이 meta를 `<head>`의 첫 요소로 해석한다.
 
 ```html
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' {H}; style-src 'unsafe-inline' {H}; img-src data: {H}; font-src data: {H}; connect-src {H|'none'}; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'">
@@ -172,7 +178,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 
 ## 6. Viewer
 
-1. `renderer.render_markdown`이 ` ```synctx-html ` 블록을 `<div class="synctx-html-slot" data-slot="N"></div>`로 바꾸고, 블록 내용은 따로 넘긴다.
+1. `embed_view.prepare`가 렌더링 전에 ` ```synctx-html ` 블록을 `<div class="synctx-html-slot" data-slot="N"></div>`로 바꾸고, 블록 내용은 따로 넘긴다.
 2. `app._render_file_response`가 `_sanitize_html`을 **거친 뒤** 각 자리표시를 `to_iframe` 결과로 바꾼다. sanitizer는 그대로 두므로 Markdown 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지워진다.
 3. `html_embed.enabled=false`인 저장소에서는 자리표시를 안내 상자로 바꾼다. 안내 상자에는 "이 저장소는 HTML 실행이 허용되지 않음"과 `src` 소스 보기 링크를 넣는다.
 4. 합본에 실패하면 자리표시를 오류 상자로 바꾼다. 오류 상자에는 사유와 `src` 경로를 넣는다. 페이지의 나머지는 그대로 렌더링한다.
@@ -186,6 +192,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
    - `allowed_origins`가 비어 있지 않으면, 정적 참조가 없어도 JS가 실행 중에 허용 CDN 주소를 만들 수 있다. 그래서 다운로드 파일의 iframe 위에 항상 "사내 CDN 접근이 필요할 수 있는 콘텐츠" 안내를 붙인다.
    - 외부 리소스를 받아 합본에 넣는 기능은 범위 밖이다.
    - `format=pdf`는 JS가 돌지 않으므로 "인터랙티브 콘텐츠: Viewer에서 보기" 안내로 바꾼다.
+   - `download_file`은 async 함수이므로 html·pdf 준비(Git 읽기와 합본)를 executor에서 실행한다.
 
 `.html` 파일을 직접 여는 화면은 지금처럼 소스 보기를 유지한다.
 
@@ -203,12 +210,12 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 - `html_embed.enabled=false` 저장소이거나 합본에 실패하면, 블록을 안내·오류 문구를 담은 `{{html}}` 매크로로 바꾸고 동기화는 계속한다(5장 이스케이프 규칙 적용). 실패는 SyncReport와 메트릭에 남긴다.
 - OpenProject 대상 본문에서는 블록을 "인터랙티브 콘텐츠: Viewer에서 보기" 링크로 바꾼다.
 
-### 7.2 페이지 문법 (구현 첫 단계에서 확인)
+### 7.2 페이지 문법 (2026-10-09 확인)
 
-지금은 페이지를 `markdown/1.2` 문법으로 보낸다(`XWikiTargetConfig.syntax`). 이번 실험 페이지는 모두 `xwiki/2.1`이었으므로, `markdown/1.2` 안에서 `{{html}}` 매크로가 실행되는지는 **아직 확인하지 않았다**.
+페이지는 지금처럼 `markdown/1.2` 문법으로 보낸다(`XWikiTargetConfig.syntax`). 로컬 XWiki 16.10.17에서 `markdown/1.2` 페이지 안의 `{{html clean="false"}}` 매크로가 sandbox srcdoc iframe을 그대로 내보내고, iframe 안의 스크립트도 실행되는 것을 확인했다. 앞뒤의 Markdown 문단도 정상으로 렌더링됐다.
 
-- 동작하면 그대로 `markdown/1.2`로 보낸다.
-- 동작하지 않으면 블록이 있는 페이지만 `xwiki/2.1`로 보낸다. 이 경우 Markdown 본문의 변환 방법은 별도로 정해야 하고, 이 설계의 범위를 넘으므로 다시 검토한다.
+- 전제: XWiki 기본 배포(Standard Flavor)에는 `markdown/1.2` 파서가 없다. "CommonMark Markdown Syntax 1.2" 확장(`org.xwiki.contrib.markdown:syntax-markdown-commonmark12`, 확인 버전 8.9.1)이 설치되어 있어야 한다. 기존 문서(`xwiki-api-reference.md`, `production-service-design.md` 4장)가 이미 이 확장을 전제로 한다.
+- 이 확인은 위키 소유자 계정으로 작성한 페이지로 했다. 공간 한정 스크립트 권한만 가진 동기화 계정의 경우는 종단 확인에서 다시 본다.
 
 ### 7.3 다시 처리할 조건
 
@@ -224,6 +231,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 
 1. **역참조 색인 (두 번째 관문)**
    - 동기화 상태에 `{묶음 파일 경로: [그 파일을 쓴 md 경로]}`를 저장한다. `BundleResult.files`로 만든다.
+   - 구현은 정방향 맵(`RepoState.html_dependencies`: md → 의존 경로)을 저장하고, 역참조는 실행 때 계산한다.
    - `diff_since` 결과 중 `.md`가 아닌 경로가 색인에 있으면, 해당 md를 처리 대상에 넣는다.
    - 전체 재스캔 때는 색인을 새로 만든다.
    - 합본에 실패하면 `BundleError.files`(실패 전까지 읽은 경로)와 `BundleError.missing`(찾지 못한 경로)을 모두 색인에 넣는다. 그래서 빠진 `motion.js`를 나중에 추가하면 그 추가가 `diff_since`에 잡혀 md를 다시 처리한다.
@@ -328,8 +336,9 @@ repositories:
 
 ## 10. 관측성
 
-- 메트릭 `synctx_html_bundle_total{service, repo_id, result}`를 추가한다. `result`는 `ok`, `disabled`, `missing_file`, `disallowed_host`, `too_large`, `invalid_block`, `unsupported` 중 하나다.
+- 메트릭 `synctx_html_bundle_total{service, repo_id, result}`를 추가한다. `result`는 `ok`, `disabled`, `missing_file`, `outside_repo`, `disallowed_host`, `too_large`, `invalid_block`, `unsupported` 중 하나다.
 - 합본 실패는 `synctx_sync_failures_total{error_type="html_bundle"}`에도 센다. 이때 페이지 동기화 자체는 성공으로 처리한다.
+- Sync 실행 보고서(`SyncReport.summary()`)의 `html_errors`에 문서 경로·사유·메시지를 남긴다. 게시 성공·실패 수와는 따로 센다.
 - Alert: 저장소별 `disallowed_host` 또는 `too_large`가 1시간 안에 1건 이상이면 warning.
 
 ## 11. 테스트

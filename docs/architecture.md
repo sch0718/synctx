@@ -301,6 +301,7 @@ POST /api/repos/{id}/webhook        Git push 알림
 | Marp 연동 | "PDF 변환" / "출판" 버튼 | **신규** |
 | 회의 모드 | `?mode=meeting`: 메모·형광펜·회의 정리, `.md`·메모 포함 HTML 내보내기/가져오기. 서버 판단은 `meeting.py`, 화면은 `static/meeting/` | **신규 (Phase 8.1a)** |
 | front matter 분리 | 렌더링 전에 front matter를 본문에서 떼어 냄(일반 보기 포함) | **신규 (Phase 8.1a)** |
+| 인터랙티브 HTML 임베드 | ` ```synctx-html ` 블록을 `synctx_common.html_bundle`로 합본해 CSP meta가 든 sandbox srcdoc iframe으로 렌더링. sanitizer 뒤에 자리표시를 채운다(`embed_view.py`) | **신규 (Phase 9)** |
 
 ### 3.4 Marp 연동
 
@@ -732,6 +733,7 @@ viewer/src/
 │   ├── render_markdown()
 │   ├── rewrite_links()
 │   └── extract_title()
+├── embed_view.py       # synctx-html 자리표시·iframe 채우기·PDF 치환
 └── static/
     └── style.css       # 프론트엔드 스타일시트
 ```
@@ -768,6 +770,7 @@ sync/src/
 ├── sync_engine.py      # 동기화 오케스트레이션(run_sync 중심)
 ├── harness_validator.py # synctx validate-harness (synctx_common.harness 위임)
 ├── state.py            # state.json atomic read/write
+├── embed_sync.py       # synctx-html 분석·합본 반영 해시·XWiki 매크로 변환
 ├── lease.py            # 실행 잠금 (O_CREAT|O_EXCL 기반)
 ├── sync_converters/
 │   └── mermaid.py      # Mermaid → SVG 변환
@@ -1100,3 +1103,13 @@ helm upgrade synctx ./helm/synctx \
 4. 8.2 Jitsi 내장과 발표자 따라가기
 5. 8.3 Collab Gateway(메신저 어댑터, 회의 안내·알림)
 6. 8.4 `/synctx` 명령과 채널
+
+### Phase 9: 인터랙티브 HTML 임베드
+
+1. `HtmlEmbedConfig`·`PlatformHtmlEmbedConfig` 설정과 출처 검사
+2. `synctx_common.html_bundle`: 블록 파싱, 합본, CSP meta, 이스케이프
+3. Viewer 렌더링·CSP·다운로드
+4. Sync Engine 변환과 다시 처리할 조건(역참조 색인, 합본 반영 해시, 정책 지문)
+5. 메트릭·Alert, 운영 문서
+
+설계: `docs/html-embed-design.md`. Viewer(Phase 1)와 XWiki Sync(Phase 3)에 의존한다.
