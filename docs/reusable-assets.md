@@ -100,6 +100,7 @@
   - `build_print_html()` — 인쇄용 HTML 조합
 - **대상 서비스**: Viewer Service (문서 PDF 다운로드용. Marp PDF는 Marp CLI가 처리)
 - **비고**: `markdown_converter/src/md_preview/pdf_converter.py`에 더 발전된 버전(Remote CDP 지원)이 있음
+- **상태**: 한 번 반입했으나 호출하는 곳이 없어 제거함. 문서 PDF 다운로드를 구현할 때 다시 반입
 
 ### 1.7 테마 CSS (7종)
 
@@ -257,7 +258,6 @@ cp markdown_converter/src/md_preview/renderer.py   synctx/services/viewer/src/re
 
 # Sync Engine으로
 cp "example-infra/10. 문서/문서변환/mermaid_to_svg.py"  synctx/services/sync/src/converters/mermaid.py
-cp "example-infra/10. 문서/문서변환/convert_to_pdf.py"  synctx/services/viewer/src/converters/pdf.py
 
 # CDN 초기 데이터 (docsify 브랜치에서)
 # feature/docsify 브랜치의 docs/cdn/ → synctx/cdn-data/

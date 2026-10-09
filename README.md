@@ -291,7 +291,6 @@ synctx/
 │   │       ├── renderer.py            # Markdown → HTML 렌더링
 │   │       ├── meeting.py             # 회의 모드 판단·설정 JSON·메모 포함 HTML 조립
 │   │       ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·CSS
-│   │       ├── converters/pdf.py      # PDF 변환 유틸리티
 │   │       └── static/style.css       # 프론트엔드 스타일시트
 │   │
 │   ├── cdn/                           # CDN Service

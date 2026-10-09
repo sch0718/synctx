@@ -732,8 +732,6 @@ viewer/src/
 │   ├── render_markdown()
 │   ├── rewrite_links()
 │   └── extract_title()
-├── converters/
-│   └── pdf.py          # PDF 변환 유틸리티
 └── static/
     └── style.css       # 프론트엔드 스타일시트
 ```
