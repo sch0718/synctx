@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from synctx_common.config import HtmlEmbedConfig
-from embed_sync import analyze, effective_sha, policy_fingerprint, render_for_openproject, render_for_xwiki
+from embed_sync import analyze, effective_sha, policy_fingerprint, publisher_marker, render_for_openproject, render_for_xwiki
 from state import RepoState
 
 ORIGIN = "https://cdn.synctx.local"
@@ -410,10 +410,12 @@ def test_trusted_repo_uses_dedicated_xwiki_account(tmp_path, monkeypatch):
 async def test_trusted_repo_page_is_published_by_dedicated_account(tmp_path, monkeypatch):
     eng = engine(tmp_path, monkeypatch)
     trusted_client = MagicMock()
+    trusted_client.user = "htmlbot"
     trusted_client.upsert_page = AsyncMock(return_value=True)
     eng._repo_xwiki_clients["XWIKI_HTML_CRED"] = trusted_client
     await eng._process_single_file(trusted_profile(), git_manager({MD: MD_TEXT, **FILES}), "A", MD, "xwiki", "1")
     trusted_client.upsert_page.assert_awaited_once()
+    assert trusted_client.upsert_page.await_args.args[3].endswith(publisher_marker("htmlbot"))
     eng.xwiki_client.upsert_page.assert_not_awaited()
     await eng._process_single_file(profile(enabled=False), git_manager({MD: MD_TEXT, **FILES}), "A", MD, "xwiki", "1")
     eng.xwiki_client.upsert_page.assert_awaited_once()
@@ -426,3 +428,79 @@ def test_effective_sha_changes_when_only_rendering_changes(monkeypatch):
     monkeypatch.setattr(embed_sync, "to_iframe", lambda *a, **k: original(*a, **k).replace("border:0", "border:1px"))
     after = effective_sha(BODY, analyze(BODY, "docs/a.md", POLICY, reader(FILES)), "fp")
     assert before != after
+
+
+PLAIN = "docs/plain.md"
+
+
+def dedicated_client(eng, env="XWIKI_HTML_CRED", user="htmlbot"):
+    client = MagicMock()
+    client.user = user
+    client.upsert_page = AsyncMock(return_value=True)
+    eng._repo_xwiki_clients[env] = client
+    return client
+
+
+def pages(client):
+    contents = {call.args[1]: call.args[3] for call in client.upsert_page.await_args_list}
+    client.upsert_page.reset_mock()
+    return contents
+
+
+@pytest.mark.asyncio
+async def test_revoking_trust_republishes_every_page_by_default_account_with_new_content(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n\n{{velocity}}$xcontext.user{{/velocity}}\n"
+    eng = engine(tmp_path, monkeypatch)
+    trusted = dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    by_trusted = pages(trusted)
+    assert set(by_trusted) == {"reconfig", "plain"}
+
+    await eng.run_sync(profile(enabled=False))
+
+    by_default = pages(eng.xwiki_client)
+    assert set(by_default) == {"reconfig", "plain"}
+    assert by_default["plain"] != by_trusted["plain"]
+    assert by_trusted["plain"].endswith(publisher_marker("htmlbot"))
+    assert "synctx-publisher" not in by_default["plain"]
+    assert StateManager(str(tmp_path)).get_state("r").xwiki_publisher == ""
+
+
+@pytest.mark.asyncio
+async def test_changing_dedicated_account_republishes_with_new_content(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    first = dedicated_client(eng, "XWIKI_HTML_CRED", "htmlbot")
+    await eng.run_sync(trusted_profile())
+    before = pages(first)
+
+    second = dedicated_client(eng, "XWIKI_HTML_CRED2", "htmlbot2")
+    await eng.run_sync(trusted_profile("XWIKI_HTML_CRED2"))
+
+    after = pages(second)
+    assert set(after) == {"reconfig", "plain"}
+    assert after["plain"] != before["plain"]
+
+
+@pytest.mark.asyncio
+async def test_unchanged_publisher_does_not_republish(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    trusted = dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    pages(trusted)
+    assert await eng.run_sync(trusted_profile()) is None
+    assert pages(trusted) == {}
+
+
+def test_xwiki_client_exposes_basic_auth_user(monkeypatch):
+    from targets.xwiki import XWikiClient
+    monkeypatch.setenv("XWIKI_HTML_CRED", "htmlbot:se:cret")
+    client = XWikiClient(XWikiTargetConfig(base_url="https://xwiki.internal", auth=TargetAuthConfig(type="basic", credential_env="XWIKI_HTML_CRED")))
+    assert client.user == "htmlbot"
+
+
+def test_state_round_trip_keeps_xwiki_publisher():
+    restored = RepoState.from_dict(RepoState(repo_id="r", xwiki_publisher="htmlbot").to_dict())
+    assert restored.xwiki_publisher == "htmlbot"
+    assert RepoState.from_dict({"repo_id": "r"}).xwiki_publisher == ""

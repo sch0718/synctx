@@ -87,5 +87,13 @@ def render_for_xwiki(body: str, analysis: MarkdownAnalysis) -> str:
     return replace_blocks(body, lambda index, match: xwiki_html_macro(analysis.outcomes[index].fragment))
 
 
+def publisher_marker(publisher: str) -> str:
+    """전용 계정 게시본 끝에 붙이는 표식. XWiki는 내용이 바뀐 저장에서만 content author를 갱신하므로,
+    게시 계정이 바뀌면 본문도 달라지게 해 작성자(=스크립트 실행 권한)가 새 계정으로 넘어가게 한다."""
+    if not publisher:
+        return ""
+    return "\n\n{{comment}}synctx-publisher: " + hashlib.sha256(publisher.encode("utf-8")).hexdigest()[:12] + "{{/comment}}\n"
+
+
 def render_for_openproject(body: str, viewer_url: str) -> str:
     return replace_blocks(body, lambda index, match: OP_REPLACEMENT.format(url=viewer_url))

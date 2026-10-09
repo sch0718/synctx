@@ -23,7 +23,15 @@ from urllib.parse import quote
 
 from synctx_common.html_bundle import repo_reader
 from synctx_common.observability import html_bundle_total
-from embed_sync import MarkdownAnalysis, analyze, effective_sha, policy_fingerprint, render_for_openproject, render_for_xwiki
+from embed_sync import (
+    MarkdownAnalysis,
+    analyze,
+    effective_sha,
+    policy_fingerprint,
+    publisher_marker,
+    render_for_openproject,
+    render_for_xwiki,
+)
 from synctx_common.frontmatter import parse_frontmatter
 
 logger = logging.getLogger(__name__)
@@ -159,13 +167,15 @@ class SyncEngine:
             fingerprint = policy_fingerprint(repo.html_embed)
             index_missing = state.html_dependencies is None
             policy_changed = state.html_policy_fingerprint != fingerprint
+            publisher = self._xwiki_publisher(repo)
+            publisher_changed = state.xwiki_publisher != publisher
 
-            if last_sha == head_sha and not index_missing and not policy_changed:
+            if last_sha == head_sha and not index_missing and not policy_changed and not publisher_changed:
                 logger.info(f"Repo {repo.id} is up to date (SHA: {head_sha})")
                 return None
 
             changes = [] if last_sha == head_sha else self._get_changes(git_manager, last_sha, repo)
-            if index_missing:
+            if index_missing or publisher_changed:
                 changes = self._merge_changes(changes, self._get_all_files(git_manager))
             changes = self._expand_html_changes(changes, state, include_indexed=policy_changed and not index_missing)
             if not changes:
@@ -173,6 +183,7 @@ class SyncEngine:
                 if not dry_run:
                     state.last_successful_sha = head_sha
                     self._mark_html_state(state, fingerprint)
+                    state.xwiki_publisher = publisher
                     self.state_manager.save_state(repo.id, state)
                 return None
 
@@ -213,6 +224,7 @@ class SyncEngine:
             if not has_blocking_failure and report.fail_count == 0 and not dry_run:
                 state.last_successful_sha = head_sha
                 self._mark_html_state(state, fingerprint)
+                state.xwiki_publisher = publisher
                 sync_last_success_timestamp.labels(repo_id=repo.id).set(time.time())
                 sync_runs_total.labels(repo_id=repo.id, result="success").inc()
                 logger.info(f"Sync completed for {repo.id}. {report.summary()}")
@@ -269,7 +281,11 @@ class SyncEngine:
         analysis = self._html_analysis(repo, git_manager, path, body)
         if state is not None:
             self._update_html_index(state, path, analysis)
-        return effective_sha(content, analysis, policy_fingerprint(repo.html_embed))
+        sha = effective_sha(content, analysis, policy_fingerprint(repo.html_embed))
+        publisher = self._xwiki_publisher(repo)
+        if publisher:
+            sha = hashlib.sha256(f"{sha}\0{publisher}".encode()).hexdigest()
+        return sha
 
     def _update_html_index(self, state: RepoState, path: str, analysis: MarkdownAnalysis) -> None:
         """게시 여부와 상관없이 합본을 만든 직후 색인을 갱신한다(참조만 바뀐 경우도 놓치지 않게)."""
@@ -429,7 +445,7 @@ class SyncEngine:
             body = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
             client = self._xwiki_client_for(repo)
             body = await self._process_mermaid_blocks(space, page, body, client)
-            await client.upsert_page(space, page, title, body)
+            await client.upsert_page(space, page, title, body + publisher_marker(self._xwiki_publisher(repo)))
             return f"xwiki:{space}.{page}"
         elif target == "openproject" and self.op_client:
             if not fm:
@@ -447,7 +463,7 @@ class SyncEngine:
                 body_xwiki = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
                 client = self._xwiki_client_for(repo)
                 body_xwiki = await self._process_mermaid_blocks(space, page, body_xwiki, client)
-                await client.upsert_page(space, page, title, body_xwiki)
+                await client.upsert_page(space, page, title, body_xwiki + publisher_marker(self._xwiki_publisher(repo)))
                 results.append(f"xwiki:{space}.{page}")
             if self.op_client and fm:
                 payload = self._build_op_payload(fm, self._render_html_blocks_for_op(repo, path, body), path)
@@ -553,6 +569,13 @@ class SyncEngine:
             client = XWikiClient(target.model_copy(update={"auth": target.auth.model_copy(update={"credential_env": env})}))
             self._repo_xwiki_clients[env] = client
         return client
+
+    def _xwiki_publisher(self, repo: RepoProfile) -> str:
+        """전용 계정으로 게시하면 그 사용자 이름, 기본 계정이면 빈 문자열."""
+        client = self._xwiki_client_for(repo)
+        if client is None or client is self.xwiki_client:
+            return ""
+        return client.user or repo.html_embed.xwiki_credential_env or ""
 
     def _html_analysis(self, repo: RepoProfile, git_manager: GitRepoManager, path: str, body: str) -> MarkdownAnalysis:
         key = (repo.id, path, hashlib.sha256(body.encode()).hexdigest())

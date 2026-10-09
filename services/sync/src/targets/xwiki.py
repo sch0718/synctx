@@ -15,12 +15,14 @@ class XWikiClient:
         
         # Setup auth
         auth = None
+        self.user = ""
         if config.auth.type == "basic":
             import os
             cred = os.getenv(config.auth.credential_env)
             if cred and ":" in cred:
                 user, pwd = cred.split(":", 1)
                 auth = (user, pwd)
+                self.user = user
             else:
                 logger.warning(f"Invalid or missing XWiki basic auth in env {config.auth.credential_env}")
                 
