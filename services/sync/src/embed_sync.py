@@ -46,19 +46,25 @@ def policy_fingerprint(policy: HtmlEmbedConfig) -> str:
     return hashlib.sha256(json.dumps(policy.model_dump(), sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def _outcome(status: str, fragment: str, deps: Tuple[str, ...], message: str = "") -> BlockOutcome:
+    """digest는 XWiki에 실제로 보낼 매크로 문자열의 SHA다. 합본 내용뿐 아니라 렌더링 방식이 바뀌어도 다시 게시된다."""
+    digest = hashlib.sha256(xwiki_html_macro(fragment).encode("utf-8")).hexdigest()
+    return BlockOutcome(status, fragment, digest, deps, message)
+
+
 def _analyze_block(text: str, md_path: str, policy: HtmlEmbedConfig, read) -> BlockOutcome:
     try:
         block = parse_block(text, md_path)
     except BundleError as exc:
-        return BlockOutcome(exc.reason, render_notice(ERROR_PREFIX + str(exc), None), f"error:{exc.reason}:{exc}", (), str(exc))
+        return _outcome(exc.reason, render_notice(ERROR_PREFIX + str(exc), None), (), str(exc))
     if not policy.enabled:
-        return BlockOutcome("disabled", render_notice(DISABLED_MESSAGE, block.src), "disabled", (block.src,))
+        return _outcome("disabled", render_notice(DISABLED_MESSAGE, block.src), (block.src,))
     try:
         result = bundle(read, block.src, policy)
     except BundleError as exc:
         deps = tuple(sorted(set(exc.files) | set(exc.missing) | {block.src}))
-        return BlockOutcome(exc.reason, render_notice(ERROR_PREFIX + str(exc), block.src), f"error:{exc.reason}:{exc}", deps, str(exc))
-    return BlockOutcome("ok", to_iframe(result, block.aspect, block.height, block.title), result.sha256, tuple(result.files))
+        return _outcome(exc.reason, render_notice(ERROR_PREFIX + str(exc), block.src), deps, str(exc))
+    return _outcome("ok", to_iframe(result, block.aspect, block.height, block.title), tuple(result.files))
 
 
 def analyze(body: str, md_path: str, policy: HtmlEmbedConfig, read) -> MarkdownAnalysis:

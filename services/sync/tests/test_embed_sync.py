@@ -402,3 +402,12 @@ async def test_trusted_repo_page_is_published_by_dedicated_account(tmp_path, mon
     eng.xwiki_client.upsert_page.assert_not_awaited()
     await eng._process_single_file(profile(enabled=False), git_manager({MD: MD_TEXT, **FILES}), "A", MD, "xwiki", "1")
     eng.xwiki_client.upsert_page.assert_awaited_once()
+
+
+def test_effective_sha_changes_when_only_rendering_changes(monkeypatch):
+    import embed_sync
+    before = effective_sha(BODY, analyze(BODY, "docs/a.md", POLICY, reader(FILES)), "fp")
+    original = embed_sync.to_iframe
+    monkeypatch.setattr(embed_sync, "to_iframe", lambda *a, **k: original(*a, **k).replace("border:0", "border:1px"))
+    after = effective_sha(BODY, analyze(BODY, "docs/a.md", POLICY, reader(FILES)), "fp")
+    assert before != after
