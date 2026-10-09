@@ -40,6 +40,8 @@ class RepoState:
     last_run_id: str = ""
     synced_files: Dict[str, SyncedFileState] = field(default_factory=dict)
     pending_failures: List[PendingFailure] = field(default_factory=list)
+    html_dependencies: Optional[Dict[str, List[str]]] = None
+    html_policy_fingerprint: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -51,6 +53,8 @@ class RepoState:
                 path: asdict(sf) for path, sf in self.synced_files.items()
             },
             "pending_failures": [asdict(pf) for pf in self.pending_failures],
+            "html_dependencies": self.html_dependencies,
+            "html_policy_fingerprint": self.html_policy_fingerprint,
         }
         return d
 
@@ -61,6 +65,8 @@ class RepoState:
             repo_id=data.get("repo_id", ""),
             last_successful_sha=data.get("last_successful_sha"),
             last_run_id=data.get("last_run_id", ""),
+            html_dependencies=data.get("html_dependencies"),
+            html_policy_fingerprint=data.get("html_policy_fingerprint", ""),
         )
         for path, sf_data in data.get("synced_files", {}).items():
             state.synced_files[path] = SyncedFileState(**sf_data)

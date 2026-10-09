@@ -19,6 +19,11 @@ from state import StateManager, RepoState
 from lease import repo_lock
 from targets.xwiki import XWikiClient
 from targets.openproject import OpenProjectClient
+from urllib.parse import quote
+
+from synctx_common.html_bundle import repo_reader
+from synctx_common.observability import html_bundle_total
+from embed_sync import MarkdownAnalysis, analyze, render_for_openproject, render_for_xwiki
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +113,8 @@ class SyncEngine:
         self.op_client = None
         if config.targets.openproject:
             self.op_client = OpenProjectClient(config.targets.openproject)
+        self._analysis_cache: Dict[Tuple[str, str, str], MarkdownAnalysis] = {}
+        self._analysis_by_path: Dict[Tuple[str, str], MarkdownAnalysis] = {}
 
     async def close(self):
         if self.xwiki_client:
@@ -341,6 +348,7 @@ class SyncEngine:
         if target == "xwiki" and self.xwiki_client:
             space, page = self._derive_xwiki_target(repo, path)
             title = fm.get("title", page) if fm else page
+            body = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
             body = await self._process_mermaid_blocks(space, page, body)
             await self.xwiki_client.upsert_page(space, page, title, body)
             return f"xwiki:{space}.{page}"
@@ -348,7 +356,7 @@ class SyncEngine:
             if not fm:
                 logger.warning(f"No frontmatter found for OP target {path}, using defaults")
                 fm = {}
-            payload = self._build_op_payload(fm, body, path)
+            payload = self._build_op_payload(fm, self._render_html_blocks_for_op(repo, path, body), path)
             external_key = f"{repo.id}:{path}"
             await self._sync_to_openproject(repo, path, project_id, payload, fm)
             return f"openproject:{project_id}:{external_key}"
@@ -357,11 +365,12 @@ class SyncEngine:
             if self.xwiki_client:
                 space, page = self._derive_xwiki_target(repo, path)
                 title = fm.get("title", page) if fm else page
-                body_xwiki = await self._process_mermaid_blocks(space, page, body)
+                body_xwiki = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
+                body_xwiki = await self._process_mermaid_blocks(space, page, body_xwiki)
                 await self.xwiki_client.upsert_page(space, page, title, body_xwiki)
                 results.append(f"xwiki:{space}.{page}")
             if self.op_client and fm:
-                payload = self._build_op_payload(fm, body, path)
+                payload = self._build_op_payload(fm, self._render_html_blocks_for_op(repo, path, body), path)
                 await self._sync_to_openproject(repo, path, project_id, payload, fm)
                 results.append(f"openproject:{project_id}")
             return ",".join(results) if results else None
@@ -452,6 +461,28 @@ class SyncEngine:
             if entry.type == "file" and entry.name.endswith(".md"):
                 changes.append(("A", entry.path))
         return changes
+
+    def _html_analysis(self, repo: RepoProfile, git_manager: GitRepoManager, path: str, body: str) -> MarkdownAnalysis:
+        key = (repo.id, path, hashlib.sha256(body.encode()).hexdigest())
+        analysis = self._analysis_cache.get(key)
+        if analysis is None:
+            analysis = analyze(body, path, repo.html_embed, repo_reader(git_manager))
+            self._analysis_cache[key] = analysis
+        self._analysis_by_path[(repo.id, path)] = analysis
+        return analysis
+
+    def _render_html_blocks_for_xwiki(self, repo: RepoProfile, git_manager: GitRepoManager, path: str, body: str) -> str:
+        analysis = self._html_analysis(repo, git_manager, path, body)
+        for outcome in analysis.outcomes:
+            html_bundle_total.labels(service="sync", repo_id=repo.id, result=outcome.status).inc()
+            if outcome.status not in ("ok", "disabled"):
+                sync_failures_total.labels(repo_id=repo.id, target="xwiki", error_type="html_bundle").inc()
+                logger.warning(f"synctx-html block failed in {path}: [{outcome.status}] {outcome.message}")
+        return render_for_xwiki(body, analysis)
+
+    def _render_html_blocks_for_op(self, repo: RepoProfile, path: str, body: str) -> str:
+        viewer_url = f"{self.config.runtime.public_base_url.rstrip('/')}/view/{repo.id}/{quote(path)}"
+        return render_for_openproject(body, viewer_url)
 
     def _derive_xwiki_target(self, repo: RepoProfile, path: str) -> Tuple[str, str]:
         """경로에서 XWiki Space와 Page 이름을 추출.
