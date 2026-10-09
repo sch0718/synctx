@@ -121,10 +121,13 @@ class SyncEngine:
             self.op_client = OpenProjectClient(config.targets.openproject)
         self._analysis_cache: Dict[Tuple[str, str, str], MarkdownAnalysis] = {}
         self._analysis_by_path: Dict[Tuple[str, str], MarkdownAnalysis] = {}
+        self._repo_xwiki_clients: Dict[str, XWikiClient] = {}
 
     async def close(self):
         if self.xwiki_client:
             await self.xwiki_client.close()
+        for client in self._repo_xwiki_clients.values():
+            await client.close()
         if self.op_client:
             await self.op_client.close()
 
@@ -397,7 +400,7 @@ class SyncEngine:
             if target == "xwiki" and self.xwiki_client:
                 if on_delete == "delete":
                     space, page = self._derive_xwiki_target(repo, path)
-                    await self.xwiki_client.delete_page(space, page)
+                    await self._xwiki_client_for(repo).delete_page(space, page)
                 else:
                     logger.info(f"on_delete=mark but XWiki has no mark_deleted, skipping: {path}")
             elif target == "openproject" and self.op_client:
@@ -424,8 +427,9 @@ class SyncEngine:
             space, page = self._derive_xwiki_target(repo, path)
             title = fm.get("title", page) if fm else page
             body = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
-            body = await self._process_mermaid_blocks(space, page, body)
-            await self.xwiki_client.upsert_page(space, page, title, body)
+            client = self._xwiki_client_for(repo)
+            body = await self._process_mermaid_blocks(space, page, body, client)
+            await client.upsert_page(space, page, title, body)
             return f"xwiki:{space}.{page}"
         elif target == "openproject" and self.op_client:
             if not fm:
@@ -441,8 +445,9 @@ class SyncEngine:
                 space, page = self._derive_xwiki_target(repo, path)
                 title = fm.get("title", page) if fm else page
                 body_xwiki = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
-                body_xwiki = await self._process_mermaid_blocks(space, page, body_xwiki)
-                await self.xwiki_client.upsert_page(space, page, title, body_xwiki)
+                client = self._xwiki_client_for(repo)
+                body_xwiki = await self._process_mermaid_blocks(space, page, body_xwiki, client)
+                await client.upsert_page(space, page, title, body_xwiki)
                 results.append(f"xwiki:{space}.{page}")
             if self.op_client and fm:
                 payload = self._build_op_payload(fm, self._render_html_blocks_for_op(repo, path, body), path)
@@ -537,6 +542,18 @@ class SyncEngine:
                 changes.append(("A", entry.path))
         return changes
 
+    def _xwiki_client_for(self, repo: RepoProfile) -> Optional[XWikiClient]:
+        """HTML 실행을 허용한 저장소는 스크립트 권한이 있는 전용 계정으로 게시한다(설정 검사로 기본 계정과 분리됨)."""
+        env = repo.html_embed.xwiki_credential_env if repo.html_embed.enabled else None
+        if not env or not self.config.targets.xwiki:
+            return self.xwiki_client
+        client = self._repo_xwiki_clients.get(env)
+        if client is None:
+            target = self.config.targets.xwiki
+            client = XWikiClient(target.model_copy(update={"auth": target.auth.model_copy(update={"credential_env": env})}))
+            self._repo_xwiki_clients[env] = client
+        return client
+
     def _html_analysis(self, repo: RepoProfile, git_manager: GitRepoManager, path: str, body: str) -> MarkdownAnalysis:
         key = (repo.id, path, hashlib.sha256(body.encode()).hexdigest())
         analysis = self._analysis_cache.get(key)
@@ -574,7 +591,7 @@ class SyncEngine:
             space = repo.id
         return space, page
 
-    async def _process_mermaid_blocks(self, space: str, page: str, body: str) -> str:
+    async def _process_mermaid_blocks(self, space: str, page: str, body: str, client: Optional[XWikiClient] = None) -> str:
         """Markdown 본문에서 mermaid 블록을 찾아 SVG로 변환하고 첨부파일로 업로드 후 이미지 링크로 치환."""
         import re
         from sync_converters.mermaid import convert_mermaid_to_svg
@@ -590,8 +607,9 @@ class SyncEngine:
                 svg_bytes = convert_mermaid_to_svg(mermaid_code)
                 filename = f"mermaid_{i}.svg"
 
-                if self.xwiki_client:
-                    await self.xwiki_client.upload_attachment(space, page, filename, svg_bytes, "image/svg+xml")
+                client = client or self.xwiki_client
+                if client:
+                    await client.upload_attachment(space, page, filename, svg_bytes, "image/svg+xml")
 
                 replacement = f"![Mermaid Diagram]({filename})"
                 body = body.replace(f"```mermaid\n{mermaid_code}\n```", replacement)

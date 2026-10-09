@@ -368,3 +368,37 @@ def test_xwiki_macro_stays_on_one_line_for_multiline_bundles():
     out = render_for_xwiki(BODY, analyze(BODY, "docs/a.md", POLICY, reader(files)))
     macro_line = next(line for line in out.splitlines() if line.startswith('{{html clean="false"}}'))
     assert macro_line.endswith("{{/html}}")
+
+
+def trusted_profile(env="XWIKI_HTML_CRED"):
+    return RepoProfile(id="r", name="R", url="https://git.test/r.git", auth=RepoAuthConfig(type="none"),
+                       html_embed=HtmlEmbedConfig(enabled=True, allowed_origins=[ORIGIN], xwiki_credential_env=env))
+
+
+def test_trusted_repo_uses_dedicated_xwiki_account(tmp_path, monkeypatch):
+    import base64
+    monkeypatch.setenv("XWIKI_HTML_CRED", "htmlbot:secret")
+    eng = SyncEngine(SynctxConfig(
+        targets=TargetsConfig(xwiki=XWikiTargetConfig(base_url="https://xwiki.internal", auth=TargetAuthConfig(type="basic", credential_env="XWIKI_CRED"))),
+        sync=SyncConfig(state_path=str(tmp_path)),
+    ))
+    trusted = eng._xwiki_client_for(trusted_profile())
+    assert trusted is not eng.xwiki_client
+    assert trusted.client.auth._auth_header == "Basic " + base64.b64encode(b"htmlbot:secret").decode()
+    assert eng._xwiki_client_for(trusted_profile()) is trusted
+    assert eng._xwiki_client_for(profile(enabled=True)) is eng.xwiki_client
+    disabled = trusted_profile().model_copy(update={"html_embed": HtmlEmbedConfig(enabled=False, xwiki_credential_env="XWIKI_HTML_CRED")})
+    assert eng._xwiki_client_for(disabled) is eng.xwiki_client
+
+
+@pytest.mark.asyncio
+async def test_trusted_repo_page_is_published_by_dedicated_account(tmp_path, monkeypatch):
+    eng = engine(tmp_path, monkeypatch)
+    trusted_client = MagicMock()
+    trusted_client.upsert_page = AsyncMock(return_value=True)
+    eng._repo_xwiki_clients["XWIKI_HTML_CRED"] = trusted_client
+    await eng._process_single_file(trusted_profile(), git_manager({MD: MD_TEXT, **FILES}), "A", MD, "xwiki", "1")
+    trusted_client.upsert_page.assert_awaited_once()
+    eng.xwiki_client.upsert_page.assert_not_awaited()
+    await eng._process_single_file(profile(enabled=False), git_manager({MD: MD_TEXT, **FILES}), "A", MD, "xwiki", "1")
+    eng.xwiki_client.upsert_page.assert_awaited_once()

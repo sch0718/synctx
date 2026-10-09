@@ -293,6 +293,7 @@ repositories:
       enabled: true
       allowed_origins: ["https://cdn.corp.example.com"]
       max_bundle_bytes: 2097152
+      xwiki_credential_env: XWIKI_HTML_CREDENTIAL
 ```
 
 | 위치 | 키 | 기본값 | 설명 |
@@ -301,6 +302,7 @@ repositories:
 | `repositories[].html_embed` | `enabled` | `false` | HTML 실행 허용 여부 |
 | `repositories[].html_embed` | `allowed_origins` | `[]` | 이 저장소의 합본이 참조할 수 있는 출처. 최상위 목록의 부분집합이어야 한다 |
 | `repositories[].html_embed` | `max_bundle_bytes` | `2097152` | 합본 크기 상한 |
+| `repositories[].html_embed` | `xwiki_credential_env` | 없음 | 이 저장소 페이지를 게시할 신뢰 저장소 전용 XWiki 계정의 자격 증명 환경변수. XWiki가 대상이고 `enabled: true`면 필수이며 `targets.xwiki.auth.credential_env`와 달라야 한다 |
 
 설정을 읽을 때(pydantic validator) 다음을 검사하고, 어기면 서비스가 시작되지 않는다. Viewer와 Sync Engine은 같은 설정 모델을 쓰므로 두 서비스에서 같은 검사가 돈다.
 
@@ -312,7 +314,8 @@ repositories:
 
 ### 8.2 XWiki 권한
 
-- 동기화 계정에 **대상 공간에 한정한 스크립트 권한**을 준다. 공간의 `WebPreferences`에 `XWiki.XWikiGlobalRights`로 `users=동기화 계정`, `levels=script`, `allow=1`을 넣는다.
+- 스크립트 권한은 **신뢰 저장소 전용 계정**(`html_embed.xwiki_credential_env`)에만, **대상 공간에 한정해** 준다. 공간의 `WebPreferences`에 `XWiki.XWikiGlobalRights`로 `users=전용 계정`, `levels=script`, `allow=1`을 넣는다.
+- 기본 동기화 계정(`targets.xwiki.auth`)에는 스크립트 권한을 주지 않는다. XWiki는 페이지를 마지막으로 작성한 계정의 권한으로 매크로를 실행하므로, 비신뢰 저장소가 본문에 직접 쓴 `{{html}}`·`{{velocity}}`는 기본 계정 권한으로 걸러진다. 공간 이름은 디렉터리에서 정해져 저장소끼리 공간을 공유하므로, 권한을 공간이 아니라 계정으로 나눠야 한다(2026-10-09 최종 검토 결정).
 - 프로그래밍 권한과 위키 전체 스크립트 권한은 주지 않는다.
 - XWiki의 `attachment.download.whitelist`는 바꾸지 않는다.
 
@@ -332,7 +335,8 @@ repositories:
 | 신뢰 해제 후에도 남는 iframe | 정책 지문이 바뀌면 HEAD가 같아도 해당 md를 다시 처리한다(7.3) |
 | 큰 합본으로 페이지·DB 부하 | `max_bundle_bytes` 상한 |
 | 상단 페이지 이동·팝업 | sandbox에 `allow-top-navigation`·`allow-popups`를 주지 않는다 |
-| 동기화 계정 권한 남용 | 스크립트 권한을 공간으로 한정한다. 이 계정으로 작성되는 페이지 내용은 Git 원본에서만 나온다 |
+| 동기화 계정 권한 남용 | 스크립트 권한은 신뢰 저장소 전용 계정에만, 공간에 한정해 준다. 이 계정으로 작성되는 페이지 내용은 Git 원본에서만 나온다 |
+| 비신뢰 저장소가 본문에 `{{html}}`·`{{velocity}}`를 직접 씀 | 비신뢰 저장소는 스크립트 권한 없는 기본 계정으로 게시하므로 XWiki가 걸러 낸다. 신뢰 저장소 전용 계정은 설정 검사로 기본 계정과 분리한다 |
 
 ## 10. 관측성
 

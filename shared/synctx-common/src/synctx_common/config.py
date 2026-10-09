@@ -77,6 +77,7 @@ class HtmlEmbedConfig(BaseModel):
     enabled: bool = False
     allowed_origins: List[str] = Field(default_factory=list)
     max_bundle_bytes: int = Field(default=2097152, gt=0)
+    xwiki_credential_env: Optional[str] = None
 
     @field_validator("allowed_origins")
     @classmethod
@@ -279,6 +280,21 @@ class SynctxConfig(BaseModel):
                     f"repositories[{repo.id}].html_embed.allowed_origins에 최상위 "
                     f"html_embed.allowed_origins에 없는 출처가 있습니다: {', '.join(extra)}"
                 )
+            # 스크립트 권한은 신뢰 저장소 전용 계정에만 준다. XWiki는 페이지 작성자 권한으로 매크로를 실행하므로,
+            # 기본 동기화 계정과 같으면 비신뢰 저장소의 본문 매크로도 스크립트 권한으로 실행된다.
+            xwiki = self.targets.xwiki
+            if xwiki and repo.html_embed.enabled:
+                dedicated = repo.html_embed.xwiki_credential_env
+                if not dedicated:
+                    raise ValueError(
+                        f"repositories[{repo.id}].html_embed.xwiki_credential_env가 필요합니다: "
+                        "HTML 실행을 허용한 저장소는 스크립트 권한이 있는 전용 XWiki 계정으로 게시합니다"
+                    )
+                if dedicated == xwiki.auth.credential_env:
+                    raise ValueError(
+                        f"repositories[{repo.id}].html_embed.xwiki_credential_env는 "
+                        "targets.xwiki.auth.credential_env와 다른 계정이어야 합니다"
+                    )
         return self
 
 

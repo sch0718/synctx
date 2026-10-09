@@ -52,6 +52,13 @@ spec:
                       name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
                       key: xwiki-credential
                 {{- end }}
+                {{- if .Values.feedback.secrets.xwikiHtmlCredential }}
+                - name: XWIKI_HTML_CREDENTIAL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.feedback.secrets.existingSecret | default (printf "%s-feedback-secrets" (include "synctx.fullname" .)) }}
+                      key: xwiki-html-credential
+                {{- end }}
                 {{- end }}
               {{- if or .Values.synctxConfig.create .Values.sync.persistence.enabled }}
               volumeMounts:

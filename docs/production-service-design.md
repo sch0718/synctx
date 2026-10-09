@@ -184,6 +184,7 @@ authz:
 | `GIT_PUBLISH_TOKEN` | Marp, slides-sync | publish repo write/read |
 | `GITLAB_WEBHOOK_SECRET` | Sync Webhook Receiver | GitLab push event 검증 |
 | `XWIKI_CREDENTIAL` | Sync Engine | page/attachment write |
+| `XWIKI_HTML_CREDENTIAL` | Sync Engine | `html_embed.enabled` 저장소 전용 XWiki 계정. page/attachment write + 대상 공간 한정 script right (`XWIKI_CREDENTIAL`과 다른 계정) |
 | `OPENPROJECT_API_KEY` | Sync Engine | work package write |
 | `OUTBOUND_SMTP_CREDENTIAL` | Outbound Feedback Exporter | approved mail gateway send |
 | `OUTBOUND_FEEDBACK_HMAC_KEY` | Outbound Feedback Exporter, External Importer | event signature |
@@ -210,7 +211,7 @@ CDN 업로드는 운영에서 `cdn-admin` 권한을 요구하는 방식으로 �
 - 합본은 `sandbox="allow-scripts"` srcdoc iframe으로만 넣는다. `allow-same-origin` 등은 붙이지 않으므로 출처가 `null`이라 Viewer·XWiki 세션에 접근할 수 없다.
 - 합본 `<head>` 맨 앞에 CSP meta를 넣어 실행 중 네트워크를 `allowed_origins`로 제한한다. 저장소 목록은 최상위 `html_embed.allowed_origins`의 부분집합이어야 하고, Viewer 부모 CSP는 최상위 목록과 `font-src data:`를 포함한다.
 - XWiki에는 블록당 `{{html clean="false"}}` 매크로 하나만 넣고, 매크로 본문의 `{` `}`는 모두 엔티티로 바꾼다.
-- XWiki 동기화 계정에는 대상 공간에 한정한 스크립트 권한만 준다. 프로그래밍 권한과 `attachment.download.whitelist` 변경은 하지 않는다.
+- 스크립트 권한은 신뢰 저장소 전용 XWiki 계정(`repositories[].html_embed.xwiki_credential_env`)에만 대상 공간 한정으로 준다. 기본 동기화 계정에는 주지 않는다. XWiki가 작성자 권한으로 매크로를 실행하므로, 비신뢰 저장소가 본문에 직접 쓴 매크로는 기본 계정 권한으로 걸러진다. 프로그래밍 권한과 `attachment.download.whitelist` 변경은 하지 않는다.
 - 잔여 위험: iframe 자신의 주소 이동(`location.href`)과 WebRTC는 CSP·sandbox로 막을 수 없다. 신뢰 저장소 지정으로만 통제한다.
 
 ## 4. 설정 스키마
@@ -263,6 +264,7 @@ repositories:
       enabled: false
       allowed_origins: []
       max_bundle_bytes: 2097152
+      xwiki_credential_env: null   # enabled: true이고 XWiki가 대상이면 필수(예: XWIKI_HTML_CREDENTIAL), 기본 동기화 계정과 달라야 함
 
 mappings:
   - match:
@@ -1272,7 +1274,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 2. `missing_file`: 문서가 가리키는 파일을 저장소에 추가하면 다음 동기화에서 자동으로 복구된다.
 3. `disallowed_host`: 외부 주소를 `allowed_origins`에 넣을지 운영자가 판단한다. 넣으려면 최상위 목록과 저장소 목록에 모두 넣는다.
 4. `too_large`: 이미지를 줄이거나 `max_bundle_bytes`를 조정한다.
-5. XWiki 페이지에 스크립트가 글자로 보이거나 iframe이 사라지면, 동기화 계정의 공간 스크립트 권한을 확인한다. 공간 `WebPreferences`에 `XWiki.XWikiGlobalRights`(`users=동기화 계정`, `levels=script`, `allow=1`)가 있어야 한다.
+5. XWiki 페이지에 스크립트가 글자로 보이거나 iframe이 사라지면, 신뢰 저장소 전용 계정(`html_embed.xwiki_credential_env`)의 공간 스크립트 권한을 확인한다. 공간 `WebPreferences`에 `XWiki.XWikiGlobalRights`(`users=전용 계정`, `levels=script`, `allow=1`)가 있어야 한다. 기본 동기화 계정에는 스크립트 권한을 주지 않는다.
 
 ## 13. 남은 외부 검증 항목
 

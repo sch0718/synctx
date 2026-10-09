@@ -84,6 +84,8 @@ feedback:
     smtpCredential: ""
     opApiKey: ""
     xwikiCredential: ""
+    # html_embed.enabled 저장소 전용 XWiki 계정(user:password). 대상 공간 한정 스크립트 권한은 이 계정에만 준다.
+    xwikiHtmlCredential: ""
 
 ingress:
   enabled: true

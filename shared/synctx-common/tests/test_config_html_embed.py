@@ -74,3 +74,29 @@ def test_subset_check_uses_normalized_values():
 def test_max_bundle_bytes_must_be_positive():
     with pytest.raises(ValidationError):
         HtmlEmbedConfig(max_bundle_bytes=0)
+
+
+def _xwiki_target(cred_env="XWIKI_CRED"):
+    return {"xwiki": {"base_url": "https://xwiki.internal", "auth": {"type": "basic", "credential_env": cred_env}}}
+
+
+def test_enabled_repo_needs_dedicated_xwiki_account_when_xwiki_is_a_target():
+    with pytest.raises(ValidationError) as exc:
+        SynctxConfig.model_validate({"targets": _xwiki_target(), "repositories": [_repo(enabled=True)]})
+    assert "xwiki_credential_env" in str(exc.value)
+
+
+def test_dedicated_account_must_differ_from_default_sync_account():
+    with pytest.raises(ValidationError):
+        SynctxConfig.model_validate(
+            {"targets": _xwiki_target(), "repositories": [_repo(enabled=True, xwiki_credential_env="XWIKI_CRED")]}
+        )
+
+
+def test_dedicated_account_is_optional_without_xwiki_or_when_disabled():
+    SynctxConfig.model_validate({"repositories": [_repo(enabled=True)]})
+    SynctxConfig.model_validate({"targets": _xwiki_target(), "repositories": [_repo(enabled=False)]})
+    cfg = SynctxConfig.model_validate(
+        {"targets": _xwiki_target(), "repositories": [_repo(enabled=True, xwiki_credential_env="XWIKI_HTML_CRED")]}
+    )
+    assert cfg.repositories[0].html_embed.xwiki_credential_env == "XWIKI_HTML_CRED"
