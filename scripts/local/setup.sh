@@ -29,6 +29,10 @@ synctx 로컬 개발 환경을 설치합니다.
   --skip-deploy   synctx 서비스 배포 건너뜀
   -h, --help      도움말
 
+환경변수:
+  MINIKUBE_CPUS     minikube CPU 수 (기본 4)
+  MINIKUBE_MEMORY   minikube 메모리 MB (기본 8192, Docker Desktop 할당량보다 작아야 함)
+
 단계:
   1. 인프라: minikube 시작, Ingress 활성화, /etc/hosts 설정
   2. 의존성: XWiki, OpenProject, Mailpit 배포
