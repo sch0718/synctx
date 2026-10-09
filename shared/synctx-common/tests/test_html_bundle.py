@@ -203,3 +203,181 @@ def test_repo_reader_maps_git_errors_to_file_not_found():
     manager.read_file.return_value = b"x"
     assert repo_reader(manager, "main")("m/a.js") == b"x"
     manager.read_file.assert_called_with("m/a.js", ref="main")
+
+
+from synctx_common.html_bundle import csp_meta
+
+CSP_WITH_ORIGIN = (
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
+    "script-src 'unsafe-inline' https://cdn.synctx.local; style-src 'unsafe-inline' https://cdn.synctx.local; "
+    "img-src data: https://cdn.synctx.local; font-src data: https://cdn.synctx.local; connect-src https://cdn.synctx.local; "
+    "frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'\">"
+)
+
+
+def test_csp_meta_text():
+    assert csp_meta([ORIGIN]) == CSP_WITH_ORIGIN
+    empty = csp_meta([])
+    assert "connect-src 'none';" in empty
+    assert "script-src 'unsafe-inline';" in empty
+    assert "blob:" not in empty and "media-src" not in empty
+
+
+def test_csp_meta_comes_right_after_doctype_and_before_scripts():
+    files = {"m/index.html": page('<script>window.a=1</script><link rel="stylesheet" href="a.css">'), "m/a.css": "p{}"}
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert html.startswith("<!DOCTYPE html>" + CSP_WITH_ORIGIN)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "<script>window.a=1</script><!DOCTYPE html><p>x</p>",
+        "<!-- c --><script>window.a=1</script><!DOCTYPE html>",
+        "<p>x</p><!DOCTYPE html><script>window.a=1</script>",
+    ],
+)
+def test_trailing_doctype_does_not_move_csp_after_scripts(source):
+    html = bundle(reader({"m/index.html": source}), "m/index.html", POLICY).html
+    assert html.startswith(CSP_WITH_ORIGIN)
+
+
+@pytest.mark.parametrize("prefix", ["\n  ", "<!-- 머리말 -->\n"])
+def test_whitespace_or_comment_before_doctype_keeps_doctype_first(prefix):
+    html = bundle(reader({"m/index.html": prefix + "<!DOCTYPE html><p>x</p>"}), "m/index.html", POLICY).html
+    assert html.startswith(prefix + "<!DOCTYPE html>" + CSP_WITH_ORIGIN)
+
+
+def test_csp_meta_is_first_without_doctype():
+    html = bundle(reader({"m/index.html": "<p>x</p>"}), "m/index.html", HtmlEmbedConfig(enabled=True)).html
+    assert html.startswith('<meta http-equiv="Content-Security-Policy"')
+    assert "connect-src 'none'" in html
+
+
+def test_defer_scripts_move_to_body_end_in_order():
+    files = {
+        "m/index.html": page('<script defer src="a.js"></script><script defer src="b.js"></script>', "<p>x</p><script>window.inline=1</script>"),
+        "m/a.js": "window.order=['a'];",
+        "m/b.js": "window.order.push('b');",
+    }
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    inline = html.index("window.inline=1")
+    a = html.index("window.order=['a']")
+    b = html.index("window.order.push('b')")
+    assert inline < a < b < html.index("</body>")
+    assert "defer" not in html
+
+
+def test_defer_without_body_end_is_appended():
+    files = {"m/index.html": '<script defer src="a.js"></script><p>x</p>', "m/a.js": "window.a=1;"}
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert html.endswith("<p>x</p><script>window.a=1;</script>")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    ['<script type="module">window.m=1</script>', f'<script defer src="{ORIGIN}/lib.js"></script>'],
+)
+def test_defer_mixed_with_module_or_external_defer_is_unsupported(extra):
+    files = {"m/index.html": page('<script defer src="a.js"></script>' + extra), "m/a.js": "window.a=1;"}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", POLICY)
+    assert exc.value.reason == "unsupported"
+
+
+@pytest.mark.parametrize("src", ["a.js", f"{ORIGIN}/a.js"])
+def test_async_is_unsupported(src):
+    files = {"m/index.html": page(f'<script async src="{src}"></script>'), "m/a.js": "x"}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", POLICY)
+    assert exc.value.reason == "unsupported"
+
+
+def test_module_scripts():
+    files = {"m/index.html": page(body='<script type="module" src="app.mjs"></script><script type="module">window.b=2</script>'), "m/app.mjs": "window.a=1;"}
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert '<script type="module">window.a=1;</script>' in html
+    assert '<script type="module">window.b=2</script>' in html
+
+
+@pytest.mark.parametrize(
+    "markup,extra",
+    [
+        ('<script type="module" src="app.mjs"></script>', {"m/app.mjs": "import x from './x.js';"}),
+        ('<script type="module">import("./x.js")</script>', {}),
+        ('<script type="module">import x from /* 주석 */ "./x.js"</script>', {}),
+        ('<script type="module">import x from // 줄 주석\n "./x.js"</script>', {}),
+        ('<script type="module">import(`./x.js`)</script>', {}),
+        ('<script type="module">import(`${base}/x.js`)</script>', {}),
+        ('<script type="module">const n = "./x.js"; import(n)</script>', {}),
+        ('<script type="module">import "./side-effect.js"</script>', {}),
+        ('<script type="module">export * from "./x.js"</script>', {}),
+        ('<script type="module">import x from "lodash"</script>', {}),
+        ('<script type="module">import x from "https://other.synctx.local/x.mjs"</script>', {}),
+        ("<script>import('./x.js')</script>", {}),
+        ('<script src="app.js"></script>', {"m/app.js": "import(/* c */ './x.js')"}),
+        (f'<script type="module">import("{ORIGIN}/x.mjs" && "./x.js")</script>', {}),
+        (f'<script type="module">import("{ORIGIN}/x.mjs" || "./x.js")</script>', {}),
+        (f'<script type="module">import("{ORIGIN}/x.mjs" + "?v=1")</script>', {}),
+        (f'<script type="module">import("{ORIGIN}/x.mjs".replace("{ORIGIN}", "."))</script>', {}),
+        (f'<script type="module">import(`{ORIGIN}/x.mjs`.trim())</script>', {}),
+        (f'<script type="module">import(cond ? "{ORIGIN}/x.mjs" : "./x.js")</script>', {}),
+        (f"<script>import('{ORIGIN}/x.mjs' /* c */ + './y')</script>", {}),
+        (f'<script type="module">import("{ORIGIN}/x.mjs" && "./x.js" && "")</script>', {}),
+        (f'<script type="module">import("{ORIGIN}/a\\".mjs" + "./x.js")</script>', {}),
+    ],
+)
+def test_unloadable_imports_are_unsupported(markup, extra):
+    files = {"m/index.html": page(body=markup), **extra}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", POLICY)
+    assert exc.value.reason == "unsupported"
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        f'<script type="module">import x from "{ORIGIN}/x.mjs"; import("{ORIGIN}/y.mjs")</script>',
+        f'<script type="module">import(/* c */ "{ORIGIN}/y.mjs" /* c */)</script>',
+        f'<script type="module">import("{ORIGIN}/y.json", {{ with: {{ type: "json" }} }})</script>',
+        f"<script>import(`{ORIGIN}/y.mjs`)</script>",
+        '<script type="module">const s = Array.from("abc"); const meta = import.meta.url;</script>',
+        "<script>var important = 1; obj.import('x');</script>",
+        '<script type="application/json">{"import": "./x.js"}</script>',
+    ],
+)
+def test_loadable_imports_and_lookalikes_are_allowed(markup):
+    files = {"m/index.html": page(body=markup)}
+    assert "<script" in bundle(reader(files), "m/index.html", POLICY).html
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<video src="a.mp4"></video>',
+        '<audio src="a.mp3"></audio>',
+        '<iframe src="a.html"></iframe>',
+        '<iframe srcdoc="x"></iframe>',
+        '<object data="a.pdf"></object>',
+        '<svg><image href="a.png"/></svg>',
+        '<base href="/">',
+    ],
+)
+def test_media_and_frames_are_unsupported(markup):
+    files = {"m/index.html": page(body=markup)}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", POLICY)
+    assert exc.value.reason == "unsupported"
+
+
+def test_svg_use_fragment_is_allowed():
+    files = {"m/index.html": page(body='<svg><use href="#icon"/></svg>')}
+    assert '<use href="#icon" />' in bundle(reader(files), "m/index.html", POLICY).html
+
+
+def test_too_large():
+    files = {"m/index.html": page(body="x" * 200)}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", HtmlEmbedConfig(enabled=True, max_bundle_bytes=100))
+    assert exc.value.reason == "too_large"
+    assert exc.value.files == ("m/index.html",)

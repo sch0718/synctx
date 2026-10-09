@@ -186,6 +186,26 @@ _CSS_URL_RE = re.compile(r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)"""
 _CSS_IMPORT_RE = re.compile(r"@import\b", re.IGNORECASE)
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module"}
 _DROPPED_SCRIPT_ATTRS = {"src", "defer", "async", "integrity", "crossorigin", "charset", "referrerpolicy"}
+_JS_GAP = r"(?:\s|/\*.*?\*/|//[^\n]*(?:\n|$))*"
+_JS_STRING = r"""(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`)"""
+_STATIC_IMPORT_RE = re.compile(rf"(?<![\w$.])(?:from|import){_JS_GAP}{_JS_STRING}", re.S)
+_DYNAMIC_IMPORT_RE = re.compile(rf"(?<![\w$.])import{_JS_GAP}\({_JS_GAP}(?:{_JS_STRING}{_JS_GAP}(?=[),]))?", re.S)
+
+
+def _literal(match) -> Optional[str]:
+    return next((group for group in match.groups() if group is not None), None)
+_MEDIA_TAGS = {"video", "audio", "source", "track", "iframe", "frame", "embed", "object"}
+_SVG_REF_TAGS = {"image", "use", "feimage"}
+
+
+def csp_meta(origins) -> str:
+    hosts = "".join(f" {origin}" for origin in origins)
+    policy = (
+        f"default-src 'none'; script-src 'unsafe-inline'{hosts}; style-src 'unsafe-inline'{hosts}; "
+        f"img-src data:{hosts}; font-src data:{hosts}; connect-src {hosts.strip() or chr(39) + 'none' + chr(39)}; "
+        "frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'"
+    )
+    return f'<meta http-equiv="Content-Security-Policy" content="{policy}">'
 _MIME_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -244,6 +264,12 @@ class _Bundler(HTMLParser):
         self.in_title = False
         self.raw_tag: Optional[str] = None
         self.skip_raw = False
+        self.script_text: Optional[list] = None
+        self.script_is_module = False
+        self.deferred: list = []
+        self.deferred_flushed = False
+        self.has_module = False
+        self.has_external_defer = False
 
     def fail(self, reason: str, message: str):
         raise BundleError(reason, message, self.files, self.missing)
@@ -342,7 +368,13 @@ class _Bundler(HTMLParser):
     def check_tag(self, tag, attrs):
         if tag == "base":
             self.fail("unsupported", "<base> 요소는 지원하지 않습니다")
-
+        for name, value in attrs:
+            if not value:
+                continue
+            if tag in _MEDIA_TAGS and name in ("src", "srcset", "srcdoc", "data", "poster"):
+                self.fail("unsupported", f"<{tag}> 요소의 외부 리소스는 지원하지 않습니다: {value[:80]}")
+            if tag in _SVG_REF_TAGS and name in ("href", "xlink:href") and not value.strip().startswith(("#", "data:")):
+                self.fail("unsupported", f"SVG <{tag}>의 외부 참조는 지원하지 않습니다: {value}")
     def rewrite_attrs(self, tag, attrs):
         rewritten = []
         for name, value in attrs:
@@ -382,25 +414,61 @@ class _Bundler(HTMLParser):
     def start_script(self, attrs):
         values = {name.lower(): value for name, value in attrs}
         src = values.get("src")
+        script_type = (values.get("type") or "").strip().lower()
+        is_module = script_type == "module"
         self.raw_tag = "script"
         self.skip_raw = False
+        self.script_text = None
+        self.script_is_module = is_module
+        if is_module:
+            self.has_module = True
         if src is None:
+            if script_type in _JS_TYPES:
+                self.script_text = []
             self.out.append(_render_tag("script", attrs))
             return
+        if "async" in values:
+            self.fail("unsupported", f"async 스크립트는 지원하지 않습니다: {src}")
         kind = classify_url(src)
         if kind != "relative":
             if kind != "keep":
                 self.check_external(src, kind)
+            if "defer" in values and not is_module:
+                self.has_external_defer = True
             self.out.append(_render_tag("script", attrs))
             return
-        if (values.get("type") or "").strip().lower() not in _JS_TYPES:
+        if script_type not in _JS_TYPES:
             self.fail("unsupported", f"JavaScript가 아닌 외부 스크립트는 지원하지 않습니다: {src}")
         path = self.path_of(src, self.entry)
         code = self.load_text(path)
+        if code is not None:
+            self.check_imports(code, is_module, path)
         kept = [(name, value) for name, value in attrs if name.lower() not in _DROPPED_SCRIPT_ATTRS]
-        self.out.append(_render_tag("script", kept) + (_escape_raw(code, "script") if code is not None else "") + "</script>")
+        element = _render_tag("script", kept) + (_escape_raw(code, "script") if code is not None else "") + "</script>"
         self.skip_raw = True
+        if "defer" in values and not is_module:
+            self.deferred.append(element)
+        else:
+            self.out.append(element)
 
+    def check_imports(self, code: str, is_module: bool, where: str) -> None:
+        """합본 안에서 실제로 불러올 수 있는 import는 허용 출처의 https 주소뿐이다. 판단할 수 없으면 거부한다."""
+        specifiers = [_literal(match) for match in _STATIC_IMPORT_RE.finditer(code)] if is_module else []
+        for match in _DYNAMIC_IMPORT_RE.finditer(code):
+            specifier = _literal(match)
+            if specifier is None:
+                # 첫 인자 전체가 문자열 리터럴 하나일 때만(바로 뒤가 `)`나 `,`) 선택 그룹이 맞는다.
+                self.fail("unsupported", f"첫 인자가 문자열 리터럴 하나가 아닌 동적 import는 지원하지 않습니다: {where}")
+            specifiers.append(specifier)
+        for specifier in specifiers:
+            allowed = False
+            if "${" not in specifier and classify_url(specifier) == "absolute":
+                try:
+                    allowed = url_origin(specifier) in self.allowed
+                except ValueError:
+                    allowed = False
+            if not allowed:
+                self.fail("unsupported", f"합본 안에서 불러올 수 없는 import입니다: {specifier} ({where})")
     def handle_data(self, data):
         if self.in_title:
             self.title_parts.append(data)
@@ -408,18 +476,27 @@ class _Bundler(HTMLParser):
             return
         if self.raw_tag == "style":
             data = self.rewrite_css(data, self.entry)
+        if self.script_text is not None:
+            self.script_text.append(data)
         self.out.append(data)
-
     def handle_endtag(self, tag):
         if tag == "title":
             self.in_title = False
         if tag in ("script", "style") and self.raw_tag == tag:
+            if self.script_text is not None:
+                self.check_imports("".join(self.script_text), self.script_is_module, f"{self.entry}의 인라인 스크립트")
             self.raw_tag = None
+            self.script_text = None
             if self.skip_raw:
                 self.skip_raw = False
                 return
+        if tag in ("body", "html") and not self.deferred_flushed:
+            self.flush_deferred()
         self.out.append(f"</{tag}>")
 
+    def flush_deferred(self):
+        self.out.extend(self.deferred)
+        self.deferred_flushed = True
     def handle_entityref(self, name):
         text = f"&{name};"
         if self.in_title:
@@ -447,8 +524,13 @@ class _Bundler(HTMLParser):
 
     def finish(self) -> str:
         self.close()
+        if not self.deferred_flushed:
+            self.flush_deferred()
+        if self.deferred and (self.has_module or self.has_external_defer):
+            self.fail("unsupported", "defer 스크립트는 module이나 외부 defer 스크립트와 함께 쓸 수 없습니다")
         if self.missing:
             self.fail("missing_file", "찾을 수 없는 파일: " + ", ".join(sorted(self.missing)))
+        self.out.insert(self.meta_at, csp_meta(self.policy.allowed_origins))
         return "".join(self.out)
 
 
@@ -460,6 +542,8 @@ def bundle(read: Reader, entry: str, policy: HtmlEmbedConfig) -> BundleResult:
     parser.feed(source)
     html_text = parser.finish()
     encoded = html_text.encode("utf-8")
+    if len(encoded) > policy.max_bundle_bytes:
+        parser.fail("too_large", f"합본 크기 {len(encoded)}바이트가 상한 {policy.max_bundle_bytes}바이트를 넘습니다")
     return BundleResult(
         html=html_text,
         sha256=hashlib.sha256(encoded).hexdigest(),
