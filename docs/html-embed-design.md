@@ -80,6 +80,8 @@ title: 룰 엔진 클러스터 재구성 모션 그래픽
 
 문법 오류(YAML 오류, `src` 없음, 알 수 없는 키)는 6장의 오류 표시로 처리한다. GitHub처럼 synctx 밖에서 보면 블록은 코드 블록으로 보인다.
 
+블록은 CommonMark 펜스 규칙(들여쓰기 0~3칸)으로 찾는다. 목록 항목 안에 들여 쓴 블록은 여는 펜스의 들여쓰기만큼 본문 앞 공백을 걷어내고, 치환 결과의 각 줄에도 같은 들여쓰기를 붙인다. 그래서 XWiki(markdown/1.2)에서는 iframe이 목록 항목 안에 남는다. Viewer는 Python-Markdown이라 목록 안 펜스 코드를 지원하지 않으므로, 다른 펜스 블록처럼 목록 밖에 그려진다.
+
 ## 5. 합본 규칙 (`bundle`)
 
 ```python
@@ -87,7 +89,7 @@ def bundle(read: Callable[[str], bytes], entry: str, policy: HtmlEmbedConfig) ->
 def to_iframe(result: BundleResult, aspect: str | None, height: int | None, title: str | None) -> str: ...
 ```
 
-`read`는 저장소 루트 기준 경로를 받아 바이트를 돌려준다. 호출하는 쪽은 `GitRepoManager.read_file(path, ref)`를 넘긴다. `BundleResult`는 다음 필드를 가진다.
+`read`는 저장소 루트 기준 경로를 받아 바이트를 돌려준다. 호출하는 쪽은 `repo_reader(manager, ref)`를 넘긴다. 이 함수는 첫 읽기에서 `GitRepoManager.resolve_ref(ref)`로 ref를 한 번만 해석(비기본 ref면 fetch)하고, 이후 파일은 `read_resolved(path, resolved)`로 읽는다. 해석 실패는 파일 없음으로 바꾸지 않고 그대로 올린다. `BundleResult`는 다음 필드를 가진다.
 
 - `html`
 - `sha256`
@@ -241,7 +243,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
    - `synctx-html` 블록이 있는 md는 `content_sha`를 md 본문만으로 계산하지 않는다.
    - 다음을 순서대로 이어 붙여 `sha256`을 계산한다.
      - md 본문
-     - 블록마다: `BundleResult.sha256`, 또는 비활성·오류 표시
+     - 블록마다: XWiki에 보낼 매크로 문자열(`xwiki_html_macro(조각)`)의 SHA. 합본 내용뿐 아니라 iframe·안내 문구 렌더링이 바뀌어도 다시 게시된다
      - 블록마다: 정렬한 의존 경로 목록(`files`와 `missing`)
      - 정책 지문
    - 의존 경로 목록을 넣으므로, 내용이 같은 `a.js`에서 `b.js`로 참조만 바뀌어 합본 SHA가 같아도 해시가 달라진다.
@@ -268,7 +270,7 @@ sequenceDiagram
     State-->>Sync: docs/cluster-reconfig.md
     activate Sync
     Sync->>Bundle: bundle(read, entry, policy)
-    Bundle->>Git: read_file(상대 경로들)
+    Bundle->>Git: resolve_ref 1회 + read_resolved(상대 경로들)
     Bundle-->>Sync: BundleResult(html, sha256, files)
     Sync->>State: 색인 갱신 (게시 여부와 무관)
     Sync->>State: 합본 반영 해시 비교
