@@ -111,7 +111,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 | `<script type="module">` | 같은 자리에 넣는다(인라인 module도 기본으로 지연 실행된다). 안에 상대 경로 `import`가 있으면 오류 |
 | CSS `url(상대경로)`, `<img src>` | `data:` URI로 바꾼다. MIME은 확장자로 정한다. 글꼴(`woff`, `woff2`, `ttf`)도 포함하며, Viewer CSP의 `font-src`에 `data:`를 더한다(6장 5번) |
 | CSS `@import` | 오류 (지원하지 않음) |
-| `http(s)://`, `//` 절대 주소 | 호스트가 `allowed_hosts`에 있으면 그대로 두고, 없으면 오류 |
+| `http(s)://`, `//` 절대 주소 | 출처(스킴 + 호스트 + 포트)가 `allowed_origins`의 항목과 정확히 같으면 그대로 두고, 아니면 오류. `//`로 시작하는 주소는 srcdoc에서 스킴이 정해지지 않으므로 오류. `http://`는 항목에 올 수 없으므로 항상 오류 |
 | `data:`, `#fragment`, `about:` | 그대로 둔다 |
 
 - 상대 경로의 기준은 그 경로가 적힌 파일이다.
@@ -129,11 +129,15 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' {H}; style-src 'unsafe-inline' {H}; img-src data: {H}; font-src data: {H}; connect-src {H|'none'}; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'">
 ```
 
-- `{H}`는 `allowed_hosts`이고, 비어 있으면 해당 지시어에서 뺀다. `connect-src`는 `allowed_hosts`가 비어 있으면 `'none'`이다.
+- `{H}`는 저장소의 `allowed_origins` 항목(예: `https://cdn.corp.example.com`)을 공백으로 이은 것이다. 비어 있으면 해당 지시어에서 뺀다. `connect-src`는 비어 있으면 `'none'`이다.
+- 항목은 8.1의 형식 검사를 통과한 출처이므로 **그대로 CSP 출처 표현으로 쓴다.**
+  - 호스트 이름만 쓰면 안 된다. 스킴이 없는 호스트 표현은 보호 대상 문서의 스킴에 맞춰 해석되는데, srcdoc 문서의 주소는 `about:srcdoc`이라 `https` 리소스와 맞지 않는다.
+  - 리뷰 재현 결과(Chromium)도 호스트 이름만 넣었을 때는 허용한 https 이미지가 막혔고, `https://`를 붙인 출처로 넣었을 때는 막히지 않았다.
 - Viewer에서는 부모 CSP와 이 meta CSP가 함께 적용되므로 더 엄격한 쪽이 이긴다. XWiki에서는 이 meta CSP가 실행 중의 유일한 정책이다.
-- 두 환경의 실효 정책을 같게 하려고, 이 meta는 Viewer 부모 CSP(6장 5번 변경 후)가 허용하는 범위 안에서만 허용한다.
-  - `blob:`이나 `media-src`는 넣지 않는다. 합본 규칙이 동영상·음성을 변환하지 않기 때문이다.
-  - 그래서 Viewer에서 막히는 리소스는 XWiki에서도 막힌다.
+- **두 환경의 실효 정책이 같아지는 조건:** 이 meta가 허용하는 모든 것을 Viewer 부모 CSP도 허용해야 한다. 그러면 두 환경 모두에서 이 meta가 실효 정책이 된다.
+  - 출처: 저장소의 `allowed_origins`는 플랫폼 공통 `html_embed.allowed_origins`의 부분집합이어야 하고(설정을 읽을 때 검사, 8.1), Viewer 부모 CSP는 공통 목록을 포함한다(6장 5번).
+  - `data:`: 부모 CSP의 `img-src`·`font-src`가 허용한다(6장 5번).
+  - `blob:`이나 `media-src`는 넣지 않는다. 합본 규칙이 동영상·음성을 변환하지 않고, 부모 CSP도 허용하지 않기 때문이다.
 - 작성자 HTML에 원래 있던 CSP meta는 남겨 둔다. 정책이 여럿이면 모두 적용되므로 더 느슨해지지 않는다.
 - 확인 결과(Chromium, 부모에 CSP가 없는 페이지): 실행 중에 만든 주소로 보낸 `fetch`·`Image`·`<script>`가 각각 `connect-src`·`img-src`·`script-src-elem` 위반으로 막혔다. 다만 비교용 시험(meta 없음)은 내장 브라우저가 sandbox 요청을 자체적으로 막아 판정하지 못했다.
 - 남는 위험: CSP와 sandbox 모두 iframe 자신의 주소 이동(`location.href = …`)과 WebRTC는 막지 못한다. 이 경로는 신뢰 저장소 지정(8.1)으로 통제하고, 운영 문서에 잔여 위험으로 적는다.
@@ -163,7 +167,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 - 상대 경로 `fetch`·XHR·`import()`는 동작하지 않는다. 런타임에 파일을 읽지 말고 데이터는 JS에 넣는다.
 - `localStorage`·쿠키는 쓸 수 없다. 접근하면 예외가 나므로 try/catch로 감싼다.
 - `history.replaceState`는 같은 주소로 호출하면 동작했다(실험). 다른 주소로 바꾸는 호출은 예외가 날 수 있다.
-- 주입된 CSP 때문에 `allowed_hosts` 밖의 주소는 실행 중에도 불러올 수 없다. `blob:` 이미지와 동영상·음성도 불러올 수 없다.
+- 주입된 CSP 때문에 `allowed_origins` 밖의 주소는 실행 중에도 불러올 수 없다. `blob:` 이미지와 동영상·음성도 불러올 수 없다.
 - `async` 스크립트는 쓸 수 없다. `defer`와 `module`을 한 문서에서 함께 쓸 수 없다.
 
 ## 6. Viewer
@@ -172,13 +176,14 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 2. `app._render_file_response`가 `_sanitize_html`을 **거친 뒤** 각 자리표시를 `to_iframe` 결과로 바꾼다. sanitizer는 그대로 두므로 Markdown 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지워진다.
 3. `html_embed.enabled=false`인 저장소에서는 자리표시를 안내 상자로 바꾼다. 안내 상자에는 "이 저장소는 HTML 실행이 허용되지 않음"과 `src` 소스 보기 링크를 넣는다.
 4. 합본에 실패하면 자리표시를 오류 상자로 바꾼다. 오류 상자에는 사유와 `src` 경로를 넣는다. 페이지의 나머지는 그대로 렌더링한다.
-5. CSP는 `font-src`에 `data:` 하나만 더한다(`font-src 'self' data: {CDN}`).
-   - srcdoc 합본은 부모 CSP를 물려받으므로, 이 변경이 없으면 `data:` 글꼴이 막힌다. `img-src`에는 이미 `data:`가 있다.
-   - `data:` 글꼴은 스크립트를 실행할 수 없어서 Viewer 본문의 보안 수준은 그대로다.
-   - 나머지 지시어는 바꾸지 않는다. 합본은 부모의 `script-src 'self' 'unsafe-inline' {CDN}`도 물려받으므로, 허용 목록 밖의 외부 스크립트는 브라우저에서 한 번 더 막힌다.
-6. `download?format=html`도 같은 iframe을 넣는다. 네트워크 없이 완전하게 재생된다는 보장은 **저장소의 `allowed_hosts`가 비어 있을 때만** 한다.
+5. CSP(`csp_middleware`)를 두 군데 바꾼다.
+   - `font-src`에 `data:`를 더한다. srcdoc 합본은 부모 CSP를 물려받으므로, 이 변경이 없으면 `data:` 글꼴이 막힌다. `img-src`에는 이미 `data:`가 있다. `data:` 글꼴은 스크립트를 실행할 수 없어서 Viewer 본문의 보안 수준은 그대로다.
+   - 플랫폼 공통 `html_embed.allowed_origins`의 출처를 `script-src`·`style-src`·`img-src`·`font-src`·`connect-src`에 더한다. 지금 `cdn_base_url`에서 얻은 출처를 더하는 방식과 같다.
+   - 이 두 변경으로 합본 meta CSP가 허용하는 것은 모두 부모 CSP도 허용한다. 그래서 Viewer에서도 XWiki와 같이 합본 meta CSP가 실효 정책이 된다(5장).
+   - 나머지 지시어는 바꾸지 않는다.
+6. `download?format=html`도 같은 iframe을 넣는다. 네트워크 없이 완전하게 재생된다는 보장은 **저장소의 `allowed_origins`가 비어 있을 때만** 한다.
    - 이때는 주입된 CSP가 실행 중 네트워크를 모두 막는다. 그래서 합본은 처음부터 네트워크 없이 동작하도록 만들어져 있어야 하고, Viewer·XWiki·다운로드 파일에서 동작이 같다.
-   - `allowed_hosts`가 비어 있지 않으면, 정적 참조가 없어도 JS가 실행 중에 허용 CDN 주소를 만들 수 있다. 그래서 다운로드 파일의 iframe 위에 항상 "사내 CDN 접근이 필요할 수 있는 콘텐츠" 안내를 붙인다.
+   - `allowed_origins`가 비어 있지 않으면, 정적 참조가 없어도 JS가 실행 중에 허용 CDN 주소를 만들 수 있다. 그래서 다운로드 파일의 iframe 위에 항상 "사내 CDN 접근이 필요할 수 있는 콘텐츠" 안내를 붙인다.
    - 외부 리소스를 받아 합본에 넣는 기능은 범위 밖이다.
    - `format=pdf`는 JS가 돌지 않으므로 "인터랙티브 콘텐츠: Viewer에서 보기" 안내로 바꾼다.
 
@@ -226,8 +231,14 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
    - 비활성 저장소에서는 진입 HTML 경로만 넣는다. 정책이 바뀌면 3번에 따라 다시 처리된다.
 2. **합본을 반영한 내용 해시 (세 번째 관문)**
    - `synctx-html` 블록이 있는 md는 `content_sha`를 md 본문만으로 계산하지 않는다.
-   - `sha256(md 본문 + 블록별 BundleResult.sha256 또는 비활성·오류 표시 + 정책 지문)`으로 계산한다.
-   - 합본은 CSP meta를 포함하므로 `allowed_hosts`가 바뀌면 합본 SHA도 바뀐다. 블록이 없는 md는 지금처럼 본문 SHA를 쓴다.
+   - 다음을 순서대로 이어 붙여 `sha256`을 계산한다.
+     - md 본문
+     - 블록마다: `BundleResult.sha256`, 또는 비활성·오류 표시
+     - 블록마다: 정렬한 의존 경로 목록(`files`와 `missing`)
+     - 정책 지문
+   - 의존 경로 목록을 넣으므로, 내용이 같은 `a.js`에서 `b.js`로 참조만 바뀌어 합본 SHA가 같아도 해시가 달라진다.
+   - 합본은 CSP meta를 포함하므로 `allowed_origins`가 바뀌면 합본 SHA도 바뀐다. 블록이 없는 md는 지금처럼 본문 SHA를 쓴다.
+   - **색인 갱신은 게시 여부와 분리한다.** 블록이 있는 md는 해시를 계산하려고 합본을 먼저 만든다. 그 결과로 색인을 항상 갱신하고, 그다음에 해시를 비교해 게시할지 건너뛸지 정한다. 건너뛰어도 색인은 이미 최신이다. XWiki `upsert_page`가 내용이 같아 갱신을 생략하는 경우도 마찬가지다.
 3. **정책 지문 (첫 번째 관문)**
    - 저장소별 `html_embed` 설정을 정규화한 값의 SHA를 정책 지문으로 쓰고, 동기화 상태에 저장한다.
    - `head_sha` 비교 전에 지문을 먼저 비교한다. 다르면 HEAD가 같아도 색인에 있는 md 전부를 처리 대상으로 삼아 실행한다.
@@ -251,8 +262,9 @@ sequenceDiagram
     Sync->>Bundle: bundle(read, entry, policy)
     Bundle->>Git: read_file(상대 경로들)
     Bundle-->>Sync: BundleResult(html, sha256, files)
-    Sync->>XWiki: upsert_page({{html}} + iframe)
-    Sync->>State: 색인 갱신
+    Sync->>State: 색인 갱신 (게시 여부와 무관)
+    Sync->>State: 합본 반영 해시 비교
+    Sync->>XWiki: 해시가 다르면 upsert_page({{html}} + iframe)
     deactivate Sync
 ```
 
@@ -263,20 +275,32 @@ sequenceDiagram
 신뢰 여부는 운영자가 관리하는 플랫폼 설정에 둔다. 저장소 안의 `.synctx.yaml`에 두지 않는다. `.synctx.yaml`은 저장소 작성자가 스스로 켤 수 있기 때문이다.
 
 ```yaml
+html_embed:
+  allowed_origins: ["https://cdn.corp.example.com"]
+
 repositories:
   - id: example-infra
     url: https://gitlab.internal/infra/example-infra.git
     html_embed:
       enabled: true
-      allowed_hosts: ["cdn.corp.example.com"]
+      allowed_origins: ["https://cdn.corp.example.com"]
       max_bundle_bytes: 2097152
 ```
 
-| 키 | 기본값 | 설명 |
-|---|---|---|
-| `enabled` | `false` | HTML 실행 허용 여부 |
-| `allowed_hosts` | `[]` | 합본이 참조해도 되는 외부 호스트 |
-| `max_bundle_bytes` | `2097152` | 합본 크기 상한 |
+| 위치 | 키 | 기본값 | 설명 |
+|---|---|---|---|
+| 최상위 `html_embed` | `allowed_origins` | `[]` | 플랫폼 전체에서 합본이 참조할 수 있는 출처의 상한. Viewer 부모 CSP에 들어간다 |
+| `repositories[].html_embed` | `enabled` | `false` | HTML 실행 허용 여부 |
+| `repositories[].html_embed` | `allowed_origins` | `[]` | 이 저장소의 합본이 참조할 수 있는 출처. 최상위 목록의 부분집합이어야 한다 |
+| `repositories[].html_embed` | `max_bundle_bytes` | `2097152` | 합본 크기 상한 |
+
+설정을 읽을 때(pydantic validator) 다음을 검사하고, 어기면 서비스가 시작되지 않는다. Viewer와 Sync Engine은 같은 설정 모델을 쓰므로 두 서비스에서 같은 검사가 돈다.
+
+- 출처 형식은 `https://호스트` 또는 `https://호스트:포트`만 허용한다.
+  - 스킴은 `https`만 받는다. 운영과 로컬 모두 Ingress TLS를 쓰고, `http`는 https 페이지 안에서 혼합 콘텐츠로 막힌다.
+  - 호스트는 소문자로 바꾼다. 와일드카드, 경로, 쿼리, 끝의 `/`는 받지 않는다.
+  - 포트가 443이면 빼서 저장한다. 그래서 정적 검사와 CSP가 같은 문자열을 쓴다.
+- 저장소의 `allowed_origins`는 정규화한 뒤 최상위 `allowed_origins`에 모두 들어 있어야 한다.
 
 ### 8.2 XWiki 권한
 
@@ -290,7 +314,8 @@ repositories:
 |---|---|
 | 넣은 스크립트가 보는 사람 세션으로 Viewer·XWiki API를 호출 | sandbox에 `allow-same-origin`을 붙이지 않는다. 출처가 `null`이라 쿠키·CSRF 토큰·같은 출처 API에 접근할 수 없다 |
 | 신뢰하지 않는 저장소가 HTML 실행을 스스로 켬 | `RepoProfile`(운영자 설정)에서만 켤 수 있다 |
-| 외부 네트워크 호출 (정적 주소) | 합본 단계에서 `allowed_hosts` 밖의 주소는 오류로 막는다 |
+| 외부 네트워크 호출 (정적 주소) | 합본 단계에서 출처가 `allowed_origins` 항목과 정확히 같지 않은 주소는 오류로 막는다 |
+| Viewer와 XWiki의 허용 범위 불일치 | 저장소 목록이 플랫폼 공통 목록의 부분집합인지 설정을 읽을 때 검사하고, Viewer 부모 CSP에 공통 목록을 넣는다. 두 환경 모두 합본 meta CSP가 실효 정책이 된다 |
 | 외부 네트워크 호출 (실행 중 만든 주소) | 합본 `<head>` 맨 앞에 넣은 CSP meta가 실행 중에 막는다. Viewer에서는 부모 CSP도 함께 적용된다 |
 | iframe 자신의 주소 이동, WebRTC | CSP·sandbox로 막을 수 없는 잔여 위험이다. 신뢰 저장소 지정으로만 통제하고, 운영 문서에 적는다 |
 | 저장소 밖 파일 읽기 | 각 경로를 그 경로가 적힌 파일 기준으로 푼 뒤 `validate_path`로 검사한다 |
@@ -311,10 +336,11 @@ repositories:
 
 | 수준 | 대상 | 내용 |
 |---|---|---|
-| 단위 | `html_bundle` | CSS·JS 넣기, `</script` 이스케이프, 이미지 `data:` 변환, 외부 CSS 안 `url()`을 CSS 파일 기준으로 푸는지(하위 폴더 CSS + 상위 폴더 이미지), 저장소 밖 경로 거부, 허용 목록 밖 호스트 거부, `@import`·상대 module import·`async` 오류, `defer` 스크립트를 순서대로 `<body>` 끝으로 옮기는지, `defer`와 `module`이 함께 있으면 오류인지, 글꼴 `data:` 변환, CSP meta가 `<head>` 첫 자식이고 `allowed_hosts`가 반영되며 `blob:`·`media-src`가 없는지, 실패 시 `BundleError.files`·`missing`, 크기 상한, 같은 입력·같은 출력 |
+| 단위 | `html_bundle` | CSS·JS 넣기, `</script` 이스케이프, 이미지 `data:` 변환, 외부 CSS 안 `url()`을 CSS 파일 기준으로 푸는지(하위 폴더 CSS + 상위 폴더 이미지), 저장소 밖 경로 거부, 허용 목록 밖 출처 거부(같은 호스트의 다른 포트, `http://`, `//` 포함), `@import`·상대 module import·`async` 오류, `defer` 스크립트를 순서대로 `<body>` 끝으로 옮기는지, `defer`와 `module`이 함께 있으면 오류인지, 글꼴 `data:` 변환, CSP meta가 `<head>` 첫 자식이고 `allowed_origins`가 `https://` 출처 그대로 반영되며 `blob:`·`media-src`가 없는지, 실패 시 `BundleError.files`·`missing`, 크기 상한, 같은 입력·같은 출력 |
 | 단위 | `to_iframe` | 속성 이스케이프(`"`, `&`, `<`, `{`, `}`), 합본·`title`에 `{{/html}}{{velocity}}`를 넣어도 출력에 `{{`가 없는지, sandbox 값이 정확히 `allow-scripts`인지 |
-| Viewer | `test_viewer_api.py` | 블록이 iframe이 되는지, 본문에 직접 쓴 iframe은 여전히 지워지는지, 비신뢰 저장소의 안내 상자, 합본 실패 시 오류 상자, CSP 헤더는 `font-src`에 `data:`가 더해진 것 외에 변화 없음, `allowed_hosts`가 비어 있지 않은 저장소의 다운로드 안내(정적 외부 참조가 없어도 붙는지) |
-| Sync | `test_sync_engine.py` | 블록을 html 매크로로 바꾸는지, `motion.js`만 바뀌어도 md를 다시 동기화하는지(본문 SHA 같음), HEAD가 같아도 `enabled`·`allowed_hosts` 변경 시 색인의 md를 다시 처리하는지, 색인이 없는 기존 상태에서 전체 스캔, `motion.js`가 빠져 실패한 뒤 그 파일만 추가해도 md를 다시 처리해 복구하는지, 비신뢰 저장소, 경로·오류 사유에 `{{/html}}`·`}}}`가 들어가도 안내 매크로 본문에 중괄호가 없는지, OP 대상 링크 문구 |
+| Viewer | `test_viewer_api.py` | 블록이 iframe이 되는지, 본문에 직접 쓴 iframe은 여전히 지워지는지, 비신뢰 저장소의 안내 상자, 합본 실패 시 오류 상자, CSP 헤더에 `font-src data:`와 공통 `allowed_origins`가 더해진 것 외에 변화 없음, `allowed_origins`가 비어 있지 않은 저장소의 다운로드 안내(정적 외부 참조가 없어도 붙는지) |
+| Sync | `test_sync_engine.py` | 블록을 html 매크로로 바꾸는지, `motion.js`만 바뀌어도 md를 다시 동기화하는지(본문 SHA 같음), HEAD가 같아도 `enabled`·`allowed_origins` 변경 시 색인의 md를 다시 처리하는지, 색인이 없는 기존 상태에서 전체 스캔, `motion.js`가 빠져 실패한 뒤 그 파일만 추가해도 md를 다시 처리해 복구하는지, 비신뢰 저장소, 경로·오류 사유에 `{{/html}}`·`}}}`가 들어가도 안내 매크로 본문에 중괄호가 없는지, 내용이 같은 `a.js`에서 `b.js`로 참조만 바꾼 뒤 `b.js`를 고치면 다시 처리하는지(색인이 게시 생략과 무관하게 갱신되는지), OP 대상 링크 문구 |
+| 단위 | 설정 모델 | `allowed_origins` 형식 검사(스킴 `https`만, 소문자, 443 생략, 경로·와일드카드·끝 `/` 거부), 저장소 목록이 공통 목록의 부분집합이 아니면 오류 |
 | 수동 | 로컬 XWiki | `markdown/1.2` 안 `{{html}}` 매크로 실행 여부(7.2), 공간 한정 스크립트 권한 계정으로 재생, `{{/html}}`이 든 합본이 매크로 밖으로 새지 않는지 |
 | 수동 | 운영 XWiki | 운영 버전에서 2장 결과 재확인, 실제 Chrome·Edge에서 재생과 CSP meta 차단(비교용 시험 포함) |
 
@@ -326,7 +352,7 @@ repositories:
 |---|---|
 | `README.md` | 기능 목록에 HTML 임베드 추가. 서비스 추가가 아니므로 다이어그램은 바꾸지 않는다 |
 | `docs/architecture.md` | Viewer·Sync 설계에 `html_bundle` 모듈과 렌더링 경로, Phase 표 |
-| `docs/production-service-design.md` | 3장 보안(sandbox, CSP meta 주입, 매크로 경계 이스케이프, 신뢰 저장소, 잔여 위험: iframe 자체 이동·WebRTC), 저장소 설정 스키마(`html_embed`), 7.2 Viewer 보안 문구와 CSP(`font-src data:`), 메트릭·Alert, 테스트, Runbook(합본 실패·XWiki 스크립트 권한 부여 절차), Phase 체크리스트 |
+| `docs/production-service-design.md` | 3장 보안(sandbox, CSP meta 주입, 매크로 경계 이스케이프, 신뢰 저장소, 잔여 위험: iframe 자체 이동·WebRTC), 설정 스키마(최상위·저장소별 `html_embed`, 출처 형식과 부분집합 검사), 7.2 Viewer 보안 문구와 CSP(`font-src data:`), 메트릭·Alert, 테스트, Runbook(합본 실패·XWiki 스크립트 권한 부여 절차), Phase 체크리스트 |
 | `CLAUDE.md` | Phase 순서 문구 |
 
 **Phase(검토 필요):** 기존 Phase 번호를 바꾸지 않으려고 **Phase 9 "인터랙티브 HTML 임베드"** 를 새로 둔다. Viewer(Phase 1)와 XWiki Sync(Phase 3)에 의존한다.
