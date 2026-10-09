@@ -637,3 +637,132 @@ async def test_account_change_is_marked_unknown_on_disk_before_xwiki_write(tmp_p
 
     assert seen == {"reconfig": None, "plain": None}
     assert publishers(tmp_path) == {MD: "htmlbot", PLAIN: "htmlbot"}
+
+
+def remote_pages(client, pages_by_name):
+    async def get_page(space, page):
+        return pages_by_name.get(page)
+    client.get_page = AsyncMock(side_effect=get_page)
+
+
+def synced(tmp_path):
+    return StateManager(str(tmp_path)).get_state("r").synced_files
+
+
+async def delete_plain(eng, repo, profile_):
+    repo.files.pop(PLAIN)
+    repo.head, repo.diff = "h2", [("D", PLAIN)]
+    await eng.run_sync(profile_)
+
+
+@pytest.mark.asyncio
+async def test_kept_page_of_deleted_markdown_is_reclaimed_by_default_account(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    trusted = dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    await delete_plain(eng, repo, trusted_profile())
+    assert synced(tmp_path)[PLAIN].deleted is True
+    assert synced(tmp_path)[PLAIN].publisher == "htmlbot"
+    pages(trusted)
+
+    remote_pages(eng.xwiki_client, {"plain": {"title": "plain", "rawTitle": "plain", "content": "edited in wiki"}})
+    await eng.run_sync(profile(enabled=False))
+
+    calls = [c for c in eng.xwiki_client.upsert_page.await_args_list if c.args[1] == "plain"]
+    assert [(c.args[2], c.args[3], c.kwargs["force_author"]) for c in calls] == [("plain", "edited in wiki", True)]
+    assert synced(tmp_path)[PLAIN].publisher == ""
+    assert pages(trusted) == {}
+    eng.xwiki_client.upsert_page.reset_mock()
+    assert await eng.run_sync(profile(enabled=False)) is None
+
+
+@pytest.mark.asyncio
+async def test_kept_page_is_reclaimed_by_default_account_on_account_change(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    await delete_plain(eng, repo, trusted_profile())
+
+    second = dedicated_client(eng, "XWIKI_HTML_CRED2", "htmlbot2")
+    remote_pages(eng.xwiki_client, {"plain": {"title": "plain", "content": "body"}})
+    await eng.run_sync(trusted_profile("XWIKI_HTML_CRED2"))
+
+    assert "plain" not in pages(second)
+    assert pages(eng.xwiki_client) == {"plain": True}
+    assert synced(tmp_path)[PLAIN].publisher == ""
+
+
+@pytest.mark.asyncio
+async def test_kept_page_already_gone_drops_the_record(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    await delete_plain(eng, repo, trusted_profile())
+
+    remote_pages(eng.xwiki_client, {})
+    await eng.run_sync(profile(enabled=False))
+
+    assert PLAIN not in synced(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_deleted_page_or_default_account_page_drops_the_record(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    await delete_plain(eng, repo, profile(enabled=False))
+    assert PLAIN not in synced(tmp_path)
+
+    repo.files[PLAIN] = "# 일반 문서\n"
+    repo.head, repo.diff = "h3", [("A", PLAIN)]
+    dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    eng.config.sync.on_delete = "delete"
+    eng.xwiki_client.delete_page = AsyncMock(return_value=True)
+    trusted = eng._repo_xwiki_clients["XWIKI_HTML_CRED"]
+    trusted.delete_page = AsyncMock(return_value=True)
+    repo.files.pop(PLAIN)
+    repo.head, repo.diff = "h4", [("D", PLAIN)]
+    await eng.run_sync(trusted_profile())
+    trusted.delete_page.assert_awaited_once()
+    assert PLAIN not in synced(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_readded_markdown_leaves_kept_state(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    trusted = dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    await delete_plain(eng, repo, trusted_profile())
+    pages(trusted)
+
+    repo.files[PLAIN] = "# 일반 문서\n"
+    repo.head, repo.diff = "h3", [("A", PLAIN)]
+    await eng.run_sync(trusted_profile())
+
+    assert pages(trusted) == {"plain": False}
+    assert synced(tmp_path)[PLAIN].deleted is False
+    assert synced(tmp_path)[PLAIN].publisher == "htmlbot"
+
+
+@pytest.mark.asyncio
+async def test_readding_markdown_while_revoking_forces_author_change(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    await delete_plain(eng, repo, trusted_profile())
+    remote_pages(eng.xwiki_client, {})
+
+    repo.files[PLAIN] = "# 일반 문서\n"
+    repo.head, repo.diff = "h3", [("A", PLAIN)]
+    await eng.run_sync(profile(enabled=False))
+
+    assert pages(eng.xwiki_client)["plain"] is True
+    eng.xwiki_client.get_page.assert_not_awaited()
+    assert synced(tmp_path)[PLAIN].publisher == ""
+    assert synced(tmp_path)[PLAIN].deleted is False

@@ -168,8 +168,9 @@ class SyncEngine:
             policy_changed = state.html_policy_fingerprint != fingerprint
             publisher = self._xwiki_publisher(repo)
             stale = self._stale_publisher_paths(state, publisher)
+            reclaim = self._kept_pages_to_reclaim(state, publisher)
 
-            if last_sha == head_sha and not index_missing and not policy_changed and not stale:
+            if last_sha == head_sha and not index_missing and not policy_changed and not stale and not reclaim:
                 logger.info(f"Repo {repo.id} is up to date (SHA: {head_sha})")
                 return None
 
@@ -178,7 +179,7 @@ class SyncEngine:
                 changes = self._merge_changes(changes, self._get_all_files(git_manager))
             changes = self._merge_changes(changes, [("M", path) for path in sorted(stale)])
             changes = self._expand_html_changes(changes, state, include_indexed=policy_changed and not index_missing)
-            if not changes:
+            if not changes and not reclaim:
                 logger.info(f"No relevant changes found for {repo.id}.")
                 if not dry_run:
                     state.last_successful_sha = head_sha
@@ -220,6 +221,22 @@ class SyncEngine:
                     sync_items_total.labels(repo_id=repo.id, target=target, action=status).inc()
                     self.state_manager.clear_pending_failure(state, path)
                     self._record_html_errors(report, repo, path)
+
+            for path in sorted(self._kept_pages_to_reclaim(state, publisher)):
+                if dry_run:
+                    logger.info(f"[DRY-RUN] Would reclaim XWiki author of deleted {path}")
+                    report.record_skip(path)
+                    continue
+                try:
+                    await self._reclaim_kept_page(repo, state, path)
+                    report.record_success(path)
+                except Exception as e:
+                    error_type = classify_error(e)
+                    report.record_failure(path, str(e), "xwiki", error_type)
+                    sync_failures_total.labels(repo_id=repo.id, target="xwiki", error_type=error_type).inc()
+                    logger.error(f"Failed to reclaim XWiki author of deleted {path}: [{error_type}] {e}")
+                    if not can_advance_state(error_type):
+                        has_blocking_failure = True
 
             if not has_blocking_failure and report.fail_count == 0 and not dry_run:
                 state.last_successful_sha = head_sha
@@ -317,8 +334,41 @@ class SyncEngine:
         """XWiki에 다른 계정(또는 알 수 없는 계정)으로 게시된 문서. 설정과 무관하게 실제 게시 기록으로 판단한다."""
         return {
             path for path, synced in state.synced_files.items()
-            if "xwiki:" in synced.resource_id and synced.publisher != publisher
+            if "xwiki:" in synced.resource_id and synced.publisher != publisher and not synced.deleted
         }
+
+    def _kept_pages_to_reclaim(self, state: RepoState, publisher: str) -> set:
+        """md가 삭제돼 남은 XWiki 페이지 중 기본 계정도 현재 계정도 아닌 계정(또는 모름)이 작성한 것."""
+        if self.xwiki_client is None:
+            return set()
+        return {
+            path for path, synced in state.synced_files.items()
+            if synced.deleted and synced.publisher != "" and synced.publisher != publisher
+        }
+
+    def _keeps_xwiki_page(self, state: RepoState, path: str, target: str) -> bool:
+        """삭제 처리 후에도 XWiki 페이지가 남고, 그 작성자가 기본 계정이 아닐 수 있으면 기록을 남긴다."""
+        synced = state.synced_files.get(path)
+        if synced is None or "xwiki:" not in synced.resource_id or synced.publisher == "":
+            return False
+        page_deleted = target == "xwiki" and self.xwiki_client is not None and self.config.sync.on_delete == "delete"
+        return not page_deleted
+
+    async def _reclaim_kept_page(self, repo: RepoProfile, state: RepoState, path: str) -> None:
+        """원본 md가 없는 페이지는 XWiki 사용자가 고쳤을 수 있으므로 전용 계정이 아니라 기본 계정으로만 다시 저장한다."""
+        synced = state.synced_files[path]
+        space, page = self._derive_xwiki_target(repo, path)
+        if synced.publisher is not None:
+            synced.publisher = None
+            self.state_manager.save_state(repo.id, state)
+        existing = await self.xwiki_client.get_page(space, page)
+        if existing is None:
+            state.synced_files.pop(path, None)
+            return
+        title = existing.get("rawTitle") or existing.get("title") or page
+        await self.xwiki_client.upsert_page(space, page, title, existing.get("content", ""), force_author=True)
+        synced.publisher = ""
+        logger.info(f"Reclaimed XWiki author of deleted {path}")
 
     async def _publish_xwiki(
         self, repo: RepoProfile, state: Optional[RepoState], path: str,
@@ -344,6 +394,7 @@ class SyncEngine:
                 if "xwiki:" not in synced.resource_id:
                     synced.resource_id = ",".join(filter(None, [synced.resource_id, resource]))
                 self.state_manager.save_state(repo.id, state)
+        force_author = force_author or (synced is not None and synced.publisher != publisher)
         body = await self._process_mermaid_blocks(space, page, body, client)
         await client.upsert_page(space, page, title, body, force_author=force_author)
         if synced is not None:
@@ -405,7 +456,10 @@ class SyncEngine:
                 synced_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 external_key = f"{repo.id}:{path}"
 
-                if status == "D":
+                if status == "D" and self._keeps_xwiki_page(state, path, target):
+                    state.synced_files[path].deleted = True
+                    state.synced_files[path].content_sha = ""
+                elif status == "D":
                     self.state_manager.record_file_deleted(state, path)
                 else:
                     self.state_manager.record_file_synced(
