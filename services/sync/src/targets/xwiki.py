@@ -64,10 +64,11 @@ class XWikiClient:
         
         if existing:
             # 내용이 동일한지 확인 (간단한 비교)
-            if existing.get("title") == title and existing.get("content") == content:
-                if not force_author:
-                    logger.debug(f"XWiki page {space}/{page} is up to date.")
-                    return False # No change made
+            same_content = existing.get("content") == content
+            if same_content and existing.get("title") == title and not force_author:
+                logger.debug(f"XWiki page {space}/{page} is up to date.")
+                return False # No change made
+            if same_content and force_author:
                 response = await self.client.put(
                     url,
                     json={**payload, "content": content + "\n\n{{comment}}synctx: 작성자 갱신{{/comment}}\n"},

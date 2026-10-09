@@ -15,7 +15,7 @@ from synctx_common.observability import (
     sync_failures_total,
     sync_last_success_timestamp,
 )
-from state import StateManager, RepoState
+from state import StateManager, RepoState, SyncedFileState
 from lease import repo_lock
 from targets.xwiki import XWikiClient
 from targets.openproject import OpenProjectClient
@@ -320,6 +320,35 @@ class SyncEngine:
             if "xwiki:" in synced.resource_id and synced.publisher != publisher
         }
 
+    async def _publish_xwiki(
+        self, repo: RepoProfile, state: Optional[RepoState], path: str,
+        space: str, page: str, title: str, body: str, force_author: bool,
+    ) -> None:
+        """XWiki 게시 기록을 전체 처리 결과와 따로 남긴다.
+
+        게시 계정이 바뀌는 쓰기(또는 전용 계정의 첫 게시)는 쓰기 전에 게시자를 모름(None)으로 디스크에 저장한다.
+        임시 저장만 성공하거나 도중에 중단돼도 다음 실행이 설정과 무관하게 다시 처리한다.
+        XWiki 저장이 끝나면 OpenProject 등 뒤 단계의 성패와 상관없이 현재 계정으로 기록한다.
+        """
+        client = self._xwiki_client_for(repo)
+        publisher = self._xwiki_publisher(repo)
+        resource = f"xwiki:{space}.{page}"
+        synced = state.synced_files.get(path) if state is not None else None
+        if state is not None:
+            if synced is None and publisher:
+                synced = SyncedFileState(content_sha="", target="xwiki", external_key=f"{repo.id}:{path}", resource_id=resource)
+                state.synced_files[path] = synced
+            already_unknown = synced is not None and synced.publisher is None and "xwiki:" in synced.resource_id
+            if synced is not None and synced.publisher != publisher and not already_unknown:
+                synced.publisher = None
+                if "xwiki:" not in synced.resource_id:
+                    synced.resource_id = ",".join(filter(None, [synced.resource_id, resource]))
+                self.state_manager.save_state(repo.id, state)
+        body = await self._process_mermaid_blocks(space, page, body, client)
+        await client.upsert_page(space, page, title, body, force_author=force_author)
+        if synced is not None:
+            synced.publisher = publisher
+
     def _mark_html_state(self, state: RepoState, fingerprint: str) -> None:
         state.html_policy_fingerprint = fingerprint
         if state.html_dependencies is None:
@@ -369,7 +398,7 @@ class SyncEngine:
         for attempt in range(retry_cfg.max_attempts):
             try:
                 resource_id = await self._process_single_file(
-                    repo, git_manager, status, path, target, project_id, force_author=force_author,
+                    repo, git_manager, status, path, target, project_id, force_author=force_author, state=state,
                 )
                 report.record_success(path)
 
@@ -412,6 +441,7 @@ class SyncEngine:
         target: str,
         project_id: str,
         force_author: bool = False,
+        state: Optional[RepoState] = None,
     ) -> Optional[str]:
         """단일 파일 처리. 성공 시 resource_id 반환. force_author면 XWiki 작성자를 현재 게시 계정으로 바꾼다."""
         if status == "D":
@@ -450,9 +480,7 @@ class SyncEngine:
             space, page = self._derive_xwiki_target(repo, path)
             title = fm.get("title", page) if fm else page
             body = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
-            client = self._xwiki_client_for(repo)
-            body = await self._process_mermaid_blocks(space, page, body, client)
-            await client.upsert_page(space, page, title, body, force_author=force_author)
+            await self._publish_xwiki(repo, state, path, space, page, title, body, force_author)
             return f"xwiki:{space}.{page}"
         elif target == "openproject" and self.op_client:
             if not fm:
@@ -468,9 +496,7 @@ class SyncEngine:
                 space, page = self._derive_xwiki_target(repo, path)
                 title = fm.get("title", page) if fm else page
                 body_xwiki = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
-                client = self._xwiki_client_for(repo)
-                body_xwiki = await self._process_mermaid_blocks(space, page, body_xwiki, client)
-                await client.upsert_page(space, page, title, body_xwiki, force_author=force_author)
+                await self._publish_xwiki(repo, state, path, space, page, title, body_xwiki, force_author)
                 results.append(f"xwiki:{space}.{page}")
             if self.op_client and fm:
                 payload = self._build_op_payload(fm, self._render_html_blocks_for_op(repo, path, body), path)

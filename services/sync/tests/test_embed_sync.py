@@ -497,30 +497,6 @@ async def test_unchanged_publisher_does_not_republish(tmp_path, monkeypatch, rep
 
 
 @pytest.mark.asyncio
-async def test_reverting_partially_applied_trust_reclaims_published_pages(tmp_path, monkeypatch, repo):
-    repo.files[PLAIN] = "# 일반 문서\n"
-    eng = engine(tmp_path, monkeypatch)
-    await eng.run_sync(profile(enabled=False))
-    pages(eng.xwiki_client)
-
-    trusted = dedicated_client(eng)
-
-    async def upsert(space, page, title, content, force_author=False):
-        if page == "plain":
-            raise RuntimeError("403 Forbidden")
-        return True
-
-    trusted.upsert_page.side_effect = upsert
-    await eng.run_sync(trusted_profile())
-    assert publishers(tmp_path) == {MD: "htmlbot", PLAIN: ""}
-
-    await eng.run_sync(profile(enabled=False))
-
-    assert pages(eng.xwiki_client) == {"reconfig": True}
-    assert publishers(tmp_path) == {MD: "", PLAIN: ""}
-
-
-@pytest.mark.asyncio
 async def test_state_without_recorded_publisher_is_reconciled(tmp_path, monkeypatch, repo):
     import json
     repo.files[PLAIN] = "# 일반 문서\n"
@@ -594,3 +570,70 @@ async def test_identical_content_without_force_is_skipped():
     client, puts = xwiki_with_page({"title": "T", "content": "body"})
     assert await client.upsert_page("docs", "a", "T", "body") is False
     assert puts == []
+
+
+@pytest.mark.asyncio
+async def test_force_author_saves_twice_when_only_title_changes():
+    client, puts = xwiki_with_page({"title": "Old", "content": "body"})
+    await client.upsert_page("docs", "a", "New", "body", force_author=True)
+    assert len(puts) == 2 and puts[0] != "body" and puts[1] == "body"
+
+
+@pytest.mark.asyncio
+async def test_failed_xwiki_write_while_changing_account_is_retried_after_revert(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    pages(eng.xwiki_client)
+
+    trusted = dedicated_client(eng)
+
+    async def partial(space, page, title, content, force_author=False):
+        if page == "plain":
+            raise RuntimeError("403 Forbidden after temporary save")
+        return True
+
+    trusted.upsert_page.side_effect = partial
+    await eng.run_sync(trusted_profile())
+    assert publishers(tmp_path)[PLAIN] is None
+
+    await eng.run_sync(profile(enabled=False))
+
+    assert pages(eng.xwiki_client) == {"reconfig": True, "plain": True}
+    assert publishers(tmp_path) == {MD: "", PLAIN: ""}
+
+
+@pytest.mark.asyncio
+async def test_xwiki_success_with_openproject_failure_records_xwiki_publisher(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "---\ntitle: 일반\nsynctx:\n  target: both\n---\n\n# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch, op=True)
+    trusted = dedicated_client(eng)
+    eng.op_client.upsert_work_package = AsyncMock(side_effect=RuntimeError("403 Forbidden"))
+    await eng.run_sync(trusted_profile())
+    assert "plain" in pages(trusted)
+    assert publishers(tmp_path)[PLAIN] == "htmlbot"
+
+    eng.op_client.upsert_work_package = AsyncMock(return_value=True)
+    await eng.run_sync(profile(enabled=False))
+
+    assert pages(eng.xwiki_client)["plain"] is True
+    assert publishers(tmp_path)[PLAIN] == ""
+
+
+@pytest.mark.asyncio
+async def test_account_change_is_marked_unknown_on_disk_before_xwiki_write(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    trusted = dedicated_client(eng)
+    seen = {}
+
+    async def record(space, page, title, content, force_author=False):
+        seen[page] = publishers(tmp_path).get(f"docs/{page}.md", "absent")
+        return True
+
+    trusted.upsert_page.side_effect = record
+    await eng.run_sync(trusted_profile())
+
+    assert seen == {"reconfig": None, "plain": None}
+    assert publishers(tmp_path) == {MD: "htmlbot", PLAIN: "htmlbot"}
