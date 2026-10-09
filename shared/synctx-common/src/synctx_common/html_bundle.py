@@ -293,7 +293,7 @@ class _Bundler(HTMLParser):
         if data is None:
             return None
         try:
-            return data.decode("utf-8")
+            return data.decode("utf-8-sig")
         except UnicodeDecodeError:
             self.fail("unsupported", f"UTF-8로 읽을 수 없는 파일입니다: {path}")
 

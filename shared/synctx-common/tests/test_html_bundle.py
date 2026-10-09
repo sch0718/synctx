@@ -396,3 +396,15 @@ def test_too_large():
         bundle(reader(files), "m/index.html", HtmlEmbedConfig(enabled=True, max_bundle_bytes=100))
     assert exc.value.reason == "too_large"
     assert exc.value.files == ("m/index.html",)
+
+
+def test_utf8_bom_is_removed_from_inlined_text():
+    files = {
+        "m/index.html": "﻿" + page('<link rel="stylesheet" href="a.css">', '<script src="a.js"></script>'),
+        "m/a.css": "﻿:root{--x:1}",
+        "m/a.js": "﻿window.a=1;",
+    }
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert "﻿" not in html
+    assert "<style>:root{--x:1}</style>" in html
+    assert html.startswith("<!DOCTYPE html>" + CSP_WITH_ORIGIN)
