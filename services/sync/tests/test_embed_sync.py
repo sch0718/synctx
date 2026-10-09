@@ -240,6 +240,9 @@ def fake_manager_class(repo):
         def read_file_text(self, path, ref=None):
             return self.read_file(path, ref).decode("utf-8")
 
+        def file_size(self, path, ref=None):
+            return len(self.read_file(path, ref))
+
     return FakeManager
 
 
@@ -662,7 +665,7 @@ async def test_kept_page_of_deleted_markdown_is_reclaimed_by_default_account(tmp
     trusted = dedicated_client(eng)
     await eng.run_sync(trusted_profile())
     await delete_plain(eng, repo, trusted_profile())
-    assert synced(tmp_path)[PLAIN].deleted is True
+    assert synced(tmp_path)[PLAIN].xwiki_orphan is True
     assert synced(tmp_path)[PLAIN].publisher == "htmlbot"
     pages(trusted)
 
@@ -745,7 +748,7 @@ async def test_readded_markdown_leaves_kept_state(tmp_path, monkeypatch, repo):
     await eng.run_sync(trusted_profile())
 
     assert pages(trusted) == {"plain": False}
-    assert synced(tmp_path)[PLAIN].deleted is False
+    assert synced(tmp_path)[PLAIN].xwiki_orphan is False
     assert synced(tmp_path)[PLAIN].publisher == "htmlbot"
 
 
@@ -765,4 +768,93 @@ async def test_readding_markdown_while_revoking_forces_author_change(tmp_path, m
     assert pages(eng.xwiki_client)["plain"] is True
     eng.xwiki_client.get_page.assert_not_awaited()
     assert synced(tmp_path)[PLAIN].publisher == ""
-    assert synced(tmp_path)[PLAIN].deleted is False
+    assert synced(tmp_path)[PLAIN].xwiki_orphan is False
+
+
+OP_FRONT = "---\ntitle: 일반\nsynctx:\n  target: {target}\n---\n\n# 일반 문서\n"
+
+
+@pytest.mark.asyncio
+async def test_switching_target_to_openproject_keeps_xwiki_page_for_reclaim(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = OP_FRONT.format(target="xwiki")
+    eng = engine(tmp_path, monkeypatch, op=True)
+    trusted = dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    pages(trusted)
+
+    repo.files[PLAIN] = OP_FRONT.format(target="openproject")
+    repo.head, repo.diff = "h2", [("M", PLAIN)]
+    await eng.run_sync(trusted_profile())
+    record = synced(tmp_path)[PLAIN]
+    assert record.xwiki_orphan is True and record.publisher == "htmlbot"
+    assert "openproject:" in record.resource_id and "xwiki:" in record.resource_id
+    assert pages(trusted) == {}
+    assert await eng.run_sync(trusted_profile()) is None
+
+    remote_pages(eng.xwiki_client, {"plain": {"title": "일반", "content": "body"}})
+    await eng.run_sync(profile(enabled=False))
+
+    assert pages(eng.xwiki_client) == {"reconfig": True, "plain": True}
+    eng.xwiki_client.get_page.assert_awaited_once_with("docs", "plain")
+    assert synced(tmp_path)[PLAIN].publisher == ""
+
+
+@pytest.mark.asyncio
+async def test_switching_target_to_openproject_drops_default_account_xwiki_tracking(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = OP_FRONT.format(target="xwiki")
+    eng = engine(tmp_path, monkeypatch, op=True)
+    await eng.run_sync(profile(enabled=False))
+    repo.files[PLAIN] = OP_FRONT.format(target="openproject")
+    repo.head, repo.diff = "h2", [("M", PLAIN)]
+    await eng.run_sync(profile(enabled=False))
+    record = synced(tmp_path)[PLAIN]
+    assert record.xwiki_orphan is False and "xwiki:" not in record.resource_id
+
+
+@pytest.mark.asyncio
+async def test_failed_openproject_part_is_retried_after_xwiki_success(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = OP_FRONT.format(target="both")
+    eng = engine(tmp_path, monkeypatch, op=True)
+    await eng.run_sync(profile(enabled=False))
+    dedicated_client(eng)
+    eng.op_client.upsert_work_package = AsyncMock(side_effect=RuntimeError("403 Forbidden"))
+    await eng.run_sync(trusted_profile())
+    assert [pf.path for pf in StateManager(str(tmp_path)).get_state("r").pending_failures] == [PLAIN]
+
+    eng.op_client.upsert_work_package = AsyncMock(return_value=True)
+    await eng.run_sync(trusted_profile())
+
+    eng.op_client.upsert_work_package.assert_awaited_once()
+    assert StateManager(str(tmp_path)).get_state("r").pending_failures == []
+
+
+@pytest.mark.asyncio
+async def test_validation_failures_wait_for_content_change(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    state = StateManager(str(tmp_path)).get_state("r")
+    StateManager(str(tmp_path)).add_pending_failure(state, PLAIN, "validation_error", "invalid frontmatter")
+    StateManager(str(tmp_path)).save_state("r", state)
+    pages(eng.xwiki_client)
+
+    assert await eng.run_sync(profile(enabled=False)) is None
+    assert pages(eng.xwiki_client) == {}
+
+
+@pytest.mark.asyncio
+async def test_retry_of_vanished_file_clears_pending_without_deleting(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    state = StateManager(str(tmp_path)).get_state("r")
+    StateManager(str(tmp_path)).add_pending_failure(state, PLAIN, "transient_error", "timeout")
+    StateManager(str(tmp_path)).save_state("r", state)
+    repo.files.pop(PLAIN)
+    eng.config.sync.on_delete = "delete"
+    eng.xwiki_client.delete_page = AsyncMock(return_value=True)
+
+    await eng.run_sync(profile(enabled=False))
+
+    eng.xwiki_client.delete_page.assert_not_awaited()
+    assert StateManager(str(tmp_path)).get_state("r").pending_failures == []

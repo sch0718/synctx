@@ -23,8 +23,9 @@ class SyncedFileState:
     last_synced_at: str = ""
     # XWiki에 게시한 계정. ""=기본 계정, 그 외=전용 계정 사용자 이름, None=기록 없음(모름).
     publisher: Optional[str] = ""
-    # md는 삭제됐지만 XWiki 페이지가 남아 있어(on_delete mark·ignore) 작성자 회수를 위해 남겨 둔 기록.
-    deleted: bool = False
+    # md에서 더 이상 게시하지 않는 XWiki 페이지(md 삭제 후 on_delete mark·ignore, 대상을 openproject로 변경).
+    # 작성자 회수를 위해 resource_id의 xwiki 항목과 publisher를 남겨 둔다.
+    xwiki_orphan: bool = False
 
 
 @dataclass
