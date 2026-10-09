@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class AuthzRoleMappings(BaseModel):
@@ -42,6 +43,47 @@ class CollabRepoConfig(BaseModel):
     enabled: bool = False
 
 
+_ORIGIN_RE = re.compile(r"https://([a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::(\d{1,5}))?", re.IGNORECASE)
+
+
+def normalize_origin(value: str) -> str:
+    """https://호스트[:포트]만 받아 소문자로 바꾸고 포트 443을 뺀다. CSP 출처 표현으로 그대로 쓴다."""
+    match = _ORIGIN_RE.fullmatch(value.strip()) if isinstance(value, str) else None
+    if match is None:
+        raise ValueError(f"출처는 https://호스트 또는 https://호스트:포트 형식이어야 합니다: {value!r}")
+    host = match.group(1).lower()
+    port = match.group(2)
+    if port is None or int(port) == 443:
+        return f"https://{host}"
+    if not 1 <= int(port) <= 65535:
+        raise ValueError(f"포트 범위를 벗어났습니다: {value!r}")
+    return f"https://{host}:{int(port)}"
+
+
+def _normalize_origins(values: List[str]) -> List[str]:
+    return list(dict.fromkeys(normalize_origin(v) for v in values))
+
+
+class PlatformHtmlEmbedConfig(BaseModel):
+    allowed_origins: List[str] = Field(default_factory=list)
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _check_origins(cls, values: List[str]) -> List[str]:
+        return _normalize_origins(values)
+
+
+class HtmlEmbedConfig(BaseModel):
+    enabled: bool = False
+    allowed_origins: List[str] = Field(default_factory=list)
+    max_bundle_bytes: int = Field(default=2097152, gt=0)
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _check_origins(cls, values: List[str]) -> List[str]:
+        return _normalize_origins(values)
+
+
 class RepoProfile(BaseModel):
     id: str
     name: str
@@ -54,6 +96,7 @@ class RepoProfile(BaseModel):
     shallow_depth: int = 0
     sparse_paths: List[str] = Field(default_factory=list)
     collab: CollabRepoConfig = Field(default_factory=CollabRepoConfig)
+    html_embed: HtmlEmbedConfig = Field(default_factory=HtmlEmbedConfig)
 
 
 class TargetMatchConfig(BaseModel):
@@ -224,6 +267,19 @@ class SynctxConfig(BaseModel):
     sync: SyncConfig = Field(default_factory=SyncConfig)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     outbound_feedback: OutboundFeedbackConfig = Field(default_factory=OutboundFeedbackConfig)
+    html_embed: PlatformHtmlEmbedConfig = Field(default_factory=PlatformHtmlEmbedConfig)
+
+    @model_validator(mode="after")
+    def _check_html_embed_origins(self) -> "SynctxConfig":
+        allowed = set(self.html_embed.allowed_origins)
+        for repo in self.repositories:
+            extra = [o for o in repo.html_embed.allowed_origins if o not in allowed]
+            if extra:
+                raise ValueError(
+                    f"repositories[{repo.id}].html_embed.allowed_origins에 최상위 "
+                    f"html_embed.allowed_origins에 없는 출처가 있습니다: {', '.join(extra)}"
+                )
+        return self
 
 
 def load_config(config_path: str | Path | None = None) -> SynctxConfig:
