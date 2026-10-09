@@ -77,6 +77,10 @@ class RepoState:
         # 도입 후 상태(html_dependencies 있음)는 전용 계정이 게시했을 수 있으므로 모름(None).
         unknown = None if "html_dependencies" in data else ""
         for path, sf_data in data.get("synced_files", {}).items():
+            sf_data = dict(sf_data)
+            if "deleted" in sf_data:
+                # 같은 기능의 이전 이름(md 삭제 후 남은 XWiki 페이지)을 새 이름으로 옮긴다.
+                sf_data["xwiki_orphan"] = sf_data.pop("deleted")
             state.synced_files[path] = SyncedFileState(**{"publisher": unknown, **sf_data})
         for pf_data in data.get("pending_failures", []):
             state.pending_failures.append(PendingFailure(**pf_data))

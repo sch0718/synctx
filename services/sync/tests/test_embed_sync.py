@@ -842,8 +842,17 @@ async def test_validation_failures_wait_for_content_change(tmp_path, monkeypatch
     assert pages(eng.xwiki_client) == {}
 
 
+def test_state_migrates_deleted_flag_to_xwiki_orphan():
+    for old, new in ((True, True), (False, False)):
+        entry = {"content_sha": "", "target": "xwiki", "external_key": "r:docs/a.md", "resource_id": "xwiki:docs.a",
+                 "publisher": "htmlbot", "deleted": old}
+        restored = RepoState.from_dict({"repo_id": "r", "synced_files": {"docs/a.md": entry}, "html_dependencies": {}})
+        assert restored.synced_files["docs/a.md"].xwiki_orphan is new
+        assert "deleted" not in restored.to_dict()["synced_files"]["docs/a.md"]
+
+
 @pytest.mark.asyncio
-async def test_retry_of_vanished_file_clears_pending_without_deleting(tmp_path, monkeypatch, repo):
+async def test_missing_tracked_file_is_processed_as_delete(tmp_path, monkeypatch, repo):
     repo.files[PLAIN] = "# 일반 문서\n"
     eng = engine(tmp_path, monkeypatch)
     await eng.run_sync(profile(enabled=False))
@@ -856,5 +865,48 @@ async def test_retry_of_vanished_file_clears_pending_without_deleting(tmp_path, 
 
     await eng.run_sync(profile(enabled=False))
 
-    eng.xwiki_client.delete_page.assert_not_awaited()
-    assert StateManager(str(tmp_path)).get_state("r").pending_failures == []
+    eng.xwiki_client.delete_page.assert_awaited_once_with("docs", "plain")
+    after = StateManager(str(tmp_path)).get_state("r")
+    assert PLAIN not in after.synced_files and after.pending_failures == []
+
+
+@pytest.mark.asyncio
+async def test_git_listing_error_keeps_pending_failure(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    state = StateManager(str(tmp_path)).get_state("r")
+    StateManager(str(tmp_path)).add_pending_failure(state, PLAIN, "transient_error", "timeout")
+    StateManager(str(tmp_path)).save_state("r", state)
+    manager_class = sync_engine.GitRepoManager
+
+    def broken(self, path="", recursive=False, ref=None):
+        raise subprocess.CalledProcessError(128, ["git", "ls-tree"], stderr=b"fatal: unable to read tree")
+
+    monkeypatch.setattr(manager_class, "list_tree", broken)
+    with pytest.raises(subprocess.CalledProcessError):
+        await eng.run_sync(profile(enabled=False))
+    assert [pf.path for pf in StateManager(str(tmp_path)).get_state("r").pending_failures] == [PLAIN]
+
+
+@pytest.mark.asyncio
+async def test_page_of_markdown_deleted_after_partial_first_publish_is_reclaimed(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = OP_FRONT.format(target="both")
+    eng = engine(tmp_path, monkeypatch, op=True)
+    trusted = dedicated_client(eng)
+    eng.op_client.upsert_work_package = AsyncMock(side_effect=RuntimeError("403 Forbidden"))
+    await eng.run_sync(trusted_profile())
+    first = StateManager(str(tmp_path)).get_state("r")
+    assert first.last_successful_sha is None and first.synced_files[PLAIN].publisher == "htmlbot"
+    pages(trusted)
+
+    repo.files.pop(PLAIN)
+    repo.head = "h2"
+    eng.op_client.upsert_work_package = AsyncMock(return_value=True)
+    remote_pages(eng.xwiki_client, {"plain": {"title": "일반", "content": "body"}})
+    await eng.run_sync(profile(enabled=False))
+
+    eng.xwiki_client.get_page.assert_awaited_once_with("docs", "plain")
+    assert pages(eng.xwiki_client)["plain"] is True
+    record = synced(tmp_path)[PLAIN]
+    assert record.xwiki_orphan is True and record.publisher == ""

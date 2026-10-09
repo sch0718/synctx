@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import logging
 import os
-import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -179,8 +178,7 @@ class SyncEngine:
             changes = [] if last_sha == head_sha else self._get_changes(git_manager, last_sha, repo)
             if index_missing:
                 changes = self._merge_changes(changes, self._get_all_files(git_manager))
-            changes = self._merge_changes(changes, [("M", path) for path in sorted(stale)])
-            changes = self._merge_changes(changes, self._retry_changes(git_manager, state, retry))
+            changes = self._merge_changes(changes, self._reprocess_changes(git_manager, state, stale | retry))
             changes = self._expand_html_changes(changes, state, include_indexed=policy_changed and not index_missing)
             if not changes and not reclaim:
                 logger.info(f"No relevant changes found for {repo.id}.")
@@ -346,17 +344,24 @@ class SyncEngine:
         validation_error는 내용을 고쳐야 풀리므로 내용 변경을 기다린다."""
         return {pf.path for pf in state.pending_failures if pf.error_type != "validation_error"}
 
-    def _retry_changes(self, git_manager: GitRepoManager, state: RepoState, retry: set) -> List[Tuple[str, str]]:
-        """파일이 남아 있는 실패 문서만 다시 처리한다. git이 파일 없음을 확인하면 대기 기록을 지운다(삭제는 diff가 처리).
-        그 밖의 git 오류는 삭제로 오인하지 않도록 그대로 올린다."""
+    def _reprocess_changes(self, git_manager: GitRepoManager, state: RepoState, paths: set) -> List[Tuple[str, str]]:
+        """게시자 불일치·실패 재시도 문서를 원본 존재 여부에 따라 M 또는 D로 넣는다.
+
+        존재 여부는 파일 목록으로 명시적으로 확인한다. 목록을 읽다 난 git 오류는 그대로 올려 대기 기록을 지키고,
+        목록에 없는데 기록이 남은 문서는 놓친 삭제(성공 SHA 없이 전체 검색한 경우 등)로 보고 D로 처리한다.
+        """
+        if not paths:
+            return []
+        existing = {entry.path for entry in git_manager.list_tree(recursive=True) if entry.type == "file"}
         changes = []
-        for path in sorted(retry):
-            try:
-                git_manager.file_size(path)
-            except subprocess.CalledProcessError:
+        for path in sorted(paths):
+            synced = state.synced_files.get(path)
+            if path in existing:
+                changes.append(("M", path))
+            elif synced is not None and not synced.xwiki_orphan:
+                changes.append(("D", path))
+            else:
                 self.state_manager.clear_pending_failure(state, path)
-                continue
-            changes.append(("M", path))
         return changes
 
     def _kept_pages_to_reclaim(self, state: RepoState, publisher: str) -> set:
