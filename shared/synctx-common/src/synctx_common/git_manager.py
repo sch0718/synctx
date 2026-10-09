@@ -265,9 +265,15 @@ class GitRepoManager:
             entries.append(TreeEntry(name=name, path=full_path, type=item_type))
         return entries
 
+    def resolve_ref(self, ref: str | None = None) -> str:
+        """여러 파일을 같은 ref로 읽을 때 fetch를 한 번만 하도록 해석 결과를 돌려준다."""
+        return self._resolve_ref(ref)
+
     def read_file(self, path: str, ref: str | None = None) -> bytes:
+        return self.read_resolved(path, self._resolve_ref(ref))
+
+    def read_resolved(self, path: str, resolved: str) -> bytes:
         target = self.validate_path(path)
-        resolved = self._resolve_ref(ref)
         if self.profile.storage_mode in {"blobless", "treeless"}:
             logger.info("lazy_blob_fetch repo_id=%s path=%s", self.profile.id, target)
         result = self._run_git("show", f"{resolved}:{target}")

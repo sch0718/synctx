@@ -196,13 +196,32 @@ def test_bundle_is_deterministic():
 
 def test_repo_reader_maps_git_errors_to_file_not_found():
     manager = MagicMock()
-    manager.read_file.side_effect = subprocess.CalledProcessError(128, ["git", "show"])
+    manager.resolve_ref.return_value = "origin/main"
+    manager.read_resolved.side_effect = subprocess.CalledProcessError(128, ["git", "show"])
     with pytest.raises(FileNotFoundError):
         repo_reader(manager, "main")("m/a.js")
-    manager.read_file.side_effect = None
-    manager.read_file.return_value = b"x"
+    manager.read_resolved.side_effect = None
+    manager.read_resolved.return_value = b"x"
     assert repo_reader(manager, "main")("m/a.js") == b"x"
-    manager.read_file.assert_called_with("m/a.js", ref="main")
+    manager.read_resolved.assert_called_with("m/a.js", "origin/main")
+
+
+def test_repo_reader_resolves_ref_once_per_reader():
+    manager = MagicMock()
+    manager.resolve_ref.return_value = "origin/feature"
+    manager.read_resolved.return_value = b"x"
+    read = repo_reader(manager, "feature")
+    read("m/a.js")
+    read("m/b.css")
+    manager.resolve_ref.assert_called_once_with("feature")
+    assert manager.read_resolved.call_count == 2
+
+
+def test_repo_reader_does_not_report_fetch_failure_as_missing_file():
+    manager = MagicMock()
+    manager.resolve_ref.side_effect = subprocess.CalledProcessError(128, ["git", "fetch"])
+    with pytest.raises(subprocess.CalledProcessError):
+        repo_reader(manager, "feature")("m/a.js")
 
 
 from synctx_common.html_bundle import csp_meta

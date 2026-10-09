@@ -559,9 +559,14 @@ def bundle(read: Reader, entry: str, policy: HtmlEmbedConfig) -> BundleResult:
 
 
 def repo_reader(manager, ref: Optional[str] = None) -> Reader:
+    """ref는 첫 읽기에서 한 번만 해석한다. 해석(fetch) 실패는 파일 없음으로 바꾸지 않고 그대로 올린다."""
+    resolved: list = []
+
     def read(path: str) -> bytes:
+        if not resolved:
+            resolved.append(manager.resolve_ref(ref))
         try:
-            return manager.read_file(path, ref=ref)
+            return manager.read_resolved(path, resolved[0])
         except subprocess.CalledProcessError as exc:
             raise FileNotFoundError(path) from exc
 

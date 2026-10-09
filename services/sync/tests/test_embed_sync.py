@@ -113,6 +113,8 @@ def git_manager(files):
 
     manager.read_file.side_effect = read_file
     manager.read_file_text.side_effect = lambda path, ref=None: read_file(path, ref).decode("utf-8")
+    manager.resolve_ref.side_effect = lambda ref=None: f"origin/{ref or 'main'}"
+    manager.read_resolved.side_effect = lambda path, resolved: read_file(path)
     return manager
 
 
@@ -211,10 +213,16 @@ def fake_manager_class(repo):
         def list_tree(self, path="", recursive=False, ref=None):
             return [TreeEntry(name=p.rsplit("/", 1)[-1], path=p, type="file") for p in sorted(repo.files)]
 
-        def read_file(self, path, ref=None):
+        def resolve_ref(self, ref=None):
+            return f"origin/{ref or 'main'}"
+
+        def read_resolved(self, path, resolved):
             if path not in repo.files:
                 raise subprocess.CalledProcessError(128, ["git", "show", path])
             return repo.files[path].encode("utf-8")
+
+        def read_file(self, path, ref=None):
+            return self.read_resolved(path, self.resolve_ref(ref))
 
         def read_file_text(self, path, ref=None):
             return self.read_file(path, ref).decode("utf-8")

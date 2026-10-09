@@ -41,12 +41,14 @@ def _manager(md=MD, files=None):
     manager.file_size.return_value = 100
     manager.read_file_text.return_value = md
 
-    def read_file(path, ref=None):
+    def read_resolved(path, resolved):
         if path not in files:
             raise subprocess.CalledProcessError(128, ["git", "show", path])
         return files[path].encode("utf-8")
 
-    manager.read_file.side_effect = read_file
+    manager.resolve_ref.side_effect = lambda ref=None: f"origin/{ref or 'main'}"
+    manager.read_resolved.side_effect = read_resolved
+    manager.read_file.side_effect = lambda path, ref=None: read_resolved(path, None)
     return manager
 
 
