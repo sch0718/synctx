@@ -216,10 +216,14 @@ class GitRepoManager:
                 branches.append(parts[1].replace("refs/heads/", ""))
         return sorted(branches)
 
+    def _default_remote_ref(self) -> str:
+        # fetch 는 refs/remotes/origin/<ref> 만 갱신하고 로컬 브랜치는 clone 시점에 머문다.
+        return f"origin/{self.profile.default_ref}"
+
     def _resolve_ref(self, ref: str | None = None) -> str:
         """ref를 git 명령에 사용할 수 있는 형태로 변환한다."""
         if ref is None or ref == self.profile.default_ref:
-            return self.profile.default_ref
+            return self._default_remote_ref()
         try:
             self._run_git(
                 "fetch", "origin",
@@ -281,12 +285,14 @@ class GitRepoManager:
 
     def last_commit(self, path: str) -> CommitInfo:
         target = self.validate_path(path)
-        result = self._run_git("log", "-1", "--format=%H%x1f%an%x1f%aI", "--", target)
+        result = self._run_git(
+            "log", "-1", "--format=%H%x1f%an%x1f%aI", self._default_remote_ref(), "--", target
+        )
         sha, author, authored_at = result.stdout.decode("utf-8").strip().split("\x1f")
         return CommitInfo(sha=sha, author=author, authored_at=authored_at)
 
     def head_sha(self) -> str:
-        result = self._run_git("rev-parse", self.profile.default_ref)
+        result = self._run_git("rev-parse", self._default_remote_ref())
         return result.stdout.decode("utf-8").strip()
 
     def diff_since(self, since_sha: str) -> list[tuple[str, str]]:
@@ -297,7 +303,7 @@ class GitRepoManager:
             status: A(Added), M(Modified), D(Deleted), R(Renamed) 등
         """
         # -M: detect renames
-        result = self._run_git("diff", "--name-status", "-M", f"{since_sha}..{self.profile.default_ref}")
+        result = self._run_git("diff", "--name-status", "-M", f"{since_sha}..{self._default_remote_ref()}")
         changes = []
         for line in result.stdout.decode("utf-8").splitlines():
             if not line:
