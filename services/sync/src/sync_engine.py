@@ -471,7 +471,7 @@ class SyncEngine:
     async def _process_mermaid_blocks(self, space: str, page: str, body: str) -> str:
         """Markdown 본문에서 mermaid 블록을 찾아 SVG로 변환하고 첨부파일로 업로드 후 이미지 링크로 치환."""
         import re
-        from converters.mermaid import convert_mermaid_to_svg
+        from sync_converters.mermaid import convert_mermaid_to_svg
 
         pattern = re.compile(r'```mermaid\n(.*?)\n```', re.DOTALL)
         matches = pattern.findall(body)

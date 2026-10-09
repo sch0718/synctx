@@ -317,7 +317,7 @@ synctx/
 │   │   │   ├── harness_validator.py   # 하네스 검증 (synctx_common.harness 위임)
 │   │   │   ├── state.py               # state.json atomic read/write
 │   │   │   ├── lease.py               # 실행 잠금 (O_CREAT|O_EXCL)
-│   │   │   ├── converters/mermaid.py  # Mermaid → SVG 변환
+│   │   │   ├── sync_converters/mermaid.py # Mermaid → SVG 변환
 │   │   │   └── targets/               # 동기화 대상
 │   │   │       ├── xwiki.py           # XWiki REST API 클라이언트
 │   │   │       └── openproject.py     # OpenProject REST API 클라이언트

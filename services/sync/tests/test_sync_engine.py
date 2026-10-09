@@ -388,3 +388,33 @@ class TestOnDeletePolicy:
         repo = _make_repo()
         await engine._process_single_file(repo, MagicMock(), "D", "issues/t.md", "openproject", "42")
         engine.op_client.mark_deleted.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestXWikiMermaidPublish:
+    async def test_mermaid_block_uploaded_as_svg_attachment(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("XWIKI_CRED", "user:pass")
+        monkeypatch.setattr(
+            "sync_converters.mermaid.convert_mermaid_to_svg",
+            lambda code: b"<svg>stub</svg>",
+        )
+        engine = SyncEngine(_make_config(sync=SyncConfig(state_path=str(tmp_path))))
+        engine.xwiki_client = MagicMock()
+        engine.xwiki_client.upload_attachment = AsyncMock()
+        engine.xwiki_client.upsert_page = AsyncMock()
+        git_manager = MagicMock()
+        git_manager.read_file_text.return_value = (
+            "---\ntitle: 개요\n---\n# 개요\n\n```mermaid\ngraph LR\n  A --> B\n```\n"
+        )
+
+        resource_id = await engine._process_single_file(
+            _make_repo(), git_manager, "A", "docs/overview.md", "xwiki", "1",
+        )
+
+        assert resource_id == "xwiki:docs.overview"
+        engine.xwiki_client.upload_attachment.assert_awaited_once_with(
+            "docs", "overview", "mermaid_0.svg", b"<svg>stub</svg>", "image/svg+xml",
+        )
+        body = engine.xwiki_client.upsert_page.await_args.args[3]
+        assert "![Mermaid Diagram](mermaid_0.svg)" in body
+        assert "```mermaid" not in body

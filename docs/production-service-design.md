@@ -1074,7 +1074,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - [x] state.json atomic read/write 구현
 - [x] git diff `A/M/D/R` 처리 구현 (R → D+A 분리)
 - [x] XWiki REST API 클라이언트 구현 (기본 CRUD)
-- [x] Mermaid SVG 변환 모듈 구현 (converters/mermaid.py)
+- [x] Mermaid SVG 변환 모듈 구현 (sync_converters/mermaid.py)
 - [x] CronJob/ServiceAccount/RBAC/NetworkPolicy Helm 추가
 - [x] Dockerfile multi-stage 빌드 구현
 - [x] XWiki attachment upload + SHA skip 구현

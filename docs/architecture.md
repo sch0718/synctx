@@ -769,7 +769,7 @@ sync/src/
 ├── harness_validator.py # synctx validate-harness (synctx_common.harness 위임)
 ├── state.py            # state.json atomic read/write
 ├── lease.py            # 실행 잠금 (O_CREAT|O_EXCL 기반)
-├── converters/
+├── sync_converters/
 │   └── mermaid.py      # Mermaid → SVG 변환
 └── targets/
     ├── xwiki.py        # XWiki REST API 클라이언트
