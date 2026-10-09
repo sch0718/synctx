@@ -209,6 +209,8 @@ _CSS_IMPORT_RE = re.compile(r"@import\b", re.IGNORECASE)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _HTML_SPACE_RE = re.compile(r"[\t\n\f\r ]*")
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module"}
+# link를 style로 바꿀 때 버리는 속성. id·class·title·media·data-* 등 스크립트가 찾는 속성은 남긴다.
+_DROPPED_LINK_ATTRS = {"href", "rel", "type", "crossorigin", "integrity", "referrerpolicy", "fetchpriority", "as", "blocking", "hreflang", "charset", "sizes"}
 _DROPPED_SCRIPT_ATTRS = {"src", "defer", "async", "integrity", "crossorigin", "charset", "referrerpolicy"}
 _JS_GAP = r"(?:\s|/\*.*?\*/|//[^\n]*(?:\n|$))*"
 _JS_STRING = r"""(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`)"""
@@ -420,10 +422,12 @@ class _Bundler(HTMLParser):
         rel = {token.lower() for token in (values.get("rel") or "").split()}
         kind = classify_url(href)
         if "stylesheet" in rel and kind == "relative":
+            if "alternate" in rel or any(name.lower() == "disabled" for name, _ in attrs):
+                self.fail("unsupported", f"대체·비활성 stylesheet link는 지원하지 않습니다: {href}")
             path = self.path_of(href, self.entry)
             css = self.load_text(path)
-            media = values.get("media")
-            self.out.append(_render_tag("style", [("media", media)] if media else []))
+            kept = [(name, value) for name, value in attrs if name.lower() not in _DROPPED_LINK_ATTRS]
+            self.out.append(_render_tag("style", kept))
             self.out.append(_escape_raw(self.rewrite_css(css, path), "style") if css is not None else "")
             self.out.append("</style>")
             return

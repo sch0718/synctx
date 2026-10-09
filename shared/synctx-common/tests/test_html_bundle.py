@@ -443,3 +443,26 @@ def test_utf8_bom_is_removed_from_inlined_text():
     assert "﻿" not in html
     assert "<style>:root{--x:1}</style>" in html
     assert html.startswith("<!DOCTYPE html>" + CSP_WITH_ORIGIN)
+
+
+def test_stylesheet_link_keeps_identifying_attributes():
+    files = {
+        "m/index.html": page('<link rel="stylesheet" href="dark.css" id="dark" class="theme" title="Dark" media="screen" data-k="v" crossorigin integrity="sha256-x">'),
+        "m/dark.css": "p{}",
+    }
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert '<style id="dark" class="theme" title="Dark" media="screen" data-k="v">p{}</style>' in html
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        '<link rel="stylesheet" href="dark.css" id="dark" disabled>',
+        '<link rel="alternate stylesheet" href="dark.css" title="Dark">',
+    ],
+)
+def test_stylesheet_link_toggle_semantics_are_rejected(link):
+    files = {"m/index.html": page(link), "m/dark.css": "p{}"}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", POLICY)
+    assert exc.value.reason == "unsupported"
