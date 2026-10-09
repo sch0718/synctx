@@ -69,6 +69,16 @@ def test_block_becomes_sandboxed_iframe(monkeypatch):
     assert "window.v = 1;" in resp.text
 
 
+def test_nul_in_src_shows_error_box(monkeypatch):
+    md = MD.replace("./motion/index.html", "./a%00.html")
+    manager = _manager(md=md)
+    manager.read_resolved.side_effect = lambda path, resolved: (_ for _ in ()).throw(ValueError("embedded null byte"))
+    client = _client(monkeypatch, **{"test-repo": manager})
+    resp = client.get("/test-repo/docs/reconfig.md")
+    assert resp.status_code == 200
+    assert "인터랙티브 콘텐츠를 불러오지 못했습니다" in resp.text
+
+
 def test_disabled_repo_shows_notice_with_source_link(monkeypatch):
     client = _client(monkeypatch, **{"plain-repo": _manager()})
     resp = client.get("/plain-repo/docs/reconfig.md")

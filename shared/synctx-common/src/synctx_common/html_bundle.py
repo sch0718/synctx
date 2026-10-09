@@ -143,6 +143,8 @@ def resolve_path(base_file: str, reference: str) -> str:
         path = unquote(urlsplit(reference.strip()).path)
     except ValueError as exc:
         raise BundleError("unsupported", f"해석할 수 없는 경로입니다: {reference}") from exc
+    if _CONTROL_RE.search(path):
+        raise BundleError("unsupported", f"경로에 제어 문자가 있습니다: {reference}")
     joined = posixpath.normpath(posixpath.join(posixpath.dirname(base_file), path))
     if joined == ".." or joined.startswith("../") or joined.startswith("/"):
         raise BundleError("outside_repo", f"저장소 밖을 가리키는 경로입니다: {reference}")
@@ -204,6 +206,7 @@ Reader = Callable[[str], bytes]
 
 _CSS_URL_RE = re.compile(r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)""", re.IGNORECASE)
 _CSS_IMPORT_RE = re.compile(r"@import\b", re.IGNORECASE)
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _HTML_SPACE_RE = re.compile(r"[\t\n\f\r ]*")
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module"}
 _DROPPED_SCRIPT_ATTRS = {"src", "defer", "async", "integrity", "crossorigin", "charset", "referrerpolicy"}
@@ -585,5 +588,7 @@ def repo_reader(manager, ref: Optional[str] = None) -> Reader:
             return manager.read_resolved(path, resolved[0])
         except subprocess.CalledProcessError as exc:
             raise FileNotFoundError(path) from exc
+        except ValueError as exc:
+            raise BundleError("unsupported", f"읽을 수 없는 경로입니다: {path}") from exc
 
     return read

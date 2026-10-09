@@ -45,6 +45,12 @@ def test_analyze_disabled_and_missing():
     assert missing.deps == ("docs/motion/index.html", "docs/motion/motion.js")
 
 
+def test_nul_in_src_becomes_block_outcome_not_exception():
+    body = BODY.replace("./motion/index.html", "./a%00.html")
+    [outcome] = analyze(body, "docs/a.md", POLICY, reader(FILES)).outcomes
+    assert outcome.status == "unsupported"
+
+
 def test_malformed_url_becomes_block_outcome_not_exception():
     files = {**FILES, "docs/motion/index.html": INDEX.replace("</body>", '<img src="https://["></body>')}
     body = BODY + "\n```synctx-html\nsrc: ./other/index.html\n```\n"

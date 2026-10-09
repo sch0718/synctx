@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from synctx_common.config import HtmlEmbedConfig
-from synctx_common.html_bundle import BundleError, bundle, repo_reader
+from synctx_common.html_bundle import BundleError, bundle, repo_reader, resolve_path
 
 ORIGIN = "https://cdn.synctx.local"
 POLICY = HtmlEmbedConfig(enabled=True, allowed_origins=[ORIGIN])
@@ -204,6 +204,22 @@ def test_repo_reader_maps_git_errors_to_file_not_found():
     manager.read_resolved.return_value = b"x"
     assert repo_reader(manager, "main")("m/a.js") == b"x"
     manager.read_resolved.assert_called_with("m/a.js", "origin/main")
+
+
+@pytest.mark.parametrize("reference", ["a%00.js", "a%0a.js", "a%7f.js"])
+def test_control_characters_in_decoded_path_are_block_errors(reference):
+    with pytest.raises(BundleError) as exc:
+        resolve_path("m/index.html", reference)
+    assert exc.value.reason == "unsupported"
+
+
+def test_repo_reader_maps_invalid_path_to_bundle_error():
+    manager = MagicMock()
+    manager.resolve_ref.return_value = "origin/main"
+    manager.read_resolved.side_effect = ValueError("embedded null byte")
+    with pytest.raises(BundleError) as exc:
+        repo_reader(manager)("m/a.js")
+    assert exc.value.reason == "unsupported"
 
 
 def test_repo_reader_resolves_ref_once_per_reader():
