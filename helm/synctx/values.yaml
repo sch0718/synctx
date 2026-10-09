@@ -84,7 +84,10 @@ feedback:
     smtpCredential: ""
     opApiKey: ""
     xwikiCredential: ""
-    # html_embed.enabled 저장소 전용 XWiki 계정(user:password). 대상 공간 한정 스크립트 권한은 이 계정에만 준다.
+    # html_embed.enabled 저장소 전용 XWiki 계정. 대상 공간 한정 스크립트 권한은 이 계정에만 준다.
+    # true면 XWIKI_HTML_CREDENTIAL을 Secret의 xwiki-html-credential 키에 연결한다(existingSecret이면 그 Secret에 키가 있어야 한다).
+    xwikiHtmlCredentialEnabled: false
+    # create: true일 때 Secret에 넣을 값(user:password). 값을 주면 xwikiHtmlCredentialEnabled 없이도 연결한다.
     xwikiHtmlCredential: ""
 
 ingress:

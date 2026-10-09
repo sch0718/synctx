@@ -131,7 +131,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 
 ### 실행 중 네트워크 정책 (CSP meta 주입)
 
-정적 검사는 JS가 실행 중에 만든 주소(`fetch`, `Image.src`, 동적 `<script>`)를 잡지 못한다. 출처가 `null`이어도 요청 송신 자체는 막히지 않는다. 그래서 모든 스크립트보다 앞에 CSP meta를 넣는다. 위치는 앞에 공백·주석만 있는 doctype이면 그 바로 뒤, 아니면 문서 맨 앞이다. 스크립트 뒤에 온 doctype은 따라가지 않는다. 브라우저는 이 meta를 `<head>`의 첫 요소로 해석한다.
+정적 검사는 JS가 실행 중에 만든 주소(`fetch`, `Image.src`, 동적 `<script>`)를 잡지 못한다. 출처가 `null`이어도 요청 송신 자체는 막히지 않는다. 그래서 모든 스크립트보다 앞에 CSP meta를 넣는다. 위치는 HTML 공백 문자만 앞에 있는 doctype이면 그 바로 뒤, 아니면 문서 맨 앞이다. 스크립트 뒤에 온 doctype은 따라가지 않는다. 브라우저는 이 meta를 `<head>`의 첫 요소로 해석한다. 주석이 doctype보다 앞에 있으면 meta가 doctype 앞에 온다. 이 합본을 독립 문서로 열면 quirks 모드(`BackCompat`)가 되지만, 합본은 항상 iframe srcdoc으로만 전달되고 srcdoc 문서는 HTML 표준상 quirks 모드가 되지 않는다(Chromium에서 sandbox srcdoc `CSS1Compat` 확인, 2026-10-09). 그래서 `<!-->` 같은 해석이 갈리는 주석을 구분하는 검사를 CSP 위치 결정 경로에 더하지 않는다.
 
 ```html
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' {H}; style-src 'unsafe-inline' {H}; img-src data: {H}; font-src data: {H}; connect-src {H|'none'}; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'">
@@ -318,6 +318,7 @@ repositories:
 
 - 스크립트 권한은 **신뢰 저장소 전용 계정**(`html_embed.xwiki_credential_env`)에만, **대상 공간에 한정해** 준다. 공간의 `WebPreferences`에 `XWiki.XWikiGlobalRights`로 `users=전용 계정`, `levels=script`, `allow=1`을 넣는다.
 - 기본 동기화 계정(`targets.xwiki.auth`)에는 스크립트 권한을 주지 않는다. XWiki는 페이지를 마지막으로 작성한 계정의 권한으로 매크로를 실행하므로, 비신뢰 저장소가 본문에 직접 쓴 `{{html}}`·`{{velocity}}`는 기본 계정 권한으로 걸러진다. 공간 이름은 디렉터리에서 정해져 저장소끼리 공간을 공유하므로, 권한을 공간이 아니라 계정으로 나눠야 한다(2026-10-09 최종 검토 결정).
+- 게시 계정이 바뀌면(신뢰 지정·해제, 전용 계정 교체) 그 저장소의 모든 md를 새 계정으로 다시 게시한다. XWiki는 내용이 바뀐 저장에서만 content author를 갱신하므로(16.10 `XWikiDocument.setContent`), 전용 계정 게시본 끝에 계정별 `{{comment}}synctx-publisher: <해시>{{/comment}}` 표식을 붙여 계정이 바뀌면 본문도 달라지게 한다. 게시 계정은 상태 파일 `xwiki_publisher`에 기록하고, 실패 없이 끝난 실행에서만 갱신해 실패한 문서는 다음 실행에서 다시 처리한다.
 - 프로그래밍 권한과 위키 전체 스크립트 권한은 주지 않는다.
 - XWiki의 `attachment.download.whitelist`는 바꾸지 않는다.
 
@@ -335,6 +336,7 @@ repositories:
 | srcdoc 속성 탈출 | `to_iframe`에서 속성값을 이스케이프하고, 테스트로 `" > <script>` 입력을 확인한다 |
 | XWiki 매크로 경계 탈출 (`{{/html}}` 주입) | 블록 출력은 항상 `{{html}}` 매크로 하나이고, 안의 속성값과 텍스트에서 `{` `}`를 엔티티로 바꾼다. 매크로 본문에 중괄호가 남지 않는다 |
 | 신뢰 해제 후에도 남는 iframe | 정책 지문이 바뀌면 HEAD가 같아도 해당 md를 다시 처리한다(7.3) |
+| 신뢰 해제 후에도 전용 계정이 작성자로 남은 페이지 | 게시 계정이 바뀌면 블록이 없는 md까지 모두 기본 계정으로 다시 게시하고, 본문 표식으로 내용이 달라지게 해 작성자가 실제로 바뀌게 한다(8.2) |
 | 큰 합본으로 페이지·DB 부하 | `max_bundle_bytes` 상한 |
 | 상단 페이지 이동·팝업 | sandbox에 `allow-top-navigation`·`allow-popups`를 주지 않는다 |
 | 동기화 계정 권한 남용 | 스크립트 권한은 신뢰 저장소 전용 계정에만, 공간에 한정해 준다. 이 계정으로 작성되는 페이지 내용은 Git 원본에서만 나온다 |
