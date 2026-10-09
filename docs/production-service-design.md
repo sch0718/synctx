@@ -1276,7 +1276,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 4. `too_large`: 이미지를 줄이거나 `max_bundle_bytes`를 조정한다.
 5. XWiki 페이지에 스크립트가 글자로 보이거나 iframe이 사라지면, 신뢰 저장소 전용 계정(`html_embed.xwiki_credential_env`)의 공간 스크립트 권한을 확인한다. 공간 `WebPreferences`에 `XWiki.XWikiGlobalRights`(`users=전용 계정`, `levels=script`, `allow=1`)가 있어야 한다. 기본 동기화 계정에는 스크립트 권한을 주지 않는다.
 6. Helm에서 `existingSecret`을 쓰면 `feedback.secrets.xwikiHtmlCredentialEnabled: true`로 `XWIKI_HTML_CREDENTIAL`을 그 Secret의 `xwiki-html-credential` 키에 연결한다. 평문 값(`xwikiHtmlCredential`)은 Chart가 Secret을 만들 때만 쓴다.
-7. 신뢰를 해제하거나 전용 계정을 바꾸면 다음 동기화가 그 저장소의 모든 md를 새 계정으로 다시 게시한다. 실패한 문서가 있으면 상태의 `xwiki_publisher`가 갱신되지 않아 다음 실행에서 다시 시도한다. 완료 후 페이지 기록의 작성자가 바뀌었는지 확인한다.
+7. 신뢰를 해제하거나 전용 계정을 바꾸면 다음 동기화가 다른 계정으로 게시된 문서를 모두 새 계정으로 다시 게시한다(상태 `synced_files[].publisher` 기준). 본문이 같으면 임시 버전을 한 번 거쳐 작성자를 바꾼다. 실패한 문서는 기록이 바뀌지 않아 다음 실행에서 다시 시도한다. 완료 후 페이지 기록의 작성자가 바뀌었는지 확인한다.
 
 ## 13. 남은 외부 검증 항목
 

@@ -318,7 +318,9 @@ repositories:
 
 - 스크립트 권한은 **신뢰 저장소 전용 계정**(`html_embed.xwiki_credential_env`)에만, **대상 공간에 한정해** 준다. 공간의 `WebPreferences`에 `XWiki.XWikiGlobalRights`로 `users=전용 계정`, `levels=script`, `allow=1`을 넣는다.
 - 기본 동기화 계정(`targets.xwiki.auth`)에는 스크립트 권한을 주지 않는다. XWiki는 페이지를 마지막으로 작성한 계정의 권한으로 매크로를 실행하므로, 비신뢰 저장소가 본문에 직접 쓴 `{{html}}`·`{{velocity}}`는 기본 계정 권한으로 걸러진다. 공간 이름은 디렉터리에서 정해져 저장소끼리 공간을 공유하므로, 권한을 공간이 아니라 계정으로 나눠야 한다(2026-10-09 최종 검토 결정).
-- 게시 계정이 바뀌면(신뢰 지정·해제, 전용 계정 교체) 그 저장소의 모든 md를 새 계정으로 다시 게시한다. XWiki는 내용이 바뀐 저장에서만 content author를 갱신하므로(16.10 `XWikiDocument.setContent`), 전용 계정 게시본 끝에 계정별 `{{comment}}synctx-publisher: <해시>{{/comment}}` 표식을 붙여 계정이 바뀌면 본문도 달라지게 한다. 게시 계정은 상태 파일 `xwiki_publisher`에 기록하고, 실패 없이 끝난 실행에서만 갱신해 실패한 문서는 다음 실행에서 다시 처리한다.
+- 문서마다 XWiki에 게시한 계정을 상태 파일 `synced_files[].publisher`에 기록한다(`""`=기본 계정, 사용자 이름=전용 계정, `null`=모름). 매 실행에서 기록된 게시자가 현재 게시 계정과 다른 문서는 설정 변경 여부와 무관하게 다시 게시한다. 그래서 신뢰 지정·해제, 전용 계정 교체, 일부만 성공한 전환을 되돌린 경우 모두 실제 게시 기록을 기준으로 권한이 회수된다. 실패한 문서는 기록이 바뀌지 않아 다음 실행에서 다시 시도한다.
+- XWiki는 내용이 바뀐 저장에서만 content author를 갱신한다(16.10 `XWikiDocument.setContent`). 그래서 다시 게시할 때 XWiki 본문이 같으면 임시 내용(`{{comment}}synctx: 작성자 갱신{{/comment}}`을 덧붙인 본문)을 먼저 저장하고 원래 본문을 다시 저장한다(`upsert_page(force_author=True)`). 페이지 기록에 버전이 하나 더 남는다.
+- 게시자 기록이 없는 기존 상태: HTML 임베드 도입 전 상태(`html_dependencies` 없음)는 기본 계정만 있었으므로 기본 계정으로 읽는다. 도입 후 상태에서 기록이 빠진 항목은 모름으로 읽고 한 번 다시 게시한다.
 - 프로그래밍 권한과 위키 전체 스크립트 권한은 주지 않는다.
 - XWiki의 `attachment.download.whitelist`는 바꾸지 않는다.
 

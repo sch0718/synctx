@@ -21,6 +21,8 @@ class SyncedFileState:
     resource_id: str = ""
     last_synced_sha: str = ""
     last_synced_at: str = ""
+    # XWiki에 게시한 계정. ""=기본 계정, 그 외=전용 계정 사용자 이름, None=기록 없음(모름).
+    publisher: Optional[str] = ""
 
 
 @dataclass
@@ -42,7 +44,6 @@ class RepoState:
     pending_failures: List[PendingFailure] = field(default_factory=list)
     html_dependencies: Optional[Dict[str, List[str]]] = None
     html_policy_fingerprint: str = ""
-    xwiki_publisher: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -56,7 +57,6 @@ class RepoState:
             "pending_failures": [asdict(pf) for pf in self.pending_failures],
             "html_dependencies": self.html_dependencies,
             "html_policy_fingerprint": self.html_policy_fingerprint,
-            "xwiki_publisher": self.xwiki_publisher,
         }
         return d
 
@@ -69,10 +69,12 @@ class RepoState:
             last_run_id=data.get("last_run_id", ""),
             html_dependencies=data.get("html_dependencies"),
             html_policy_fingerprint=data.get("html_policy_fingerprint", ""),
-            xwiki_publisher=data.get("xwiki_publisher", ""),
         )
+        # 게시자 기록이 없는 항목: HTML 임베드 도입 전 상태는 기본 계정만 있었으므로 "",
+        # 도입 후 상태(html_dependencies 있음)는 전용 계정이 게시했을 수 있으므로 모름(None).
+        unknown = None if "html_dependencies" in data else ""
         for path, sf_data in data.get("synced_files", {}).items():
-            state.synced_files[path] = SyncedFileState(**sf_data)
+            state.synced_files[path] = SyncedFileState(**{"publisher": unknown, **sf_data})
         for pf_data in data.get("pending_failures", []):
             state.pending_failures.append(PendingFailure(**pf_data))
         return state
@@ -153,6 +155,7 @@ class StateManager:
     def record_file_synced(
         self, state: RepoState, path: str, content_sha: str, target: str,
         external_key: str, resource_id: str, commit_sha: str, synced_at: str,
+        publisher: Optional[str] = "",
     ) -> None:
         state.synced_files[path] = SyncedFileState(
             content_sha=content_sha,
@@ -161,6 +164,7 @@ class StateManager:
             resource_id=resource_id,
             last_synced_sha=commit_sha,
             last_synced_at=synced_at,
+            publisher=publisher,
         )
 
     def record_file_deleted(self, state: RepoState, path: str) -> None:

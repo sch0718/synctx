@@ -28,7 +28,6 @@ from embed_sync import (
     analyze,
     effective_sha,
     policy_fingerprint,
-    publisher_marker,
     render_for_openproject,
     render_for_xwiki,
 )
@@ -168,22 +167,22 @@ class SyncEngine:
             index_missing = state.html_dependencies is None
             policy_changed = state.html_policy_fingerprint != fingerprint
             publisher = self._xwiki_publisher(repo)
-            publisher_changed = state.xwiki_publisher != publisher
+            stale = self._stale_publisher_paths(state, publisher)
 
-            if last_sha == head_sha and not index_missing and not policy_changed and not publisher_changed:
+            if last_sha == head_sha and not index_missing and not policy_changed and not stale:
                 logger.info(f"Repo {repo.id} is up to date (SHA: {head_sha})")
                 return None
 
             changes = [] if last_sha == head_sha else self._get_changes(git_manager, last_sha, repo)
-            if index_missing or publisher_changed:
+            if index_missing:
                 changes = self._merge_changes(changes, self._get_all_files(git_manager))
+            changes = self._merge_changes(changes, [("M", path) for path in sorted(stale)])
             changes = self._expand_html_changes(changes, state, include_indexed=policy_changed and not index_missing)
             if not changes:
                 logger.info(f"No relevant changes found for {repo.id}.")
                 if not dry_run:
                     state.last_successful_sha = head_sha
                     self._mark_html_state(state, fingerprint)
-                    state.xwiki_publisher = publisher
                     self.state_manager.save_state(repo.id, state)
                 return None
 
@@ -200,7 +199,7 @@ class SyncEngine:
                     continue
 
                 content_sha = self._compute_content_sha(git_manager, status, path, repo, state)
-                if status != "D" and not self.state_manager.is_file_changed(repo.id, path, content_sha):
+                if status != "D" and path not in stale and not self.state_manager.is_file_changed(repo.id, path, content_sha):
                     report.record_skip(path)
                     continue
 
@@ -210,6 +209,7 @@ class SyncEngine:
                 success, error_type = await self._process_with_retry(
                     repo, git_manager, status, path, target, project_id,
                     retry_cfg, report, state, head_sha, content_sha,
+                    force_author=path in stale,
                 )
 
                 if not success:
@@ -224,7 +224,6 @@ class SyncEngine:
             if not has_blocking_failure and report.fail_count == 0 and not dry_run:
                 state.last_successful_sha = head_sha
                 self._mark_html_state(state, fingerprint)
-                state.xwiki_publisher = publisher
                 sync_last_success_timestamp.labels(repo_id=repo.id).set(time.time())
                 sync_runs_total.labels(repo_id=repo.id, result="success").inc()
                 logger.info(f"Sync completed for {repo.id}. {report.summary()}")
@@ -281,11 +280,7 @@ class SyncEngine:
         analysis = self._html_analysis(repo, git_manager, path, body)
         if state is not None:
             self._update_html_index(state, path, analysis)
-        sha = effective_sha(content, analysis, policy_fingerprint(repo.html_embed))
-        publisher = self._xwiki_publisher(repo)
-        if publisher:
-            sha = hashlib.sha256(f"{sha}\0{publisher}".encode()).hexdigest()
-        return sha
+        return effective_sha(content, analysis, policy_fingerprint(repo.html_embed))
 
     def _update_html_index(self, state: RepoState, path: str, analysis: MarkdownAnalysis) -> None:
         """게시 여부와 상관없이 합본을 만든 직후 색인을 갱신한다(참조만 바뀐 경우도 놓치지 않게)."""
@@ -317,6 +312,13 @@ class SyncEngine:
                 result.append((status, path))
                 seen.add(path)
         return result
+
+    def _stale_publisher_paths(self, state: RepoState, publisher: str) -> set:
+        """XWiki에 다른 계정(또는 알 수 없는 계정)으로 게시된 문서. 설정과 무관하게 실제 게시 기록으로 판단한다."""
+        return {
+            path for path, synced in state.synced_files.items()
+            if "xwiki:" in synced.resource_id and synced.publisher != publisher
+        }
 
     def _mark_html_state(self, state: RepoState, fingerprint: str) -> None:
         state.html_policy_fingerprint = fingerprint
@@ -359,13 +361,16 @@ class SyncEngine:
         state: RepoState,
         head_sha: str,
         content_sha: str,
+        force_author: bool = False,
     ) -> Tuple[bool, str]:
         last_error = ""
         error_type = "transient_error"
 
         for attempt in range(retry_cfg.max_attempts):
             try:
-                resource_id = await self._process_single_file(repo, git_manager, status, path, target, project_id)
+                resource_id = await self._process_single_file(
+                    repo, git_manager, status, path, target, project_id, force_author=force_author,
+                )
                 report.record_success(path)
 
                 synced_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -377,6 +382,7 @@ class SyncEngine:
                     self.state_manager.record_file_synced(
                         state, path, content_sha, target,
                         external_key, resource_id or "", head_sha, synced_at,
+                        publisher=self._xwiki_publisher(repo),
                     )
                 return True, ""
             except Exception as e:
@@ -405,8 +411,9 @@ class SyncEngine:
         path: str,
         target: str,
         project_id: str,
+        force_author: bool = False,
     ) -> Optional[str]:
-        """단일 파일 처리. 성공 시 resource_id 반환."""
+        """단일 파일 처리. 성공 시 resource_id 반환. force_author면 XWiki 작성자를 현재 게시 계정으로 바꾼다."""
         if status == "D":
             on_delete = self.config.sync.on_delete
             if on_delete == "ignore":
@@ -445,7 +452,7 @@ class SyncEngine:
             body = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
             client = self._xwiki_client_for(repo)
             body = await self._process_mermaid_blocks(space, page, body, client)
-            await client.upsert_page(space, page, title, body + publisher_marker(self._xwiki_publisher(repo)))
+            await client.upsert_page(space, page, title, body, force_author=force_author)
             return f"xwiki:{space}.{page}"
         elif target == "openproject" and self.op_client:
             if not fm:
@@ -463,7 +470,7 @@ class SyncEngine:
                 body_xwiki = self._render_html_blocks_for_xwiki(repo, git_manager, path, body)
                 client = self._xwiki_client_for(repo)
                 body_xwiki = await self._process_mermaid_blocks(space, page, body_xwiki, client)
-                await client.upsert_page(space, page, title, body_xwiki + publisher_marker(self._xwiki_publisher(repo)))
+                await client.upsert_page(space, page, title, body_xwiki, force_author=force_author)
                 results.append(f"xwiki:{space}.{page}")
             if self.op_client and fm:
                 payload = self._build_op_payload(fm, self._render_html_blocks_for_op(repo, path, body), path)

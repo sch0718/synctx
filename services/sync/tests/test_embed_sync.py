@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from synctx_common.config import HtmlEmbedConfig
-from embed_sync import analyze, effective_sha, policy_fingerprint, publisher_marker, render_for_openproject, render_for_xwiki
+from embed_sync import analyze, effective_sha, policy_fingerprint, render_for_openproject, render_for_xwiki
 from state import RepoState
 
 ORIGIN = "https://cdn.synctx.local"
@@ -421,7 +421,6 @@ async def test_trusted_repo_page_is_published_by_dedicated_account(tmp_path, mon
     eng._repo_xwiki_clients["XWIKI_HTML_CRED"] = trusted_client
     await eng._process_single_file(trusted_profile(), git_manager({MD: MD_TEXT, **FILES}), "A", MD, "xwiki", "1")
     trusted_client.upsert_page.assert_awaited_once()
-    assert trusted_client.upsert_page.await_args.args[3].endswith(publisher_marker("htmlbot"))
     eng.xwiki_client.upsert_page.assert_not_awaited()
     await eng._process_single_file(profile(enabled=False), git_manager({MD: MD_TEXT, **FILES}), "A", MD, "xwiki", "1")
     eng.xwiki_client.upsert_page.assert_awaited_once()
@@ -448,44 +447,42 @@ def dedicated_client(eng, env="XWIKI_HTML_CRED", user="htmlbot"):
 
 
 def pages(client):
-    contents = {call.args[1]: call.args[3] for call in client.upsert_page.await_args_list}
+    """페이지 이름 → 작성자 강제 갱신 여부."""
+    result = {call.args[1]: call.kwargs.get("force_author", False) for call in client.upsert_page.await_args_list}
     client.upsert_page.reset_mock()
-    return contents
+    return result
+
+
+def publishers(tmp_path):
+    return {path: sf.publisher for path, sf in StateManager(str(tmp_path)).get_state("r").synced_files.items()}
 
 
 @pytest.mark.asyncio
-async def test_revoking_trust_republishes_every_page_by_default_account_with_new_content(tmp_path, monkeypatch, repo):
+async def test_revoking_trust_forces_author_change_on_every_page(tmp_path, monkeypatch, repo):
     repo.files[PLAIN] = "# 일반 문서\n\n{{velocity}}$xcontext.user{{/velocity}}\n"
     eng = engine(tmp_path, monkeypatch)
     trusted = dedicated_client(eng)
     await eng.run_sync(trusted_profile())
-    by_trusted = pages(trusted)
-    assert set(by_trusted) == {"reconfig", "plain"}
+    assert set(pages(trusted)) == {"reconfig", "plain"}
+    assert publishers(tmp_path) == {MD: "htmlbot", PLAIN: "htmlbot"}
 
     await eng.run_sync(profile(enabled=False))
 
-    by_default = pages(eng.xwiki_client)
-    assert set(by_default) == {"reconfig", "plain"}
-    assert by_default["plain"] != by_trusted["plain"]
-    assert by_trusted["plain"].endswith(publisher_marker("htmlbot"))
-    assert "synctx-publisher" not in by_default["plain"]
-    assert StateManager(str(tmp_path)).get_state("r").xwiki_publisher == ""
+    assert pages(eng.xwiki_client) == {"reconfig": True, "plain": True}
+    assert publishers(tmp_path) == {MD: "", PLAIN: ""}
 
 
 @pytest.mark.asyncio
-async def test_changing_dedicated_account_republishes_with_new_content(tmp_path, monkeypatch, repo):
+async def test_changing_dedicated_account_forces_author_change(tmp_path, monkeypatch, repo):
     repo.files[PLAIN] = "# 일반 문서\n"
     eng = engine(tmp_path, monkeypatch)
-    first = dedicated_client(eng, "XWIKI_HTML_CRED", "htmlbot")
+    pages(dedicated_client(eng, "XWIKI_HTML_CRED", "htmlbot"))
     await eng.run_sync(trusted_profile())
-    before = pages(first)
 
     second = dedicated_client(eng, "XWIKI_HTML_CRED2", "htmlbot2")
     await eng.run_sync(trusted_profile("XWIKI_HTML_CRED2"))
 
-    after = pages(second)
-    assert set(after) == {"reconfig", "plain"}
-    assert after["plain"] != before["plain"]
+    assert pages(second) == {"reconfig": True, "plain": True}
 
 
 @pytest.mark.asyncio
@@ -499,6 +496,59 @@ async def test_unchanged_publisher_does_not_republish(tmp_path, monkeypatch, rep
     assert pages(trusted) == {}
 
 
+@pytest.mark.asyncio
+async def test_reverting_partially_applied_trust_reclaims_published_pages(tmp_path, monkeypatch, repo):
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    pages(eng.xwiki_client)
+
+    trusted = dedicated_client(eng)
+
+    async def upsert(space, page, title, content, force_author=False):
+        if page == "plain":
+            raise RuntimeError("403 Forbidden")
+        return True
+
+    trusted.upsert_page.side_effect = upsert
+    await eng.run_sync(trusted_profile())
+    assert publishers(tmp_path) == {MD: "htmlbot", PLAIN: ""}
+
+    await eng.run_sync(profile(enabled=False))
+
+    assert pages(eng.xwiki_client) == {"reconfig": True}
+    assert publishers(tmp_path) == {MD: "", PLAIN: ""}
+
+
+@pytest.mark.asyncio
+async def test_state_without_recorded_publisher_is_reconciled(tmp_path, monkeypatch, repo):
+    import json
+    repo.files[PLAIN] = "# 일반 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    pages(eng.xwiki_client)
+    state_file = tmp_path / "r.json"
+    data = json.loads(state_file.read_text("utf-8"))
+    for entry in data["synced_files"].values():
+        entry.pop("publisher")
+    state_file.write_text(json.dumps(data), "utf-8")
+
+    await eng.run_sync(profile(enabled=False))
+
+    assert pages(eng.xwiki_client) == {"reconfig": True, "plain": True}
+    assert publishers(tmp_path) == {MD: "", PLAIN: ""}
+
+
+def test_state_publisher_migration():
+    synced = {"docs/a.md": {"content_sha": "s", "target": "xwiki", "external_key": "r:docs/a.md", "resource_id": "xwiki:docs.a"}}
+    pre_feature = RepoState.from_dict({"schema_version": 1, "repo_id": "r", "synced_files": synced})
+    assert pre_feature.synced_files["docs/a.md"].publisher == ""
+    feature_build = RepoState.from_dict({"schema_version": 1, "repo_id": "r", "synced_files": synced, "html_dependencies": {}})
+    assert feature_build.synced_files["docs/a.md"].publisher is None
+    restored = RepoState.from_dict(feature_build.to_dict())
+    assert restored.synced_files["docs/a.md"].publisher is None
+
+
 def test_xwiki_client_exposes_basic_auth_user(monkeypatch):
     from targets.xwiki import XWikiClient
     monkeypatch.setenv("XWIKI_HTML_CRED", "htmlbot:se:cret")
@@ -506,7 +556,41 @@ def test_xwiki_client_exposes_basic_auth_user(monkeypatch):
     assert client.user == "htmlbot"
 
 
-def test_state_round_trip_keeps_xwiki_publisher():
-    restored = RepoState.from_dict(RepoState(repo_id="r", xwiki_publisher="htmlbot").to_dict())
-    assert restored.xwiki_publisher == "htmlbot"
-    assert RepoState.from_dict({"repo_id": "r"}).xwiki_publisher == ""
+def xwiki_with_page(existing):
+    import httpx
+    from targets.xwiki import XWikiClient
+    puts = []
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=existing) if existing else httpx.Response(404)
+        puts.append(__import__("json").loads(request.content)["content"])
+        return httpx.Response(201)
+
+    client = XWikiClient(XWikiTargetConfig(base_url="https://xwiki.internal", auth=TargetAuthConfig(type="basic", credential_env="XWIKI_UNSET")))
+    client.client = httpx.AsyncClient(base_url="https://xwiki.internal", transport=httpx.MockTransport(handler))
+    return client, puts
+
+
+@pytest.mark.asyncio
+async def test_force_author_saves_twice_when_content_is_identical():
+    client, puts = xwiki_with_page({"title": "T", "content": "body"})
+    assert await client.upsert_page("docs", "a", "T", "body", force_author=True) is True
+    assert len(puts) == 2 and puts[0] != "body" and puts[1] == "body"
+
+
+@pytest.mark.asyncio
+async def test_force_author_saves_once_when_content_differs_or_page_is_new():
+    client, puts = xwiki_with_page({"title": "T", "content": "old"})
+    await client.upsert_page("docs", "a", "T", "new", force_author=True)
+    assert puts == ["new"]
+    client, puts = xwiki_with_page(None)
+    await client.upsert_page("docs", "a", "T", "new", force_author=True)
+    assert puts == ["new"]
+
+
+@pytest.mark.asyncio
+async def test_identical_content_without_force_is_skipped():
+    client, puts = xwiki_with_page({"title": "T", "content": "body"})
+    assert await client.upsert_page("docs", "a", "T", "body") is False
+    assert puts == []
