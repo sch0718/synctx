@@ -122,3 +122,17 @@ async def test_read_resolved_reads_branch_after_single_resolve(tmp_path, remote)
     assert manager.read_file("docs/a.md", ref="feature") == b"feature\n"
     with pytest.raises(ValueError):
         manager.read_resolved("../x", resolved)
+
+
+@pytest.mark.asyncio
+async def test_file_paths_lists_every_blob_including_hidden_and_special_names(tmp_path, remote):
+    bare, work, _ = remote
+    for name in ["docs/.hidden.md", "docs/한글.md", 'docs/a "b".md', "docs/tab\tname.md", ".github/x.md"]:
+        _commit(work, name, "x\n", f"add {name}")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+
+    paths = manager.file_paths()
+
+    assert {"docs/a.md", "other/b.md", "docs/.hidden.md", "docs/한글.md", 'docs/a "b".md', "docs/tab\tname.md", ".github/x.md"} <= paths
+    assert not any(path.endswith("/") or path in {"docs", "other"} for path in paths)

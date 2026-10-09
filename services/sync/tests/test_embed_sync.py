@@ -224,7 +224,11 @@ def fake_manager_class(repo):
             return list(repo.diff)
 
         def list_tree(self, path="", recursive=False, ref=None):
-            return [TreeEntry(name=p.rsplit("/", 1)[-1], path=p, type="file") for p in sorted(repo.files)]
+            names = [p for p in sorted(repo.files) if not p.rsplit("/", 1)[-1].startswith(".")]
+            return [TreeEntry(name=p.rsplit("/", 1)[-1], path=p, type="file") for p in names]
+
+        def file_paths(self, ref=None):
+            return set(repo.files)
 
         def resolve_ref(self, ref=None):
             return f"origin/{ref or 'main'}"
@@ -880,10 +884,10 @@ async def test_git_listing_error_keeps_pending_failure(tmp_path, monkeypatch, re
     StateManager(str(tmp_path)).save_state("r", state)
     manager_class = sync_engine.GitRepoManager
 
-    def broken(self, path="", recursive=False, ref=None):
+    def broken(self, ref=None):
         raise subprocess.CalledProcessError(128, ["git", "ls-tree"], stderr=b"fatal: unable to read tree")
 
-    monkeypatch.setattr(manager_class, "list_tree", broken)
+    monkeypatch.setattr(manager_class, "file_paths", broken)
     with pytest.raises(subprocess.CalledProcessError):
         await eng.run_sync(profile(enabled=False))
     assert [pf.path for pf in StateManager(str(tmp_path)).get_state("r").pending_failures] == [PLAIN]
@@ -910,3 +914,27 @@ async def test_page_of_markdown_deleted_after_partial_first_publish_is_reclaimed
     assert pages(eng.xwiki_client)["plain"] is True
     record = synced(tmp_path)[PLAIN]
     assert record.xwiki_orphan is True and record.publisher == ""
+
+
+@pytest.mark.asyncio
+async def test_existing_hidden_markdown_is_not_treated_as_deleted(tmp_path, monkeypatch, repo):
+    hidden = "docs/.hidden.md"
+    repo.files[hidden] = "# 숨김 문서\n"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile(enabled=False))
+    await eng._process_with_retry(
+        profile(enabled=False), sync_engine.GitRepoManager(profile(), str(tmp_path)), "A", hidden, "xwiki", "1",
+        eng._get_retry_config("xwiki"), sync_engine.SyncReport(), state := StateManager(str(tmp_path)).get_state("r"),
+        "h1", "sha",
+    )
+    StateManager(str(tmp_path)).add_pending_failure(state, hidden, "transient_error", "timeout")
+    StateManager(str(tmp_path)).save_state("r", state)
+    pages(eng.xwiki_client)
+    eng.config.sync.on_delete = "delete"
+    eng.xwiki_client.delete_page = AsyncMock(return_value=True)
+
+    await eng.run_sync(profile(enabled=False))
+
+    eng.xwiki_client.delete_page.assert_not_awaited()
+    assert ".hidden" in pages(eng.xwiki_client)
+    assert StateManager(str(tmp_path)).get_state("r").pending_failures == []

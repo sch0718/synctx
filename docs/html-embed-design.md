@@ -323,7 +323,7 @@ repositories:
 - XWiki는 내용이 바뀐 저장에서만 content author를 갱신한다(16.10 `XWikiDocument.setContent`, 제목 변경도 `setTitle`이 content dirty를 세운다). 그래서 다시 게시할 때 제목과 상관없이 XWiki 본문이 같으면 임시 내용(`{{comment}}synctx: 작성자 갱신{{/comment}}`을 덧붙인 본문)을 먼저 저장하고 원래 본문을 다시 저장한다(`upsert_page(force_author=True)`). 페이지 기록에 버전이 하나 더 남는다.
 - md에서 더 이상 게시하지 않는 XWiki 페이지(md 삭제 후 `on_delete: mark`·`ignore`, 경로 매핑상 페이지를 지우지 않는 삭제, `synctx.target`을 `openproject`로 변경)는 게시자가 기본 계정이 아니면 기록을 `xwiki_orphan: true`로 남긴다. 대상 변경 때는 OpenProject 기록과 함께 `resource_id`의 xwiki 항목과 게시자를 보존한다. 그 게시자가 기본 계정도 현재 계정도 아니게 되면 페이지의 현재 내용을 읽어 기본 계정으로 다시 저장한다(`force_author`). md에서 오지 않은 내용일 수 있으므로 전용 계정으로는 다시 저장하지 않는다. 페이지가 이미 없으면 기록을 지우고, md가 다시 XWiki로 게시되면 일반 문서로 돌아간다.
 - 처리에 실패한 문서(`pending_failures`)는 본문 해시가 같아도 매 실행 다시 처리한다(예: XWiki는 성공하고 OpenProject가 실패한 `both` 문서). `validation_error`는 내용을 고쳐야 풀리므로 내용 변경을 기다린다.
-- 게시자 불일치·실패 재시도로 다시 처리할 문서는 파일 목록(`list_tree`)으로 원본 존재를 명시적으로 확인한다. 원본이 없는데 기록이 남아 있으면 놓친 삭제(성공 SHA 없이 전체 검색한 경우 등)로 보고 삭제로 처리해 `on_delete`에 따라 페이지를 지우거나 orphan 기록으로 바꾼다. 목록을 읽다 난 git 오류는 실행을 실패시키고 대기 기록을 유지한다.
+- 게시자 불일치·실패 재시도로 다시 처리할 문서는 파일 목록으로 원본 존재를 명시적으로 확인한다(`file_paths`: 숨김 파일을 거르지 않는 `ls-tree -r -z --name-only`). 원본이 없는데 기록이 남아 있으면 놓친 삭제(성공 SHA 없이 전체 검색한 경우 등)로 보고 삭제로 처리해 `on_delete`에 따라 페이지를 지우거나 orphan 기록으로 바꾼다. 목록을 읽다 난 git 오류는 실행을 실패시키고 대기 기록을 유지한다.
 - 게시자 기록이 없는 기존 상태: HTML 임베드 도입 전 상태(`html_dependencies` 없음)는 기본 계정만 있었으므로 기본 계정으로 읽는다. 도입 후 상태에서 기록이 빠진 항목은 모름으로 읽고 한 번 다시 게시한다.
 - 프로그래밍 권한과 위키 전체 스크립트 권한은 주지 않는다.
 - XWiki의 `attachment.download.whitelist`는 바꾸지 않는다.

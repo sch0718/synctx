@@ -347,12 +347,12 @@ class SyncEngine:
     def _reprocess_changes(self, git_manager: GitRepoManager, state: RepoState, paths: set) -> List[Tuple[str, str]]:
         """게시자 불일치·실패 재시도 문서를 원본 존재 여부에 따라 M 또는 D로 넣는다.
 
-        존재 여부는 파일 목록으로 명시적으로 확인한다. 목록을 읽다 난 git 오류는 그대로 올려 대기 기록을 지키고,
+        존재 여부는 숨김 파일까지 포함한 파일 목록(file_paths)으로 명시적으로 확인한다. 목록을 읽다 난 git 오류는 그대로 올려 대기 기록을 지키고,
         목록에 없는데 기록이 남은 문서는 놓친 삭제(성공 SHA 없이 전체 검색한 경우 등)로 보고 D로 처리한다.
         """
         if not paths:
             return []
-        existing = {entry.path for entry in git_manager.list_tree(recursive=True) if entry.type == "file"}
+        existing = git_manager.file_paths()
         changes = []
         for path in sorted(paths):
             synced = state.synced_files.get(path)

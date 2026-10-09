@@ -265,6 +265,11 @@ class GitRepoManager:
             entries.append(TreeEntry(name=name, path=full_path, type=item_type))
         return entries
 
+    def file_paths(self, ref: str | None = None) -> set[str]:
+        """저장소의 모든 파일 경로. list_tree와 달리 숨김 파일을 거르지 않고, -z로 특수 문자 경로도 그대로 읽는다."""
+        result = self._run_git("ls-tree", "-r", "-z", "--name-only", self._resolve_ref(ref))
+        return {path for path in result.stdout.decode("utf-8").split("\0") if path}
+
     def resolve_ref(self, ref: str | None = None) -> str:
         """여러 파일을 같은 ref로 읽을 때 fetch를 한 번만 하도록 해석 결과를 돌려준다."""
         return self._resolve_ref(ref)
