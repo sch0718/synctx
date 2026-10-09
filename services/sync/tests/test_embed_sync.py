@@ -175,3 +175,189 @@ async def test_bundle_failure_counts_metric(tmp_path, monkeypatch):
     await eng._process_single_file(profile(), git_manager(files), "A", MD, "xwiki", "1")
     assert (failures._value.get(), missing._value.get()) == (before[0] + 1, before[1] + 1)
     assert "인터랙티브 콘텐츠를 불러오지 못했습니다" in eng.xwiki_client.upsert_page.await_args.args[3]
+
+
+from contextlib import contextmanager
+
+import sync_engine
+from synctx_common.git_manager import TreeEntry
+from state import StateManager
+
+
+class FakeRepo:
+    def __init__(self, files):
+        self.files = dict(files)
+        self.head = "h1"
+        self.diff = []
+
+
+def fake_manager_class(repo):
+    class FakeManager:
+        def __init__(self, profile, base_dir):
+            self.profile = profile
+            self.status = "ready"
+            self.last_error = None
+
+        async def ensure(self):
+            return None
+
+        @property
+        def head_sha_value(self):
+            return repo.head
+
+        def diff_since(self, sha):
+            return list(repo.diff)
+
+        def list_tree(self, path="", recursive=False, ref=None):
+            return [TreeEntry(name=p.rsplit("/", 1)[-1], path=p, type="file") for p in sorted(repo.files)]
+
+        def read_file(self, path, ref=None):
+            if path not in repo.files:
+                raise subprocess.CalledProcessError(128, ["git", "show", path])
+            return repo.files[path].encode("utf-8")
+
+        def read_file_text(self, path, ref=None):
+            return self.read_file(path, ref).decode("utf-8")
+
+    return FakeManager
+
+
+@contextmanager
+def always_locked(*args, **kwargs):
+    yield True
+
+
+@pytest.fixture
+def repo(monkeypatch):
+    fake = FakeRepo({MD: MD_TEXT, **FILES})
+    monkeypatch.setattr(sync_engine, "GitRepoManager", fake_manager_class(fake))
+    monkeypatch.setattr(sync_engine, "repo_lock", always_locked)
+    return fake
+
+
+def published(eng):
+    contents = [call.args[3] for call in eng.xwiki_client.upsert_page.await_args_list]
+    eng.xwiki_client.upsert_page.reset_mock()
+    return contents
+
+
+@pytest.mark.asyncio
+async def test_first_run_full_scan_publishes_iframe(tmp_path, monkeypatch, repo):
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    [content] = published(eng)
+    [inner] = macro_bodies(content)
+    assert inner.startswith('<iframe class="synctx-html"')
+    state = StateManager(str(tmp_path)).get_state("r")
+    assert state.html_dependencies == {MD: ["docs/motion/index.html", "docs/motion/motion.js"]}
+    assert state.html_policy_fingerprint != ""
+
+
+@pytest.mark.asyncio
+async def test_dependency_change_republishes_markdown(tmp_path, monkeypatch, repo):
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    first = published(eng)[0]
+    repo.head, repo.diff = "h2", [("M", "docs/motion/motion.js")]
+    repo.files["docs/motion/motion.js"] = "window.v = 2;"
+    await eng.run_sync(profile())
+    [second] = published(eng)
+    assert second != first
+
+
+@pytest.mark.asyncio
+async def test_policy_change_without_new_commit_replaces_iframe(tmp_path, monkeypatch, repo):
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    published(eng)
+    await eng.run_sync(profile(enabled=False))
+    [content] = published(eng)
+    assert "<iframe" not in content
+    assert "이 저장소는 HTML 실행이 허용되지 않습니다" in content
+
+
+@pytest.mark.asyncio
+async def test_unchanged_head_and_policy_does_nothing(tmp_path, monkeypatch, repo):
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    published(eng)
+    assert await eng.run_sync(profile()) is None
+    assert published(eng) == []
+
+
+@pytest.mark.asyncio
+async def test_state_without_index_triggers_full_scan(tmp_path, monkeypatch, repo):
+    from state import RepoState
+    StateManager(str(tmp_path)).save_state("r", RepoState(repo_id="r", last_successful_sha="h1"))
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    assert len(published(eng)) == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_file_recovers_when_added(tmp_path, monkeypatch, repo):
+    del repo.files["docs/motion/motion.js"]
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    [broken] = published(eng)
+    assert "찾을 수 없는 파일" in broken
+    repo.files["docs/motion/motion.js"] = "window.v = 1;"
+    repo.head, repo.diff = "h2", [("A", "docs/motion/motion.js")]
+    await eng.run_sync(profile())
+    [fixed] = published(eng)
+    assert '<iframe class="synctx-html"' in fixed
+
+
+@pytest.mark.asyncio
+async def test_reference_swap_keeps_index_current(tmp_path, monkeypatch, repo):
+    repo.files["docs/motion/index.html"] = INDEX.replace("motion.js", "a.js")
+    repo.files["docs/motion/a.js"] = "window.v = 1;"
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    published(eng)
+    repo.files["docs/motion/index.html"] = INDEX.replace("motion.js", "b.js")
+    repo.files["docs/motion/b.js"] = "window.v = 1;"
+    del repo.files["docs/motion/a.js"]
+    repo.head, repo.diff = "h2", [("M", "docs/motion/index.html"), ("A", "docs/motion/b.js"), ("D", "docs/motion/a.js")]
+    await eng.run_sync(profile())
+    published(eng)
+    deps = StateManager(str(tmp_path)).get_state("r").html_dependencies[MD]
+    assert "docs/motion/b.js" in deps and "docs/motion/a.js" not in deps
+    repo.files["docs/motion/b.js"] = "window.v = 3;"
+    repo.head, repo.diff = "h3", [("M", "docs/motion/b.js")]
+    await eng.run_sync(profile())
+    [content] = published(eng)
+    assert "window.v = 3;" in content
+
+
+@pytest.mark.asyncio
+async def test_two_markdown_files_sharing_entry_are_both_republished(tmp_path, monkeypatch, repo):
+    repo.files["docs/other.md"] = BODY
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    assert len(published(eng)) == 2
+    repo.files["docs/motion/motion.js"] = "window.v = 9;"
+    repo.head, repo.diff = "h2", [("M", "docs/motion/motion.js")]
+    await eng.run_sync(profile())
+    assert len(published(eng)) == 2
+
+
+@pytest.mark.asyncio
+async def test_bundle_errors_are_reported_separately(tmp_path, monkeypatch, repo):
+    del repo.files["docs/motion/motion.js"]
+    eng = engine(tmp_path, monkeypatch)
+    report = await eng.run_sync(profile())
+    assert report.success_count == 1 and report.fail_count == 0
+    assert report.html_errors == [
+        {"path": MD, "status": "missing_file", "message": "찾을 수 없는 파일: docs/motion/motion.js"}
+    ]
+    assert report.summary()["html_errors"] == report.html_errors
+
+
+@pytest.mark.asyncio
+async def test_markdown_without_blocks_keeps_plain_content_sha(tmp_path, monkeypatch, repo):
+    eng = engine(tmp_path, monkeypatch)
+    text = "# 블록 없는 문서\n"
+    manager = git_manager({"docs/plain.md": text})
+    sha = eng._compute_content_sha(manager, "A", "docs/plain.md", profile(), RepoState(repo_id="r"))
+    assert sha == hashlib.sha256(text.encode()).hexdigest()

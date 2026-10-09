@@ -23,7 +23,8 @@ from urllib.parse import quote
 
 from synctx_common.html_bundle import repo_reader
 from synctx_common.observability import html_bundle_total
-from embed_sync import MarkdownAnalysis, analyze, render_for_openproject, render_for_xwiki
+from embed_sync import MarkdownAnalysis, analyze, effective_sha, policy_fingerprint, render_for_openproject, render_for_xwiki
+from synctx_common.frontmatter import parse_frontmatter
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class SyncReport:
         self.success: List[str] = []
         self.failed: List[Dict[str, Any]] = []
         self.skipped: List[str] = []
+        self.html_errors: List[Dict[str, Any]] = []
 
     @property
     def success_count(self) -> int:
@@ -61,12 +63,16 @@ class SyncReport:
     def record_skip(self, path: str) -> None:
         self.skipped.append(path)
 
+    def record_html_error(self, path: str, status: str, message: str) -> None:
+        self.html_errors.append({"path": path, "status": status, "message": message})
+
     def summary(self) -> Dict[str, Any]:
         return {
             "success": self.success_count,
             "failed": self.fail_count,
             "skipped": len(self.skipped),
             "failures": self.failed,
+            "html_errors": self.html_errors,
         }
 
 
@@ -133,6 +139,8 @@ class SyncEngine:
                 return None
 
             logger.info(f"Starting sync for {repo.id} (dry_run={dry_run}, run_id={run_id})")
+            self._analysis_cache.clear()
+            self._analysis_by_path.clear()
 
             cache_dir = os.getenv("REPO_CACHE_PATH", "/data/repos")
             git_manager = GitRepoManager(repo, cache_dir)
@@ -145,16 +153,23 @@ class SyncEngine:
             state = self.state_manager.get_state(repo.id)
             state.last_run_id = run_id
             last_sha = state.last_successful_sha
+            fingerprint = policy_fingerprint(repo.html_embed)
+            index_missing = state.html_dependencies is None
+            policy_changed = state.html_policy_fingerprint != fingerprint
 
-            if last_sha == head_sha:
+            if last_sha == head_sha and not index_missing and not policy_changed:
                 logger.info(f"Repo {repo.id} is up to date (SHA: {head_sha})")
                 return None
 
-            changes = self._get_changes(git_manager, last_sha, repo)
+            changes = [] if last_sha == head_sha else self._get_changes(git_manager, last_sha, repo)
+            if index_missing:
+                changes = self._merge_changes(changes, self._get_all_files(git_manager))
+            changes = self._expand_html_changes(changes, state, include_indexed=policy_changed and not index_missing)
             if not changes:
                 logger.info(f"No relevant changes found for {repo.id}.")
                 if not dry_run:
                     state.last_successful_sha = head_sha
+                    self._mark_html_state(state, fingerprint)
                     self.state_manager.save_state(repo.id, state)
                 return None
 
@@ -170,7 +185,7 @@ class SyncEngine:
                     report.record_skip(path)
                     continue
 
-                content_sha = self._compute_content_sha(git_manager, status, path)
+                content_sha = self._compute_content_sha(git_manager, status, path, repo, state)
                 if status != "D" and not self.state_manager.is_file_changed(repo.id, path, content_sha):
                     report.record_skip(path)
                     continue
@@ -190,15 +205,18 @@ class SyncEngine:
                 else:
                     sync_items_total.labels(repo_id=repo.id, target=target, action=status).inc()
                     self.state_manager.clear_pending_failure(state, path)
+                    self._record_html_errors(report, repo, path)
 
             if not has_blocking_failure and report.fail_count == 0 and not dry_run:
                 state.last_successful_sha = head_sha
+                self._mark_html_state(state, fingerprint)
                 sync_last_success_timestamp.labels(repo_id=repo.id).set(time.time())
                 sync_runs_total.labels(repo_id=repo.id, result="success").inc()
                 logger.info(f"Sync completed for {repo.id}. {report.summary()}")
             elif not dry_run:
                 if not has_blocking_failure:
                     state.last_successful_sha = head_sha
+                    self._mark_html_state(state, fingerprint)
                 sync_runs_total.labels(repo_id=repo.id, result="partial" if not has_blocking_failure else "failed").inc()
                 logger.warning(f"Sync completed with issues for {repo.id}. {report.summary()}")
 
@@ -206,7 +224,6 @@ class SyncEngine:
                 self.state_manager.save_state(repo.id, state)
 
             return report
-
     def _get_changes(self, git_manager: GitRepoManager, last_sha: Optional[str], repo: RepoProfile) -> List[Tuple[str, str]]:
         if last_sha:
             try:
@@ -227,15 +244,73 @@ class SyncEngine:
             return False
         return True
 
-    def _compute_content_sha(self, git_manager: GitRepoManager, status: str, path: str) -> str:
+    def _compute_content_sha(
+        self,
+        git_manager: GitRepoManager,
+        status: str,
+        path: str,
+        repo: Optional[RepoProfile] = None,
+        state: Optional[RepoState] = None,
+    ) -> str:
         if status == "D":
+            if state is not None and state.html_dependencies is not None:
+                state.html_dependencies.pop(path, None)
             return ""
         try:
             content = git_manager.read_file_text(path)
-            return hashlib.sha256(content.encode()).hexdigest()
         except Exception:
             return ""
+        if repo is None or not path.endswith(".md"):
+            return hashlib.sha256(content.encode()).hexdigest()
+        _, body = parse_frontmatter(content)
+        analysis = self._html_analysis(repo, git_manager, path, body)
+        if state is not None:
+            self._update_html_index(state, path, analysis)
+        return effective_sha(content, analysis, policy_fingerprint(repo.html_embed))
 
+    def _update_html_index(self, state: RepoState, path: str, analysis: MarkdownAnalysis) -> None:
+        """게시 여부와 상관없이 합본을 만든 직후 색인을 갱신한다(참조만 바뀐 경우도 놓치지 않게)."""
+        if state.html_dependencies is None:
+            state.html_dependencies = {}
+        deps = analysis.deps
+        if deps:
+            state.html_dependencies[path] = deps
+        else:
+            state.html_dependencies.pop(path, None)
+
+    def _merge_changes(self, primary: List[Tuple[str, str]], extra: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        seen = {path for _, path in primary}
+        return primary + [(status, path) for status, path in extra if path not in seen]
+
+    def _expand_html_changes(self, changes: List[Tuple[str, str]], state: RepoState, include_indexed: bool) -> List[Tuple[str, str]]:
+        index = state.html_dependencies or {}
+        reverse: Dict[str, List[str]] = {}
+        for md_path, deps in index.items():
+            for dep in deps:
+                reverse.setdefault(dep, []).append(md_path)
+        extra = [("M", md_path) for _, path in changes for md_path in sorted(reverse.get(path, []))]
+        if include_indexed:
+            extra += [("M", md_path) for md_path in sorted(index)]
+        result = list(changes)
+        seen = {path for _, path in result}
+        for status, path in extra:
+            if path not in seen:
+                result.append((status, path))
+                seen.add(path)
+        return result
+
+    def _mark_html_state(self, state: RepoState, fingerprint: str) -> None:
+        state.html_policy_fingerprint = fingerprint
+        if state.html_dependencies is None:
+            state.html_dependencies = {}
+
+    def _record_html_errors(self, report: SyncReport, repo: RepoProfile, path: str) -> None:
+        analysis = self._analysis_by_path.get((repo.id, path))
+        if analysis is None:
+            return
+        for outcome in analysis.outcomes:
+            if outcome.status not in ("ok", "disabled"):
+                report.record_html_error(path, outcome.status, outcome.message)
     def _resolve_target(self, path: str) -> Tuple[str, str]:
         target = "xwiki"
         project_id = "1"
