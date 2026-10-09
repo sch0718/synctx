@@ -93,16 +93,23 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 - `sha256`
 - `size`
 - `files`: 합본에 쓴 저장소 경로 목록
-- `external_urls`: 그대로 남긴 허용 외부 주소 목록
+
+합본에 실패하면 `BundleError`를 던진다. 여기에는 사유와 함께 다음이 들어 있다.
+
+- `files`: 실패 전까지 읽은 경로
+- `missing`: 찾지 못한 경로
+
+실패한 블록도 이 두 목록으로 역참조 색인을 만든다(7.3). 그래야 빠진 파일을 나중에 추가했을 때 다시 처리된다.
 
 | 대상 | 처리 |
 |---|---|
 | `<link rel="stylesheet" href="상대경로">` | `<style>`로 넣는다 |
 | `<script src="상대경로">` | 같은 자리에 `<script>`로 넣는다. 본문의 `</script`는 `<\/script`로 바꾼다 |
-| `<script defer src="상대경로">` | `<body>` 끝으로 옮겨 넣는다. 여러 개면 원래 순서를 지킨다. 문서를 다 읽은 뒤 실행된다는 점은 같다 |
+| `<script defer src="상대경로">` | 문서에 module 스크립트가 없을 때만 지원한다. `<body>`의 마지막 자식 뒤로 옮겨 넣고, 여러 개면 원래 순서를 지킨다. 문서를 다 읽은 뒤 실행되고 다른 classic 스크립트보다 나중이라는 순서는 유지된다. 실행 순간의 `document.readyState`는 `interactive`가 아니라 `loading`이다 |
+| `<script defer>`와 `<script type="module">`이 함께 있음 | 오류 (지원하지 않음). 둘은 문서를 다 읽은 뒤 등장 순서대로 실행되는 같은 대기열을 쓴다. defer만 classic 인라인으로 바꾸면 module보다 먼저 실행된다 |
 | `<script async src="…">` | 오류 (지원하지 않음). 인라인 스크립트에서는 `async`가 무시되어 실행 시점이 달라지기 때문이다 |
 | `<script type="module">` | 같은 자리에 넣는다(인라인 module도 기본으로 지연 실행된다). 안에 상대 경로 `import`가 있으면 오류 |
-| CSS `url(상대경로)`, `<img src>` | `data:` URI로 바꾼다. MIME은 확장자로 정한다 |
+| CSS `url(상대경로)`, `<img src>` | `data:` URI로 바꾼다. MIME은 확장자로 정한다. 글꼴(`woff`, `woff2`, `ttf`)도 포함하며, Viewer CSP의 `font-src`에 `data:`를 더한다(6장 5번) |
 | CSS `@import` | 오류 (지원하지 않음) |
 | `http(s)://`, `//` 절대 주소 | 호스트가 `allowed_hosts`에 있으면 그대로 두고, 없으면 오류 |
 | `data:`, `#fragment`, `about:` | 그대로 둔다 |
@@ -119,11 +126,14 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 정적 검사는 JS가 실행 중에 만든 주소(`fetch`, `Image.src`, 동적 `<script>`)를 잡지 못한다. 출처가 `null`이어도 요청 송신 자체는 막히지 않는다. 그래서 합본의 `<head>` 맨 앞, 즉 모든 스크립트보다 앞에 CSP meta를 넣는다. `<head>`가 없으면 만든다.
 
 ```html
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' {H}; style-src 'unsafe-inline' {H}; img-src data: blob: {H}; font-src data: {H}; media-src data: blob: {H}; connect-src {H|'none'}; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' {H}; style-src 'unsafe-inline' {H}; img-src data: {H}; font-src data: {H}; connect-src {H|'none'}; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'">
 ```
 
 - `{H}`는 `allowed_hosts`이고, 비어 있으면 해당 지시어에서 뺀다. `connect-src`는 `allowed_hosts`가 비어 있으면 `'none'`이다.
 - Viewer에서는 부모 CSP와 이 meta CSP가 함께 적용되므로 더 엄격한 쪽이 이긴다. XWiki에서는 이 meta CSP가 실행 중의 유일한 정책이다.
+- 두 환경의 실효 정책을 같게 하려고, 이 meta는 Viewer 부모 CSP(6장 5번 변경 후)가 허용하는 범위 안에서만 허용한다.
+  - `blob:`이나 `media-src`는 넣지 않는다. 합본 규칙이 동영상·음성을 변환하지 않기 때문이다.
+  - 그래서 Viewer에서 막히는 리소스는 XWiki에서도 막힌다.
 - 작성자 HTML에 원래 있던 CSP meta는 남겨 둔다. 정책이 여럿이면 모두 적용되므로 더 느슨해지지 않는다.
 - 확인 결과(Chromium, 부모에 CSP가 없는 페이지): 실행 중에 만든 주소로 보낸 `fetch`·`Image`·`<script>`가 각각 `connect-src`·`img-src`·`script-src-elem` 위반으로 막혔다. 다만 비교용 시험(meta 없음)은 내장 브라우저가 sandbox 요청을 자체적으로 막아 판정하지 못했다.
 - 남는 위험: CSP와 sandbox 모두 iframe 자신의 주소 이동(`location.href = …`)과 WebRTC는 막지 못한다. 이 경로는 신뢰 저장소 지정(8.1)으로 통제하고, 운영 문서에 잔여 위험으로 적는다.
@@ -139,7 +149,9 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 - 모든 속성값(`srcdoc`, `title`, `style`)에서 `& < > " '`를 엔티티로 바꾼다. **`{`와 `}`도 각각 `&#123;`·`&#125;`로 바꾼다.**
 - XWiki는 `{{html}}` 매크로 본문을 HTML로 해석하기 전에 `{{/html}}`에서 매크로를 끝낸다. 합본이나 `title`에 `{{/html}}{{velocity}}…`가 있으면 그 뒤가 동기화 계정의 스크립트 권한으로 실행된다.
 - 중괄호를 엔티티로 바꾸면 매크로 본문에 `{{`가 한 번도 나오지 않는다. 브라우저는 속성값의 엔티티를 되돌리므로 srcdoc 내용은 그대로다. iframe 밖에 나가는 문자열은 이 태그 하나뿐이다.
-- 안내·오류 문구처럼 XWiki 본문에 직접 넣는 텍스트(`src` 경로, 오류 사유)는 `{{html}}` 안에 넣지 않는다. 대신 XWiki 문법 문자를 이스케이프하거나 `{{{ }}}`(verbatim)로 감싼다. verbatim 안의 `}}}`도 이스케이프한다.
+- 블록 하나의 XWiki 출력은 iframe이든 안내·오류 문구든 **항상 `{{html}}…{{/html}}` 매크로 하나**다. 안내·오류 문구에 들어가는 `src` 경로와 오류 사유도 HTML 텍스트로 넣는다. 이때 iframe 속성과 같은 규칙으로 `& < > " ' { }`를 모두 엔티티로 바꾼다.
+- 그래서 매크로 본문에는 `{` `}` 문자가 한 글자도 남지 않는다. 블록에서 나온 문자열이 XWiki 문법으로 해석될 수 있는 자리가 없다.
+- verbatim(`{{{ }}}`)이나 XWiki 문법 이스케이프(`~`)는 쓰지 않는다. XWiki 2.x에서 verbatim 내부의 `}}}`를 안전하게 이스케이프하는 방법이 보장되지 않기 때문이다.
 - `allow-same-origin`, `allow-top-navigation`, `allow-forms`, `allow-popups`는 **어떤 설정으로도 붙지 않는다**. 테스트로 고정한다.
 - `loading="lazy"`는 쓰지 않는다. srcdoc에서는 효과가 없다.
 
@@ -151,7 +163,8 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 - 상대 경로 `fetch`·XHR·`import()`는 동작하지 않는다. 런타임에 파일을 읽지 말고 데이터는 JS에 넣는다.
 - `localStorage`·쿠키는 쓸 수 없다. 접근하면 예외가 나므로 try/catch로 감싼다.
 - `history.replaceState`는 같은 주소로 호출하면 동작했다(실험). 다른 주소로 바꾸는 호출은 예외가 날 수 있다.
-- 주입된 CSP 때문에 `allowed_hosts` 밖의 주소는 실행 중에도 불러올 수 없다. `async` 스크립트는 쓸 수 없다.
+- 주입된 CSP 때문에 `allowed_hosts` 밖의 주소는 실행 중에도 불러올 수 없다. `blob:` 이미지와 동영상·음성도 불러올 수 없다.
+- `async` 스크립트는 쓸 수 없다. `defer`와 `module`을 한 문서에서 함께 쓸 수 없다.
 
 ## 6. Viewer
 
@@ -159,9 +172,13 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 2. `app._render_file_response`가 `_sanitize_html`을 **거친 뒤** 각 자리표시를 `to_iframe` 결과로 바꾼다. sanitizer는 그대로 두므로 Markdown 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지워진다.
 3. `html_embed.enabled=false`인 저장소에서는 자리표시를 안내 상자로 바꾼다. 안내 상자에는 "이 저장소는 HTML 실행이 허용되지 않음"과 `src` 소스 보기 링크를 넣는다.
 4. 합본에 실패하면 자리표시를 오류 상자로 바꾼다. 오류 상자에는 사유와 `src` 경로를 넣는다. 페이지의 나머지는 그대로 렌더링한다.
-5. CSP는 바꾸지 않는다. 합본은 부모의 `script-src 'self' 'unsafe-inline' {CDN}`을 물려받으므로, 허용 목록 밖의 외부 스크립트는 브라우저에서도 한 번 더 막힌다.
-6. `download?format=html`도 같은 iframe을 넣는다. 네트워크 없이 완전하게 재생된다는 보장은 **합본에 외부 주소가 하나도 없을 때만** 한다.
-   - 외부 주소가 있으면(허용된 사내 CDN 참조) iframe 위에 "사내 CDN 접근이 필요한 콘텐츠" 안내를 붙인다. `BundleResult.external_urls`가 비어 있지 않은 경우다.
+5. CSP는 `font-src`에 `data:` 하나만 더한다(`font-src 'self' data: {CDN}`).
+   - srcdoc 합본은 부모 CSP를 물려받으므로, 이 변경이 없으면 `data:` 글꼴이 막힌다. `img-src`에는 이미 `data:`가 있다.
+   - `data:` 글꼴은 스크립트를 실행할 수 없어서 Viewer 본문의 보안 수준은 그대로다.
+   - 나머지 지시어는 바꾸지 않는다. 합본은 부모의 `script-src 'self' 'unsafe-inline' {CDN}`도 물려받으므로, 허용 목록 밖의 외부 스크립트는 브라우저에서 한 번 더 막힌다.
+6. `download?format=html`도 같은 iframe을 넣는다. 네트워크 없이 완전하게 재생된다는 보장은 **저장소의 `allowed_hosts`가 비어 있을 때만** 한다.
+   - 이때는 주입된 CSP가 실행 중 네트워크를 모두 막는다. 그래서 합본은 처음부터 네트워크 없이 동작하도록 만들어져 있어야 하고, Viewer·XWiki·다운로드 파일에서 동작이 같다.
+   - `allowed_hosts`가 비어 있지 않으면, 정적 참조가 없어도 JS가 실행 중에 허용 CDN 주소를 만들 수 있다. 그래서 다운로드 파일의 iframe 위에 항상 "사내 CDN 접근이 필요할 수 있는 콘텐츠" 안내를 붙인다.
    - 외부 리소스를 받아 합본에 넣는 기능은 범위 밖이다.
    - `format=pdf`는 JS가 돌지 않으므로 "인터랙티브 콘텐츠: Viewer에서 보기" 안내로 바꾼다.
 
@@ -178,7 +195,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 ```
 
 - 첨부는 올리지 않는다. 합본은 페이지 본문에 들어간다.
-- `html_embed.enabled=false` 저장소이거나 합본에 실패하면 블록을 안내·오류 문구로 바꾸고 동기화는 계속한다. 실패는 SyncReport와 메트릭에 남긴다.
+- `html_embed.enabled=false` 저장소이거나 합본에 실패하면, 블록을 안내·오류 문구를 담은 `{{html}}` 매크로로 바꾸고 동기화는 계속한다(5장 이스케이프 규칙 적용). 실패는 SyncReport와 메트릭에 남긴다.
 - OpenProject 대상 본문에서는 블록을 "인터랙티브 콘텐츠: Viewer에서 보기" 링크로 바꾼다.
 
 ### 7.2 페이지 문법 (구현 첫 단계에서 확인)
@@ -204,7 +221,9 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
    - 동기화 상태에 `{묶음 파일 경로: [그 파일을 쓴 md 경로]}`를 저장한다. `BundleResult.files`로 만든다.
    - `diff_since` 결과 중 `.md`가 아닌 경로가 색인에 있으면, 해당 md를 처리 대상에 넣는다.
    - 전체 재스캔 때는 색인을 새로 만든다.
-   - 합본이 실패하거나 비활성이어도 블록의 진입 HTML 경로는 색인에 넣는다. 그래야 정책 변경이나 파일 수정 때 다시 처리된다.
+   - 합본에 실패하면 `BundleError.files`(실패 전까지 읽은 경로)와 `BundleError.missing`(찾지 못한 경로)을 모두 색인에 넣는다. 그래서 빠진 `motion.js`를 나중에 추가하면 그 추가가 `diff_since`에 잡혀 md를 다시 처리한다.
+   - 빠진 파일이 CSS라 그 안의 참조를 아직 모르는 경우도 같다. CSS가 추가되면 다시 처리되고, 그때 새로 빠진 경로가 색인에 들어간다.
+   - 비활성 저장소에서는 진입 HTML 경로만 넣는다. 정책이 바뀌면 3번에 따라 다시 처리된다.
 2. **합본을 반영한 내용 해시 (세 번째 관문)**
    - `synctx-html` 블록이 있는 md는 `content_sha`를 md 본문만으로 계산하지 않는다.
    - `sha256(md 본문 + 블록별 BundleResult.sha256 또는 비활성·오류 표시 + 정책 지문)`으로 계산한다.
@@ -276,7 +295,7 @@ repositories:
 | iframe 자신의 주소 이동, WebRTC | CSP·sandbox로 막을 수 없는 잔여 위험이다. 신뢰 저장소 지정으로만 통제하고, 운영 문서에 적는다 |
 | 저장소 밖 파일 읽기 | 각 경로를 그 경로가 적힌 파일 기준으로 푼 뒤 `validate_path`로 검사한다 |
 | srcdoc 속성 탈출 | `to_iframe`에서 속성값을 이스케이프하고, 테스트로 `" > <script>` 입력을 확인한다 |
-| XWiki 매크로 경계 탈출 (`{{/html}}` 주입) | 속성값의 `{` `}`를 엔티티로 바꿔 매크로 본문에 `{{`가 나오지 않게 한다. 매크로 밖 문구는 XWiki 문법을 이스케이프한다 |
+| XWiki 매크로 경계 탈출 (`{{/html}}` 주입) | 블록 출력은 항상 `{{html}}` 매크로 하나이고, 안의 속성값과 텍스트에서 `{` `}`를 엔티티로 바꾼다. 매크로 본문에 중괄호가 남지 않는다 |
 | 신뢰 해제 후에도 남는 iframe | 정책 지문이 바뀌면 HEAD가 같아도 해당 md를 다시 처리한다(7.3) |
 | 큰 합본으로 페이지·DB 부하 | `max_bundle_bytes` 상한 |
 | 상단 페이지 이동·팝업 | sandbox에 `allow-top-navigation`·`allow-popups`를 주지 않는다 |
@@ -292,10 +311,10 @@ repositories:
 
 | 수준 | 대상 | 내용 |
 |---|---|---|
-| 단위 | `html_bundle` | CSS·JS 넣기, `</script` 이스케이프, 이미지 `data:` 변환, 외부 CSS 안 `url()`을 CSS 파일 기준으로 푸는지(하위 폴더 CSS + 상위 폴더 이미지), 저장소 밖 경로 거부, 허용 목록 밖 호스트 거부, `@import`·상대 module import·`async` 오류, `defer` 스크립트를 순서대로 `<body>` 끝으로 옮기는지, CSP meta가 `<head>` 첫 자식이고 `allowed_hosts`가 반영되는지, `external_urls`, 크기 상한, 같은 입력·같은 출력 |
+| 단위 | `html_bundle` | CSS·JS 넣기, `</script` 이스케이프, 이미지 `data:` 변환, 외부 CSS 안 `url()`을 CSS 파일 기준으로 푸는지(하위 폴더 CSS + 상위 폴더 이미지), 저장소 밖 경로 거부, 허용 목록 밖 호스트 거부, `@import`·상대 module import·`async` 오류, `defer` 스크립트를 순서대로 `<body>` 끝으로 옮기는지, `defer`와 `module`이 함께 있으면 오류인지, 글꼴 `data:` 변환, CSP meta가 `<head>` 첫 자식이고 `allowed_hosts`가 반영되며 `blob:`·`media-src`가 없는지, 실패 시 `BundleError.files`·`missing`, 크기 상한, 같은 입력·같은 출력 |
 | 단위 | `to_iframe` | 속성 이스케이프(`"`, `&`, `<`, `{`, `}`), 합본·`title`에 `{{/html}}{{velocity}}`를 넣어도 출력에 `{{`가 없는지, sandbox 값이 정확히 `allow-scripts`인지 |
-| Viewer | `test_viewer_api.py` | 블록이 iframe이 되는지, 본문에 직접 쓴 iframe은 여전히 지워지는지, 비신뢰 저장소의 안내 상자, 합본 실패 시 오류 상자, CSP 헤더 변화 없음, 외부 주소가 있는 합본의 다운로드 안내 |
-| Sync | `test_sync_engine.py` | 블록을 html 매크로로 바꾸는지, `motion.js`만 바뀌어도 md를 다시 동기화하는지(본문 SHA 같음), HEAD가 같아도 `enabled`·`allowed_hosts` 변경 시 색인의 md를 다시 처리하는지, 색인이 없는 기존 상태에서 전체 스캔, 비신뢰 저장소, 안내 문구 속 경로의 XWiki 문법 이스케이프, OP 대상 링크 문구 |
+| Viewer | `test_viewer_api.py` | 블록이 iframe이 되는지, 본문에 직접 쓴 iframe은 여전히 지워지는지, 비신뢰 저장소의 안내 상자, 합본 실패 시 오류 상자, CSP 헤더는 `font-src`에 `data:`가 더해진 것 외에 변화 없음, `allowed_hosts`가 비어 있지 않은 저장소의 다운로드 안내(정적 외부 참조가 없어도 붙는지) |
+| Sync | `test_sync_engine.py` | 블록을 html 매크로로 바꾸는지, `motion.js`만 바뀌어도 md를 다시 동기화하는지(본문 SHA 같음), HEAD가 같아도 `enabled`·`allowed_hosts` 변경 시 색인의 md를 다시 처리하는지, 색인이 없는 기존 상태에서 전체 스캔, `motion.js`가 빠져 실패한 뒤 그 파일만 추가해도 md를 다시 처리해 복구하는지, 비신뢰 저장소, 경로·오류 사유에 `{{/html}}`·`}}}`가 들어가도 안내 매크로 본문에 중괄호가 없는지, OP 대상 링크 문구 |
 | 수동 | 로컬 XWiki | `markdown/1.2` 안 `{{html}}` 매크로 실행 여부(7.2), 공간 한정 스크립트 권한 계정으로 재생, `{{/html}}`이 든 합본이 매크로 밖으로 새지 않는지 |
 | 수동 | 운영 XWiki | 운영 버전에서 2장 결과 재확인, 실제 Chrome·Edge에서 재생과 CSP meta 차단(비교용 시험 포함) |
 
@@ -307,7 +326,7 @@ repositories:
 |---|---|
 | `README.md` | 기능 목록에 HTML 임베드 추가. 서비스 추가가 아니므로 다이어그램은 바꾸지 않는다 |
 | `docs/architecture.md` | Viewer·Sync 설계에 `html_bundle` 모듈과 렌더링 경로, Phase 표 |
-| `docs/production-service-design.md` | 3장 보안(sandbox, CSP meta 주입, 매크로 경계 이스케이프, 신뢰 저장소, 잔여 위험: iframe 자체 이동·WebRTC), 저장소 설정 스키마(`html_embed`), 7.2 Viewer 보안 문구, 메트릭·Alert, 테스트, Runbook(합본 실패·XWiki 스크립트 권한 부여 절차), Phase 체크리스트 |
+| `docs/production-service-design.md` | 3장 보안(sandbox, CSP meta 주입, 매크로 경계 이스케이프, 신뢰 저장소, 잔여 위험: iframe 자체 이동·WebRTC), 저장소 설정 스키마(`html_embed`), 7.2 Viewer 보안 문구와 CSP(`font-src data:`), 메트릭·Alert, 테스트, Runbook(합본 실패·XWiki 스크립트 권한 부여 절차), Phase 체크리스트 |
 | `CLAUDE.md` | Phase 순서 문구 |
 
 **Phase(검토 필요):** 기존 Phase 번호를 바꾸지 않으려고 **Phase 9 "인터랙티브 HTML 임베드"** 를 새로 둔다. Viewer(Phase 1)와 XWiki Sync(Phase 3)에 의존한다.
