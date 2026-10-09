@@ -188,6 +188,7 @@ Reader = Callable[[str], bytes]
 
 _CSS_URL_RE = re.compile(r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)""", re.IGNORECASE)
 _CSS_IMPORT_RE = re.compile(r"@import\b", re.IGNORECASE)
+_HTML_SPACE_RE = re.compile(r"[\t\n\f\r ]*")
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module"}
 _DROPPED_SCRIPT_ATTRS = {"src", "defer", "async", "integrity", "crossorigin", "charset", "referrerpolicy"}
 _JS_GAP = r"(?:\s|/\*.*?\*/|//[^\n]*(?:\n|$))*"
@@ -343,9 +344,9 @@ class _Bundler(HTMLParser):
 
     def handle_decl(self, decl):
         self.out.append(f"<!{decl}>")
-        before = self.out[:-1]
-        if decl.lower().startswith("doctype") and all(not part.strip() or part.startswith("<!--") for part in before):
-            # 앞에 공백·주석만 있는 doctype일 때만 그 뒤로 옮긴다. 스크립트 뒤에 온 doctype을 따라가면 CSP보다 코드가 먼저 실행된다.
+        # 문서가 HTML 공백 문자 다섯 가지 뒤 doctype으로 시작할 때만 meta를 그 뒤로 옮긴다.
+        # str.strip()은 U+3000 등도 지우고 HTMLParser는 `<!-->`를 브라우저와 다르게 읽으므로, 둘 다 쓰지 않는다.
+        if decl.lower().startswith("doctype") and _HTML_SPACE_RE.fullmatch("".join(self.out[:-1])):
             self.meta_at = len(self.out)
 
     def handle_starttag(self, tag, attrs):

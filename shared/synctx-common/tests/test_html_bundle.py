@@ -242,10 +242,25 @@ def test_trailing_doctype_does_not_move_csp_after_scripts(source):
     assert html.startswith(CSP_WITH_ORIGIN)
 
 
-@pytest.mark.parametrize("prefix", ["\n  ", "<!-- 머리말 -->\n"])
-def test_whitespace_or_comment_before_doctype_keeps_doctype_first(prefix):
+@pytest.mark.parametrize("prefix", ["", "\n  ", "\t\r\n\f "])
+def test_html_whitespace_before_doctype_keeps_doctype_first(prefix):
     html = bundle(reader({"m/index.html": prefix + "<!DOCTYPE html><p>x</p>"}), "m/index.html", POLICY).html
     assert html.startswith(prefix + "<!DOCTYPE html>" + CSP_WITH_ORIGIN)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "\u3000<!DOCTYPE html><script>window.a=1</script>",
+        "\u00a0<!DOCTYPE html><script>window.a=1</script>",
+        "\x1c<!DOCTYPE html><script>window.a=1</script>",
+        "<!-- 머리말 -->\n<!DOCTYPE html><script>window.a=1</script>",
+        "<!--><script>window.a=1</script>--><!DOCTYPE html><p>x</p>",
+    ],
+)
+def test_csp_meta_goes_first_unless_doctype_leads_after_html_whitespace(source):
+    html = bundle(reader({"m/index.html": source}), "m/index.html", POLICY).html
+    assert html.startswith(CSP_WITH_ORIGIN)
 
 
 def test_csp_meta_is_first_without_doctype():
