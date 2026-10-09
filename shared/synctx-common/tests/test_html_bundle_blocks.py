@@ -125,3 +125,14 @@ def test_xwiki_html_macro():
     assert xwiki_html_macro("<p>a</p>") == '{{html clean="false"}}<p>a</p>{{/html}}'
     with pytest.raises(ValueError):
         xwiki_html_macro("<p>{{/html}}</p>")
+
+
+def test_escape_html_encodes_line_breaks():
+    assert escape_html("a\nb\r\nc") == "a&#10;b&#13;&#10;c"
+
+
+def test_to_iframe_and_notice_are_single_line():
+    multiline = "<p>1</p>\n\n<script>\nwindow.a = 1;\n</script>\r\n"
+    assert "\n" not in to_iframe(_result(multiline), title="제목\n둘째 줄")
+    assert "\r" not in to_iframe(_result(multiline))
+    assert "\n" not in render_notice("YAML 오류:\n  line 2", "docs/a\nb.html")

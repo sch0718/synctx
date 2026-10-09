@@ -361,3 +361,10 @@ async def test_markdown_without_blocks_keeps_plain_content_sha(tmp_path, monkeyp
     manager = git_manager({"docs/plain.md": text})
     sha = eng._compute_content_sha(manager, "A", "docs/plain.md", profile(), RepoState(repo_id="r"))
     assert sha == hashlib.sha256(text.encode()).hexdigest()
+
+
+def test_xwiki_macro_stays_on_one_line_for_multiline_bundles():
+    files = {**FILES, "docs/motion/motion.js": "window.v = 1;\n\nwindow.w = 2;\n"}
+    out = render_for_xwiki(BODY, analyze(BODY, "docs/a.md", POLICY, reader(files)))
+    macro_line = next(line for line in out.splitlines() if line.startswith('{{html clean="false"}}'))
+    assert macro_line.endswith("{{/html}}")

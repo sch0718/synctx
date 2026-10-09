@@ -100,8 +100,12 @@ def replace_blocks(md_text: str, render: Callable[[int, BlockMatch], str]) -> st
 
 
 def escape_html(value: str) -> str:
-    """속성값·텍스트용 이스케이프. XWiki 매크로 경계를 지키려고 중괄호도 엔티티로 바꾼다."""
-    return _html_escape(value, quote=True).replace("{", "&#123;").replace("}", "&#125;")
+    """속성값·텍스트용 이스케이프. XWiki 매크로 경계를 지키려고 중괄호를, 매크로가 한 줄로 남도록 줄바꿈을 엔티티로 바꾼다.
+
+    markdown/1.2 페이지에서 매크로 본문에 빈 줄이 있으면 파서가 거기서 문단을 끊어 매크로가 잘린다.
+    """
+    escaped = _html_escape(value, quote=True).replace("{", "&#123;").replace("}", "&#125;")
+    return escaped.replace("\r", "&#13;").replace("\n", "&#10;")
 
 
 def classify_url(url: str) -> str:
