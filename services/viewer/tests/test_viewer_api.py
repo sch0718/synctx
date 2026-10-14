@@ -222,6 +222,34 @@ class TestPathBreadcrumb:
         assert "expandToPath(" in resp.text
 
 
+class TestRewriteLinks:
+    def test_markdown_link_points_to_file_view(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="sub/guide.md#s1">g</a>', "test-repo", "docs/readme.md")
+        assert 'href="/view/test-repo/docs/sub/guide.md#s1"' in html
+
+    def test_folder_link_points_to_repo_tree(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="sub/">s</a>', "test-repo", "docs/readme.md")
+        assert 'href="/view/test-repo?path=docs/sub"' in html
+
+    def test_parent_folder_link_is_resolved(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="../other/#top">o</a>', "test-repo", "docs/sub/readme.md")
+        assert 'href="/view/test-repo?path=docs/other"' in html
+
+    def test_percent_encoded_folder_link_is_not_double_encoded(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="9.%EA%B7%BC%EA%B1%B0/">r</a>', "test-repo", "10. docs/README.md")
+        assert 'href="/view/test-repo?path=10.%20docs/9.%EA%B7%BC%EA%B1%B0"' in html
+
+    def test_folder_link_in_rendered_page(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "[근거](evidence/)"
+        resp = client.get("/test-repo/docs/readme.md")
+        assert resp.status_code == 200
+        assert 'href="/view/test-repo?path=docs/evidence"' in resp.text
+
+
 class TestAPIRoutes:
     def test_repos_list(self, client):
         resp = client.get("/api/repos")

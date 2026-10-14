@@ -7,6 +7,7 @@ import hashlib
 import html as html_lib
 import re
 from pathlib import Path, PurePosixPath
+from urllib.parse import quote, unquote
 
 import markdown
 from markdown.extensions.toc import TocExtension
@@ -132,7 +133,11 @@ def rewrite_links(html: str, repo_id: str, base_path: str) -> str:
     def rewrite_href(raw: str) -> str | None:
         if _is_external_link(raw):
             return None
-        pure = PurePosixPath(raw.split("?", 1)[0].split("#", 1)[0])
+        target = raw.split("?", 1)[0].split("#", 1)[0]
+        if target.endswith("/"):
+            folder = unquote(_resolve_relative_path(base_path, target))
+            return f"/view/{repo_id}?path={quote(folder, safe='/')}"
+        pure = PurePosixPath(target)
         if pure.suffix.lower() not in {".md", ".markdown"}:
             return None
         resolved = _resolve_relative_path(base_path, raw)
