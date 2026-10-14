@@ -303,6 +303,7 @@ class _Bundler(HTMLParser):
         self.deferred_flushed = False
         self.has_module = False
         self.has_external_defer = False
+        self.template_depth = 0
 
     def fail(self, reason: str, message: str):
         raise BundleError(reason, message, self.files, self.missing)
@@ -386,6 +387,8 @@ class _Bundler(HTMLParser):
     def start(self, tag, attrs, self_closing):
         if tag == "title":
             self.in_title = True
+        if tag == "template":
+            self.template_depth += 1
         if tag == "script":
             self.start_script(attrs)
             return
@@ -481,7 +484,8 @@ class _Bundler(HTMLParser):
         kept = [(name, value) for name, value in attrs if name.lower() not in _DROPPED_SCRIPT_ATTRS]
         element = _render_tag("script", kept) + (_escape_raw(code, "script") if code is not None else "") + "</script>"
         self.skip_raw = True
-        if "defer" in values and not is_module:
+        # template 안의 스크립트는 로드 시 실행되지 않으므로 body 끝으로 옮기지 않는다.
+        if "defer" in values and not is_module and not self.template_depth:
             self.deferred.append(element)
         else:
             self.out.append(element)
@@ -517,6 +521,8 @@ class _Bundler(HTMLParser):
     def handle_endtag(self, tag):
         if tag == "title":
             self.in_title = False
+        if tag == "template" and self.template_depth:
+            self.template_depth -= 1
         if tag in ("script", "style") and self.raw_tag == tag:
             if self.script_text is not None:
                 self.check_imports("".join(self.script_text), self.script_is_module, f"{self.entry}의 인라인 스크립트")

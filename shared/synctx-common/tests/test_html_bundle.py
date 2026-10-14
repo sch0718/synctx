@@ -332,6 +332,16 @@ def test_defer_scripts_move_to_body_end_in_order():
     assert "defer" not in html
 
 
+def test_defer_script_inside_template_stays_inside_template():
+    files = {
+        "m/index.html": page(body='<template id="t"><template><p>y</p></template><script defer src="a.js"></script></template><p>x</p>'),
+        "m/a.js": "window.ran=1;",
+    }
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert html.index('<template id="t">') < html.index("window.ran=1") < html.rindex("</template>")
+    assert html.count("window.ran=1") == 1
+
+
 def test_defer_without_body_end_is_appended():
     files = {"m/index.html": '<script defer src="a.js"></script><p>x</p>', "m/a.js": "window.a=1;"}
     html = bundle(reader(files), "m/index.html", POLICY).html
