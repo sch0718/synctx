@@ -57,6 +57,8 @@ DEPS_NAMESPACE="synctx-deps"
 MONITORING_NAMESPACE="monitoring"
 
 DOCKER_REGISTRY=${DOCKER_REGISTRY:-"synctx"}
+MINIKUBE_CPUS=${MINIKUBE_CPUS:-4}
+MINIKUBE_MEMORY=${MINIKUBE_MEMORY:-8192}
 SERVICES=(viewer cdn marp sync feedback)
 THIRD_PARTY_IMAGES=(
     "nginx:1.25.4-alpine"
@@ -175,7 +177,7 @@ start_minikube() {
         print_success "Minikube가 이미 실행 중입니다"
     else
         print_info "Minikube를 시작합니다..."
-        minikube start --cpus=4 --memory=8192 --disk-size=30g --driver=docker
+        minikube start --cpus="${MINIKUBE_CPUS}" --memory="${MINIKUBE_MEMORY}" --disk-size=30g --driver=docker
         print_success "Minikube 시작 완료"
     fi
 }

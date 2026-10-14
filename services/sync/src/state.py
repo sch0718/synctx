@@ -21,6 +21,11 @@ class SyncedFileState:
     resource_id: str = ""
     last_synced_sha: str = ""
     last_synced_at: str = ""
+    # XWiki에 게시한 계정. ""=기본 계정, 그 외=전용 계정 사용자 이름, None=기록 없음(모름).
+    publisher: Optional[str] = ""
+    # md에서 더 이상 게시하지 않는 XWiki 페이지(md 삭제 후 on_delete mark·ignore, 대상을 openproject로 변경).
+    # 작성자 회수를 위해 resource_id의 xwiki 항목과 publisher를 남겨 둔다.
+    xwiki_orphan: bool = False
 
 
 @dataclass
@@ -40,6 +45,8 @@ class RepoState:
     last_run_id: str = ""
     synced_files: Dict[str, SyncedFileState] = field(default_factory=dict)
     pending_failures: List[PendingFailure] = field(default_factory=list)
+    html_dependencies: Optional[Dict[str, List[str]]] = None
+    html_policy_fingerprint: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -51,6 +58,8 @@ class RepoState:
                 path: asdict(sf) for path, sf in self.synced_files.items()
             },
             "pending_failures": [asdict(pf) for pf in self.pending_failures],
+            "html_dependencies": self.html_dependencies,
+            "html_policy_fingerprint": self.html_policy_fingerprint,
         }
         return d
 
@@ -61,9 +70,18 @@ class RepoState:
             repo_id=data.get("repo_id", ""),
             last_successful_sha=data.get("last_successful_sha"),
             last_run_id=data.get("last_run_id", ""),
+            html_dependencies=data.get("html_dependencies"),
+            html_policy_fingerprint=data.get("html_policy_fingerprint", ""),
         )
+        # 게시자 기록이 없는 항목: HTML 임베드 도입 전 상태는 기본 계정만 있었으므로 "",
+        # 도입 후 상태(html_dependencies 있음)는 전용 계정이 게시했을 수 있으므로 모름(None).
+        unknown = None if "html_dependencies" in data else ""
         for path, sf_data in data.get("synced_files", {}).items():
-            state.synced_files[path] = SyncedFileState(**sf_data)
+            sf_data = dict(sf_data)
+            if "deleted" in sf_data:
+                # 같은 기능의 이전 이름(md 삭제 후 남은 XWiki 페이지)을 새 이름으로 옮긴다.
+                sf_data["xwiki_orphan"] = sf_data.pop("deleted")
+            state.synced_files[path] = SyncedFileState(**{"publisher": unknown, **sf_data})
         for pf_data in data.get("pending_failures", []):
             state.pending_failures.append(PendingFailure(**pf_data))
         return state
@@ -144,6 +162,7 @@ class StateManager:
     def record_file_synced(
         self, state: RepoState, path: str, content_sha: str, target: str,
         external_key: str, resource_id: str, commit_sha: str, synced_at: str,
+        publisher: Optional[str] = "",
     ) -> None:
         state.synced_files[path] = SyncedFileState(
             content_sha=content_sha,
@@ -152,6 +171,7 @@ class StateManager:
             resource_id=resource_id,
             last_synced_sha=commit_sha,
             last_synced_at=synced_at,
+            publisher=publisher,
         )
 
     def record_file_deleted(self, state: RepoState, path: str) -> None:

@@ -118,4 +118,13 @@ spec:
           annotations:
             summary: "Viewer 5xx 에러율 5% 초과"
             description: "Viewer 서비스의 5xx 에러율이 5%를 초과했습니다."
+
+        # 10. synctx-html 합본이 허용되지 않은 주소나 크기 초과로 거부됨
+        - alert: SynctxHtmlBundleRejected
+          expr: sum by (repo_id) (increase(synctx_html_bundle_total{result=~"disallowed_host|too_large"}[1h])) >= 1
+          labels:
+            severity: warning
+          annotations:
+            summary: "synctx-html 합본 거부"
+            description: "synctx-html 블록이 허용되지 않은 외부 주소 또는 크기 상한 때문에 합본되지 않았습니다. 대상 저장소는 repo_id 라벨을 확인하세요."
 {{- end }}

@@ -101,3 +101,38 @@ async def test_commit_and_push_on_stale_cache_keeps_remote_commits(tmp_path, rem
     assert manager.head_sha() == pushed
     assert manager.read_file_text("docs/a.md") == "v2\n"
     assert manager.read_file("slides/deck.html") == b"<html/>"
+
+
+@pytest.mark.asyncio
+async def test_read_resolved_reads_branch_after_single_resolve(tmp_path, remote):
+    bare, work, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    _git(work, "checkout", "-q", "-b", "feature")
+    target = work / "docs/a.md"
+    target.write_text("feature\n")
+    _git(work, "commit", "-qam", "feature")
+    _git(work, "push", "-q", "origin", "feature")
+
+    resolved = manager.resolve_ref("feature")
+
+    assert resolved == "origin/feature"
+    assert manager.read_resolved("docs/a.md", resolved) == b"feature\n"
+    assert manager.read_resolved("other/b.md", resolved) == b"b\n"
+    assert manager.read_file("docs/a.md", ref="feature") == b"feature\n"
+    with pytest.raises(ValueError):
+        manager.read_resolved("../x", resolved)
+
+
+@pytest.mark.asyncio
+async def test_file_paths_lists_every_blob_including_hidden_and_special_names(tmp_path, remote):
+    bare, work, _ = remote
+    for name in ["docs/.hidden.md", "docs/한글.md", 'docs/a "b".md', "docs/tab\tname.md", ".github/x.md"]:
+        _commit(work, name, "x\n", f"add {name}")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+
+    paths = manager.file_paths()
+
+    assert {"docs/a.md", "other/b.md", "docs/.hidden.md", "docs/한글.md", 'docs/a "b".md', "docs/tab\tname.md", ".github/x.md"} <= paths
+    assert not any(path.endswith("/") or path in {"docs", "other"} for path in paths)

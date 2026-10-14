@@ -1,4 +1,6 @@
 import os
+import asyncio
+import functools
 import json
 import html as html_lib
 import logging
@@ -10,13 +12,15 @@ from fastapi import FastAPI, HTTPException, Request, Depends, Header, Query
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from synctx_common.config import load_config
+from synctx_common.config import HtmlEmbedConfig, load_config
 from synctx_common.frontmatter import parse_frontmatter
 from synctx_common.git_manager import GitRepoManager
+from synctx_common.html_bundle import repo_reader
 from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 from renderer import render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID, THEME_VARS_CSS
 
+import embed_view
 import meeting as meeting_mode
 
 __version__ = "0.1.0"
@@ -56,13 +60,14 @@ async def csp_middleware(request: Request, call_next):
         elif cdn_url.startswith("//"):
             cdn_host = f" {cdn_url}"
             
+        embed_hosts = "".join(f" {origin}" for origin in config.html_embed.allowed_origins)
         csp = (
             f"default-src 'self'; "
-            f"script-src 'self' 'unsafe-inline'{cdn_host}; "
-            f"style-src 'self' 'unsafe-inline'{cdn_host}; "
-            f"img-src 'self' data:{cdn_host}; "
-            f"font-src 'self'{cdn_host}; "
-            f"connect-src 'self'{cdn_host}; "
+            f"script-src 'self' 'unsafe-inline'{cdn_host}{embed_hosts}; "
+            f"style-src 'self' 'unsafe-inline'{cdn_host}{embed_hosts}; "
+            f"img-src 'self' data:{cdn_host}{embed_hosts}; "
+            f"font-src 'self' data:{cdn_host}{embed_hosts}; "
+            f"connect-src 'self'{cdn_host}{embed_hosts}; "
             f"frame-src 'none'; "
             f"object-src 'none'"
         )
@@ -85,6 +90,39 @@ def get_repo_manager(repo_id: str) -> GitRepoManager:
             repo_managers[repo_id] = manager
             return manager
     raise HTTPException(status_code=404, detail=f"Repository not found: {repo_id}")
+
+
+def _html_embed_policy(repo_id: str) -> HtmlEmbedConfig:
+    for repo in config.repositories:
+        if repo.id == repo_id:
+            return repo.html_embed
+    return HtmlEmbedConfig()
+
+
+def _render_download_html(manager: GitRepoManager, repo_id: str, path: str, ref: str | None, filename_base: str) -> str:
+    text_content = manager.read_file_text(path, ref=ref)
+    prepared = embed_view.prepare(text_content)
+    rendered = render_markdown(prepared.text)
+    html = _sanitize_html(rendered.get("html", ""))
+    public = config.runtime.public_base_url.rstrip("/")
+    html = embed_view.fill(
+        html, prepared,
+        md_path=path,
+        policy=_html_embed_policy(repo_id),
+        read=repo_reader(manager, ref),
+        repo_id=repo_id,
+        source_href=lambda src: f"{public}{VIEW_PREFIX}/{repo_id}/{quote(src)}",
+        download=True,
+    )
+    return f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{filename_base}</title></head><body>{html}</body></html>"
+
+
+def _prepare_pdf_markdown(manager: GitRepoManager, repo_id: str, path: str, ref: str | None) -> str:
+    public = config.runtime.public_base_url.rstrip("/")
+    return embed_view.strip_for_pdf(
+        manager.read_file_text(path, ref=ref),
+        f"{public}{VIEW_PREFIX}/{repo_id}/{quote(path)}",
+    )
 
 
 def verify_viewer_access(x_forwarded_groups: str = Header(default="")):
@@ -169,10 +207,10 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
                 )
 
         if format == "html":
-            text_content = manager.read_file_text(path, ref=ref)
-            rendered = render_markdown(text_content)
-            html = _sanitize_html(rendered.get("html", ""))
-            html_doc = f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>{filename_base}</title></head><body>{html}</body></html>"
+            loop = asyncio.get_event_loop()
+            html_doc = await loop.run_in_executor(
+                None, functools.partial(_render_download_html, manager, repo_id, path, ref, filename_base)
+            )
             return Response(
                 content=html_doc.encode("utf-8"),
                 media_type="text/html",
@@ -180,7 +218,10 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
             )
 
         if format == "pdf":
-            text_content = manager.read_file_text(path, ref=ref)
+            loop = asyncio.get_event_loop()
+            text_content = await loop.run_in_executor(
+                None, functools.partial(_prepare_pdf_markdown, manager, repo_id, path, ref)
+            )
             import httpx
             marp_url = config.viewer.marp_service_url.rstrip("/")
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -1064,10 +1105,19 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             content = _wrap_code_as_markdown(path, content, language)
             render_source = content
 
-        rendered = render_markdown(render_source)
+        prepared = embed_view.prepare(render_source) if is_md else None
+        rendered = render_markdown(prepared.text if prepared else render_source)
         rendered["html"] = _sanitize_html(rendered.get("html", ""))
         if is_md:
             rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path)
+            rendered["html"] = embed_view.fill(
+                rendered["html"], prepared,
+                md_path=path,
+                policy=_html_embed_policy(repo_id),
+                read=repo_reader(manager, effective_ref),
+                repo_id=repo_id,
+                source_href=lambda src: f"{VIEW_PREFIX}/{repo_id}/{quote(src)}{ref_param_first}",
+            )
 
         toc_html = generate_toc_html(rendered.get("toc", []))
 

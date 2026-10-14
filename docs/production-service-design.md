@@ -184,6 +184,7 @@ authz:
 | `GIT_PUBLISH_TOKEN` | Marp, slides-sync | publish repo write/read |
 | `GITLAB_WEBHOOK_SECRET` | Sync Webhook Receiver | GitLab push event 검증 |
 | `XWIKI_CREDENTIAL` | Sync Engine | page/attachment write |
+| `XWIKI_HTML_CREDENTIAL` | Sync Engine | `html_embed.enabled` 저장소 전용 XWiki 계정. page/attachment write + 대상 공간 한정 script right (`XWIKI_CREDENTIAL`과 다른 계정) |
 | `OPENPROJECT_API_KEY` | Sync Engine | work package write |
 | `OUTBOUND_SMTP_CREDENTIAL` | Outbound Feedback Exporter | approved mail gateway send |
 | `OUTBOUND_FEEDBACK_HMAC_KEY` | Outbound Feedback Exporter, External Importer | event signature |
@@ -203,6 +204,15 @@ CDN 업로드는 운영에서 `cdn-admin` 권한을 요구하는 방식으로 �
 - 허용 확장자와 MIME type을 둘 다 검사한다.
 - 동일 version 파일은 기본적으로 immutable이다. 교체는 `force=true`와 admin audit log가 필요하다.
 - 업로드 후 `manifest.json`에 SHA-256을 기록한다.
+
+### 3.6 인터랙티브 HTML 임베드 보안
+
+- 신뢰 여부는 운영자 설정 `repositories[].html_embed.enabled`에서만 켠다. 저장소 안 `.synctx.yaml`로는 켤 수 없다.
+- 합본은 `sandbox="allow-scripts"` srcdoc iframe으로만 넣는다. `allow-same-origin` 등은 붙이지 않으므로 출처가 `null`이라 Viewer·XWiki 세션에 접근할 수 없다.
+- 합본 `<head>` 맨 앞에 CSP meta를 넣어 실행 중 네트워크를 `allowed_origins`로 제한한다. 저장소 목록은 최상위 `html_embed.allowed_origins`의 부분집합이어야 하고, Viewer 부모 CSP는 최상위 목록과 `font-src data:`를 포함한다.
+- XWiki에는 블록당 `{{html clean="false"}}` 매크로 하나만 넣고, 매크로 본문의 `{` `}`는 모두 엔티티로 바꾼다.
+- 스크립트 권한은 신뢰 저장소 전용 XWiki 계정(`repositories[].html_embed.xwiki_credential_env`)에만 대상 공간 한정으로 준다. 기본 동기화 계정에는 주지 않는다. XWiki가 작성자 권한으로 매크로를 실행하므로, 비신뢰 저장소가 본문에 직접 쓴 매크로는 기본 계정 권한으로 걸러진다. 프로그래밍 권한과 `attachment.download.whitelist` 변경은 하지 않는다.
+- 잔여 위험: iframe 자신의 주소 이동(`location.href`)과 WebRTC는 CSP·sandbox로 막을 수 없다. 신뢰 저장소 지정으로만 통제한다.
 
 ## 4. 설정 스키마
 
@@ -228,6 +238,9 @@ authz:
     feedback-admin: ["platform-team"]
     platform-admin: ["platform-admin"]
 
+html_embed:
+  allowed_origins: []
+
 repositories:
   - id: project-docs
     name: "Team Docs"
@@ -247,6 +260,11 @@ repositories:
       - ".context/**"
     collab:
       enabled: false   # 모든 Viewer 사용자에게 공개 가능한 저장소에만 true (회의 모드·협업 연동 대상)
+    html_embed:
+      enabled: false
+      allowed_origins: []
+      max_bundle_bytes: 2097152
+      xwiki_credential_env: null   # enabled: true이고 XWiki가 대상이면 필수(예: XWIKI_HTML_CREDENTIAL), 기본 동기화 계정과 달라야 함
 
 mappings:
   - match:
@@ -371,6 +389,8 @@ outbound_feedback:
     from: "synctx-feedback@internal"
     to: "synctx-feedback-import@example.com"
 ```
+
+`html_embed`의 출처는 `https://호스트[:포트]`만 허용하고, 저장소 목록은 최상위 목록의 부분집합이어야 한다. 어기면 서비스가 시작되지 않는다. 신뢰 저장소(`enabled: true`)는 운영자만 지정한다(3.6).
 
 `force_push_policy` 값은 다음 중 하나다.
 
@@ -703,6 +723,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - `path`는 repo root 밖으로 벗어날 수 없다.
 - 렌더링 최대 파일 크기를 넘으면 413을 반환한다.
 - HTML은 sanitization 또는 신뢰 저장소 정책 중 하나를 명시한다. 운영 기본값은 신뢰 저장소 + CSP다.
+- `synctx-html` 블록은 sanitizer를 거친 뒤 자리표시를 sandbox iframe으로 채운다. 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지운다. CSP는 `font-src`에 `data:`, 각 지시어에 최상위 `html_embed.allowed_origins`를 더한다.
 - 회의 메모는 서버로 보내지 않는다. 브라우저 localStorage에만 저장하고, `<script>` 안 JSON은 `<`·`>`·`&`·U+2028·U+2029를 유니코드 이스케이프로 인코딩한다.
 
 ### 7.3 CDN Service
@@ -963,6 +984,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `synctx_feedback_redacted_fields_total`
 - `synctx_feedback_mail_failures_total`
 - `synctx_feedback_last_success_timestamp`
+- `synctx_html_bundle_total` (synctx-html 블록 처리 결과. `result`: `ok`, `disabled`, `missing_file`, `outside_repo`, `disallowed_host`, `too_large`, `invalid_block`, `unsupported`)
 
 ### 9.3 Alert
 
@@ -977,6 +999,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - Outbound Feedback redaction failure 발생
 - PVC 사용량 80% 초과
 - readiness failure 5분 지속
+- synctx-html 합본이 허용되지 않은 외부 주소 또는 크기 초과로 거부됨 (`SynctxHtmlBundleRejected`, 저장소별 1시간 안에 1건 이상, warning)
 
 ## 10. 테스트 전략
 
@@ -993,6 +1016,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 | Outbound Feedback | fake OpenProject + fake SMTP + fake importer | redaction, signature, replay, PR 생성 검증 |
 | Offline build | vendor artifact only | 외부 네트워크 없이 이미지 빌드 |
 | Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
+| HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
 
 ### 10.2 운영 전 수용 기준
 
@@ -1074,7 +1098,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - [x] state.json atomic read/write 구현
 - [x] git diff `A/M/D/R` 처리 구현 (R → D+A 분리)
 - [x] XWiki REST API 클라이언트 구현 (기본 CRUD)
-- [x] Mermaid SVG 변환 모듈 구현 (converters/mermaid.py)
+- [x] Mermaid SVG 변환 모듈 구현 (sync_converters/mermaid.py)
 - [x] CronJob/ServiceAccount/RBAC/NetworkPolicy Helm 추가
 - [x] Dockerfile multi-stage 빌드 구현
 - [x] XWiki attachment upload + SHA skip 구현
@@ -1186,6 +1210,22 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - 메모 포함 HTML을 네트워크 없이 열면 읽기 전용으로 메모가 보이고, Viewer에서 다시 가져올 수 있다.
 - 메모 데이터가 서버로 전송되지 않는다.
 
+### Phase 9: 인터랙티브 HTML 임베드
+
+- [ ] XWiki `markdown/1.2` 안 html 매크로 실행 확인
+- [ ] 설정 모델과 출처·부분집합 검사
+- [ ] `html_bundle` 합본·CSP meta·이스케이프
+- [ ] Viewer 렌더링·CSP·다운로드
+- [ ] Sync 변환과 다시 처리할 조건
+- [ ] 메트릭·Alert·Runbook
+- [ ] 운영 XWiki·실제 브라우저 확인
+
+완료 기준:
+
+- 신뢰 저장소의 모션 그래픽이 Viewer와 XWiki 페이지 안에서 재생·토글된다.
+- 묶음 파일만 바꾸거나 신뢰 설정을 바꿔도 다음 동기화에서 XWiki 페이지가 갱신된다.
+- 비신뢰 저장소와 합본 실패는 안내 문구로 보이고 페이지의 나머지는 정상이다.
+
 ## 12. Runbook 초안
 
 ### 12.1 Sync 실패
@@ -1227,6 +1267,16 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 5. replay reject가 증가하면 중복 메일 발송 또는 Importer event store 손상 여부 확인
 6. `changed_by`가 평문 또는 단순 SHA-256으로 기록되면 즉시 발송을 중단하고 `OUTBOUND_FEEDBACK_HASH_SALT` 설정과 redaction 테스트를 재검증
 7. 복구 후 `/api/feedback/resend/{event_id}`는 redaction dry-run 결과를 확인한 뒤 `feedback-admin` 권한으로만 실행
+
+### 12.6 synctx-html 합본 실패·XWiki 권한
+
+1. `synctx_html_bundle_total`의 `result` 라벨로 사유를 확인한다. Sync 로그의 `synctx-html block failed` 줄에 경로와 메시지가 있다.
+2. `missing_file`: 문서가 가리키는 파일을 저장소에 추가하면 다음 동기화에서 자동으로 복구된다.
+3. `disallowed_host`: 외부 주소를 `allowed_origins`에 넣을지 운영자가 판단한다. 넣으려면 최상위 목록과 저장소 목록에 모두 넣는다.
+4. `too_large`: 이미지를 줄이거나 `max_bundle_bytes`를 조정한다.
+5. XWiki 페이지에 스크립트가 글자로 보이거나 iframe이 사라지면, 신뢰 저장소 전용 계정(`html_embed.xwiki_credential_env`)의 공간 스크립트 권한을 확인한다. 공간 `WebPreferences`에 `XWiki.XWikiGlobalRights`(`users=전용 계정`, `levels=script`, `allow=1`)가 있어야 한다. 기본 동기화 계정에는 스크립트 권한을 주지 않는다.
+6. Helm에서 `existingSecret`을 쓰면 `feedback.secrets.xwikiHtmlCredentialEnabled: true`로 `XWIKI_HTML_CREDENTIAL`을 그 Secret의 `xwiki-html-credential` 키에 연결한다. 평문 값(`xwikiHtmlCredential`)은 Chart가 Secret을 만들 때만 쓴다.
+7. 신뢰를 해제하거나 전용 계정을 바꾸면 다음 동기화가 다른 계정으로 게시된 문서를 모두 새 계정으로 다시 게시한다(상태 `synced_files[].publisher` 기준). 본문이 같으면 임시 버전을 한 번 거쳐 작성자를 바꾼다. 실패한 문서는 기록이 바뀌지 않아 다음 실행에서 다시 시도한다. 완료 후 페이지 기록의 작성자가 바뀌었는지 확인한다. md에서 더 이상 게시하지 않는 남은 페이지(md 삭제 후 `on_delete: mark`·`ignore`, 대상을 `openproject`로 변경)는 상태의 `xwiki_orphan: true` 기록으로 추적해 기본 계정으로 다시 저장한다. Sync 로그에서 `XWiki author of orphan page`가 들어간 줄로 성공·실패를 확인한다. 처리에 실패한 문서는 `validation_error`를 빼고 매 실행 다시 시도한다. 원본이 사라진 실패 문서는 삭제로 처리된다.
 
 ## 13. 남은 외부 검증 항목
 

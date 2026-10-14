@@ -42,6 +42,13 @@ render_requests_total = Counter(
     registry=registry,
 )
 
+html_bundle_total = Counter(
+    "synctx_html_bundle_total",
+    "Total synctx-html block renders",
+    ["service", "repo_id", "result"],
+    registry=registry,
+)
+
 # ── CDN metrics ──
 cdn_bytes_served_total = Counter(
     "synctx_cdn_bytes_served_total",

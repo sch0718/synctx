@@ -15,12 +15,14 @@ class XWikiClient:
         
         # Setup auth
         auth = None
+        self.user = ""
         if config.auth.type == "basic":
             import os
             cred = os.getenv(config.auth.credential_env)
             if cred and ":" in cred:
                 user, pwd = cred.split(":", 1)
                 auth = (user, pwd)
+                self.user = user
             else:
                 logger.warning(f"Invalid or missing XWiki basic auth in env {config.auth.credential_env}")
                 
@@ -43,8 +45,12 @@ class XWikiClient:
         response.raise_for_status()
         return response.json()
 
-    async def upsert_page(self, space: str, page: str, title: str, content: str) -> bool:
-        """페이지 생성 또는 갱신 (Idempotent)."""
+    async def upsert_page(self, space: str, page: str, title: str, content: str, force_author: bool = False) -> bool:
+        """페이지 생성 또는 갱신 (Idempotent).
+
+        force_author면 내용이 같아도 이 계정을 작성자로 남긴다. XWiki는 내용이 바뀐 저장에서만
+        content author(매크로 실행 권한의 주체)를 갱신하므로, 임시 내용을 한 번 저장한 뒤 원래 내용을 저장한다.
+        """
         url = f"/rest/wikis/{self.config.wiki}/spaces/{space}/pages/{page}"
         
         # 1. 존재하는지 확인
@@ -58,9 +64,18 @@ class XWikiClient:
         
         if existing:
             # 내용이 동일한지 확인 (간단한 비교)
-            if existing.get("title") == title and existing.get("content") == content:
+            same_content = existing.get("content") == content
+            if same_content and existing.get("title") == title and not force_author:
                 logger.debug(f"XWiki page {space}/{page} is up to date.")
                 return False # No change made
+            if same_content and force_author:
+                response = await self.client.put(
+                    url,
+                    json={**payload, "content": content + "\n\n{{comment}}synctx: 작성자 갱신{{/comment}}\n"},
+                    headers={"Content-Type": "application/json", "Accept": "application/json"}
+                )
+                response.raise_for_status()
+                logger.info(f"Reset content author of XWiki page {space}/{page}")
                 
             # Update
             response = await self.client.put(

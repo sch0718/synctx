@@ -69,7 +69,7 @@
   - `CdnConfig` — CDN 설정 (storage_path, allowed_extensions 등)
   - `MappingRule`, `SyncConfig` — 경로 매핑, 동기화 옵션
 
-### 1.4 mermaid_to_svg.py → Sync Engine `converters/mermaid.py`
+### 1.4 mermaid_to_svg.py → Sync Engine `sync_converters/mermaid.py`
 
 - **소스**: `example-infra/10. 문서/문서변환/mermaid_to_svg.py`
 - **기능**: Mermaid 코드 블록 → SVG 일괄 변환
@@ -100,6 +100,7 @@
   - `build_print_html()` — 인쇄용 HTML 조합
 - **대상 서비스**: Viewer Service (문서 PDF 다운로드용. Marp PDF는 Marp CLI가 처리)
 - **비고**: `markdown_converter/src/md_preview/pdf_converter.py`에 더 발전된 버전(Remote CDP 지원)이 있음
+- **상태**: 한 번 반입했으나 호출하는 곳이 없어 제거함. 문서 PDF 다운로드를 구현할 때 다시 반입
 
 ### 1.7 테마 CSS (7종)
 
@@ -214,7 +215,7 @@ git diff --name-status <last-sync-sha>..HEAD -- '*.md'
 | 모듈 | 설명 | 복잡도 |
 |------|------|--------|
 | `sync_engine.py` | 동기화 오케스트레이션 | 높음 |
-| `converters/mermaid.py` | Mermaid → SVG 변환 | 중 |
+| `sync_converters/mermaid.py` | Mermaid → SVG 변환 | 중 |
 | `targets/xwiki.py` | XWiki REST API 클라이언트 | 중 |
 | `targets/openproject.py` | OpenProject REST API v3 클라이언트 | 중 |
 | `sync_cli.py` | CLI 엔트리포인트 | 낮음 |
@@ -256,8 +257,7 @@ cp markdown_converter/src/md_preview/config.py     synctx/shared/synctx-common/s
 cp markdown_converter/src/md_preview/renderer.py   synctx/services/viewer/src/renderer.py
 
 # Sync Engine으로
-cp "example-infra/10. 문서/문서변환/mermaid_to_svg.py"  synctx/services/sync/src/converters/mermaid.py
-cp "example-infra/10. 문서/문서변환/convert_to_pdf.py"  synctx/services/viewer/src/converters/pdf.py
+cp "example-infra/10. 문서/문서변환/mermaid_to_svg.py"  synctx/services/sync/src/sync_converters/mermaid.py
 
 # CDN 초기 데이터 (docsify 브랜치에서)
 # feature/docsify 브랜치의 docs/cdn/ → synctx/cdn-data/
