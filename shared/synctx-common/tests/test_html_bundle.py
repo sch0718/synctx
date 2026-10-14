@@ -48,11 +48,25 @@ def test_closing_tags_inside_inlined_code_are_escaped():
     files = {
         "m/index.html": page('<link rel="stylesheet" href="a.css">', '<script src="a.js"></script>'),
         "m/a.css": "a::after{content:'</style>'}",
-        "m/a.js": "var s='</script><!--';",
+        "m/a.js": "var s='</script><!--<script>';",
     }
     html = bundle(reader(files), "m/index.html", POLICY).html
     assert "<\\/script>" in html and "<\\!--" in html and "<\\/style>" in html
     assert html.count("</script>") == 1
+
+
+@pytest.mark.parametrize("code", ["window.a=1;\n<!-- c\n", "var s='<!--';", "var s='<!-- <scripts>';"])
+def test_comment_open_without_script_tag_is_kept(code):
+    files = {"m/index.html": '<script src="a.js"></script>', "m/a.js": code}
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert html.endswith(f"<script>{code}</script>")
+
+
+@pytest.mark.parametrize("tail", ["<script>", "<SCRIPT ", "<script/", "<script\t"])
+def test_comment_open_before_script_tag_is_escaped(tail):
+    files = {"m/index.html": '<script src="a.js"></script>', "m/a.js": f"var s='<!--{tail}';"}
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert f"<\\!--{tail}" in html
 
 
 def test_image_becomes_data_uri():

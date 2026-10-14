@@ -208,6 +208,7 @@ _CSS_URL_RE = re.compile(r"""url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]*))\s*\)"""
 _CSS_IMPORT_RE = re.compile(r"@import\b", re.IGNORECASE)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _HTML_SPACE_RE = re.compile(r"[\t\n\f\r ]*")
+_SCRIPT_OPEN_RE = re.compile(r"<script[\t\n\f\r />]", re.IGNORECASE)
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module"}
 # link를 style로 바꿀 때 버리는 속성. id·class·title·media·data-* 등 스크립트가 찾는 속성은 남긴다.
 _DROPPED_LINK_ATTRS = {"href", "rel", "type", "crossorigin", "integrity", "referrerpolicy", "fetchpriority", "as", "blocking", "hreflang", "charset", "sizes"}
@@ -264,7 +265,13 @@ def url_origin(url: str) -> str:
 def _escape_raw(text: str, tag: str) -> str:
     """인라인으로 넣은 코드가 요소를 일찍 닫거나 double-escaped 상태로 들어가지 않게 한다."""
     text = re.sub(rf"</({tag})", r"<\\/\1", text, flags=re.IGNORECASE)
-    return text.replace("<!--", "<\\!--") if tag == "script" else text
+    if tag != "script":
+        return text
+    # `<\!--`는 코드 자리의 HTML-like 주석을 문법 오류로 만드므로, double-escaped 상태에 들어갈 수 있을 때만 바꾼다.
+    comment_at = text.find("<!--")
+    if comment_at < 0 or not _SCRIPT_OPEN_RE.search(text, comment_at):
+        return text
+    return text.replace("<!--", "<\\!--")
 
 
 def _render_tag(tag: str, attrs, self_closing: bool = False) -> str:
