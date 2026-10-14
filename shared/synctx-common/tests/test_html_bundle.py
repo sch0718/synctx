@@ -415,6 +415,11 @@ def test_text_only_tag_in_svg_or_math_does_not_swallow_rest(markup):
         "<svg><foreignObject><textarea><template></textarea></foreignObject></svg>",
         "<math><mtext><textarea><template></textarea></mtext></math>",
         "<svg><rect/></svg><textarea><template></textarea>",
+        '<math><annotation-xml encoding="text/html"><textarea><template></textarea></annotation-xml></math>',
+        '<math><annotation-xml encoding="Application/XHTML+XML"><noscript><template></noscript></annotation-xml></math>',
+        "<svg><rect/><div><noscript><template></noscript></div></svg>",
+        '<math><mi>x</mi><font color="red"><noscript><template></noscript></font></math>',
+        "<math><mi><svg><title><noscript><template></noscript></title></svg></mi></math>",
     ],
 )
 def test_text_only_tag_in_html_context_around_svg_is_text(markup):
@@ -424,6 +429,23 @@ def test_text_only_tag_in_html_context_around_svg_is_text(markup):
     }
     html = bundle(reader(files), "m/index.html", POLICY).html
     assert html.index('id="late"') < html.index("window.a=1") < html.index("</body>")
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        "<svg><font>{}</font></svg>",
+        '<math><annotation-xml encoding="application/mathml+xml"><svg>{}</svg></annotation-xml></math>',
+        "<math><annotation-xml><svg>{}</svg></annotation-xml></math>",
+        "<svg><math><mi>{}</mi></math></svg>",
+        "<svg><foreignObject><p>x</p></foreignObject>{}</svg>",
+    ],
+)
+def test_text_only_tag_in_foreign_context_is_parsed_as_markup(wrap):
+    markup = wrap.format('<noscript><image href="x.png"/></noscript>')
+    with pytest.raises(BundleError) as exc:
+        bundle(reader({"m/index.html": page(body=markup)}), "m/index.html", POLICY)
+    assert exc.value.reason == "unsupported"
 
 
 def test_defer_without_body_end_is_appended():

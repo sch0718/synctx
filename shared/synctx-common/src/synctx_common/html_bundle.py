@@ -211,8 +211,16 @@ _HTML_SPACE_RE = re.compile(r"[\t\n\f\r ]*")
 _SCRIPT_OPEN_RE = re.compile(r"<script[\t\n\f\r />]", re.IGNORECASE)
 # 브라우저(스크립트 실행 가능)가 내용을 글자로 읽는 요소. textarea·title은 Python 패치 버전에 따라 HTMLParser가 태그로 읽으므로 직접 지정한다.
 _TEXT_ONLY_TAGS = {"textarea", "title", "noscript", "xmp", "iframe", "noembed", "noframes"}
-# SVG·MathML 루트와, 그 안에서 내용을 다시 HTML로 읽는 통합 지점
+# HTML 명세 트리 구성의 foreign content 규칙: SVG·MathML 안에서 내용을 다시 HTML로 읽는 통합 지점과,
+# SVG·MathML을 빠져나와 HTML로 돌아가게 하는 시작 태그
 _HTML_INTEGRATION_TAGS = {"svg": {"foreignobject", "desc", "title"}, "math": {"mi", "mo", "mn", "ms", "mtext"}}
+_HTML_ANNOTATION_ENCODINGS = {"text/html", "application/xhtml+xml"}
+_FOREIGN_BREAKOUT_TAGS = {
+    "b", "big", "blockquote", "body", "br", "center", "code", "dd", "div", "dl", "dt", "em", "embed",
+    "h1", "h2", "h3", "h4", "h5", "h6", "head", "hr", "i", "img", "li", "listing", "menu", "meta",
+    "nobr", "ol", "p", "pre", "ruby", "s", "small", "span", "strong", "strike", "sub", "sup", "table",
+    "tt", "u", "ul", "var",
+}
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module"}
 # link를 style로 바꿀 때 버리는 속성. id·class·title·media·data-* 등 스크립트가 찾는 속성은 남긴다.
 _DROPPED_LINK_ATTRS = {"href", "rel", "type", "crossorigin", "integrity", "referrerpolicy", "fetchpriority", "as", "blocking", "hreflang", "charset", "sizes"}
@@ -409,11 +417,33 @@ class _Bundler(HTMLParser):
     def handle_startendtag(self, tag, attrs):
         self.start(tag, attrs, self_closing=True)
 
+    def enter_element(self, tag, attrs, self_closing) -> Optional[str]:
+        """시작 태그가 놓이는 문맥(HTML이면 None, 아니면 "svg"·"math")을 돌려주고 문맥 스택을 갱신한다.
+
+        스택 항목은 (태그, 그 안의 문맥)이다. 닫는 태그를 빠뜨린 HTML 요소처럼 트리 전체가 필요한 경우는 따지지 않는다.
+        """
+        stack = self.foreign_stack
+        foreign = stack[-1][1] if stack else None
+        if foreign and (tag in _FOREIGN_BREAKOUT_TAGS or (tag == "font" and any(name in ("color", "face", "size") for name, _ in attrs))):
+            while stack and stack[-1][1]:
+                stack.pop()
+            foreign = None
+        if self_closing:
+            return foreign
+        if foreign is None:
+            if tag in _HTML_INTEGRATION_TAGS:
+                stack.append((tag, tag))
+        elif tag in _HTML_INTEGRATION_TAGS[foreign]:
+            stack.append((tag, None))
+        elif foreign == "math" and tag == "annotation-xml":
+            encoding = (dict(attrs).get("encoding") or "").lower()
+            stack.append((tag, None if encoding in _HTML_ANNOTATION_ENCODINGS else "math"))
+        elif tag == foreign or (tag == "svg" and stack[-1][0] == "annotation-xml"):
+            stack.append((tag, tag))
+        return foreign
+
     def start(self, tag, attrs, self_closing):
-        top = self.foreign_stack[-1] if self.foreign_stack else None
-        foreign = top if top in _HTML_INTEGRATION_TAGS else None
-        if not self_closing and (tag in _HTML_INTEGRATION_TAGS or (foreign and tag in _HTML_INTEGRATION_TAGS[foreign])):
-            self.foreign_stack.append(tag)
+        foreign = self.enter_element(tag, attrs, self_closing)
         if tag == "title" and foreign is None and not self_closing:
             self.in_title = True
         if tag == "template":
@@ -555,9 +585,9 @@ class _Bundler(HTMLParser):
             self.in_title = False
         if tag == "template" and self.template_depth:
             self.template_depth -= 1
-        if tag in self.foreign_stack:
-            while self.foreign_stack.pop() != tag:
-                pass
+        opened = [index for index, (name, _) in enumerate(self.foreign_stack) if name == tag]
+        if opened:
+            del self.foreign_stack[opened[-1]:]
         if tag in ("script", "style") and self.raw_tag == tag:
             if self.script_text is not None:
                 self.check_imports("".join(self.script_text), self.script_is_module, f"{self.entry}의 인라인 스크립트")
