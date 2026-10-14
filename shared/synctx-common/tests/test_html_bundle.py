@@ -365,6 +365,18 @@ def test_defer_script_inside_template_stays_inside_template():
     assert html.count("window.ran=1") == 1
 
 
+@pytest.mark.parametrize("tag", ["textarea", "title", "noscript", "xmp", "iframe", "noembed", "noframes"])
+def test_template_text_inside_text_only_element_is_not_template(tag):
+    text = f"<{tag}><template><script src=\"b.js\"></script></{tag}>"
+    files = {
+        "m/index.html": page(body=f'{text}<script defer src="a.js"></script><p id="late">x</p>'),
+        "m/a.js": "window.a=1;",
+    }
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert text in html
+    assert html.index('id="late"') < html.index("window.a=1") < html.index("</body>")
+
+
 def test_defer_without_body_end_is_appended():
     files = {"m/index.html": '<script defer src="a.js"></script><p>x</p>', "m/a.js": "window.a=1;"}
     html = bundle(reader(files), "m/index.html", POLICY).html

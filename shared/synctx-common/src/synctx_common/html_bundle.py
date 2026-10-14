@@ -209,6 +209,8 @@ _CSS_IMPORT_RE = re.compile(r"@import\b", re.IGNORECASE)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _HTML_SPACE_RE = re.compile(r"[\t\n\f\r ]*")
 _SCRIPT_OPEN_RE = re.compile(r"<script[\t\n\f\r />]", re.IGNORECASE)
+# 브라우저(스크립트 실행 가능)가 내용을 글자로 읽는 요소. textarea·title은 Python 패치 버전에 따라 HTMLParser가 태그로 읽으므로 직접 지정한다.
+_TEXT_ONLY_TAGS = {"textarea", "title", "noscript", "xmp", "iframe", "noembed", "noframes"}
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module"}
 # link를 style로 바꿀 때 버리는 속성. id·class·title·media·data-* 등 스크립트가 찾는 속성은 남긴다.
 _DROPPED_LINK_ATTRS = {"href", "rel", "type", "crossorigin", "integrity", "referrerpolicy", "fetchpriority", "as", "blocking", "hreflang", "charset", "sizes"}
@@ -420,6 +422,8 @@ class _Bundler(HTMLParser):
             self.skip_raw = False
         self.check_tag(tag, attrs)
         self.out.append(_render_tag(tag, self.rewrite_attrs(tag, attrs), self_closing))
+        if tag in _TEXT_ONLY_TAGS:
+            self.set_cdata_mode(tag)
 
     def check_tag(self, tag, attrs):
         if tag == "base":
