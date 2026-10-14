@@ -113,7 +113,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 | `<script type="module">` | 같은 자리에 넣는다(인라인 module도 기본으로 지연 실행된다) |
 | import | module의 정적 import와 모든 인라인 스크립트의 동적 `import()`는 허용 출처의 https 문자열 리터럴만 허용한다. 상대 경로·bare specifier·템플릿 치환·리터럴이 아닌 인자(연산자·메서드 호출이 붙은 경우 포함)는 오류다. 주석이 끼어 있어도 검사한다. 판단할 수 없으면 거부하는 보수적 규칙이라 문자열 안의 import 비슷한 글자도 거부될 수 있다 |
 | `<script defer>`와 외부 defer 스크립트가 함께 있음 | 오류 (지원하지 않음). 실행 순서를 보존할 수 없다 |
-| `<video>`·`<audio>`·`<source>`·`<iframe>`·`<object>`·`<embed>`·`<base>`, SVG `<image>`·`<use>`의 외부 참조 | 오류 (지원하지 않음) |
+| `<video>`·`<audio>`·`<source>`·`<iframe>`·`<object>`·`<embed>`·`<base>`, SVG `<image>`·`<use>`·`<script>`의 외부 참조 | 오류 (지원하지 않음) |
 | `<link rel="icon">` | `data:` URI로 바꾼다. 그 밖의 상대 경로 `<link>`(preload 등)는 오류 |
 | CSS `url(상대경로)`, `<img src>` | `data:` URI로 바꾼다. MIME은 확장자로 정한다. 글꼴(`woff`, `woff2`, `ttf`)도 포함하며, Viewer CSP의 `font-src`에 `data:`를 더한다(6장 5번) |
 | CSS `@import` | 오류 (지원하지 않음) |

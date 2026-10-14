@@ -449,6 +449,10 @@ class _Bundler(HTMLParser):
         if tag == "template":
             self.template_depth += 1
         if tag == "script":
+            if foreign == "svg":
+                for name, value in attrs:
+                    if name in ("href", "xlink:href") and value:
+                        self.fail("unsupported", f"SVG <script>의 외부 참조는 지원하지 않습니다: {value}")
             self.start_script(attrs)
             return
         if tag == "link":

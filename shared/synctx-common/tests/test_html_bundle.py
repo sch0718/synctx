@@ -555,6 +555,27 @@ def test_svg_use_fragment_is_allowed():
     assert '<use href="#icon" />' in bundle(reader(files), "m/index.html", POLICY).html
 
 
+@pytest.mark.parametrize(
+    "script",
+    [
+        '<script href="a.js"></script>',
+        f'<script xlink:href="{ORIGIN}/a.js"></script>',
+        '<script href="https://evil.example/x.js"/>',
+        '<g><script type="text/javascript" href="a.js"></script></g>',
+    ],
+)
+def test_svg_script_reference_is_unsupported(script):
+    files = {"m/index.html": page(body=f"<svg>{script}</svg>"), "m/a.js": "window.a=1;"}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", POLICY)
+    assert exc.value.reason == "unsupported"
+
+
+def test_svg_inline_script_is_kept():
+    files = {"m/index.html": page(body="<svg><script>window.a=1</script></svg>")}
+    assert "<svg><script>window.a=1</script></svg>" in bundle(reader(files), "m/index.html", POLICY).html
+
+
 def test_too_large():
     files = {"m/index.html": page(body="x" * 200)}
     with pytest.raises(BundleError) as exc:
