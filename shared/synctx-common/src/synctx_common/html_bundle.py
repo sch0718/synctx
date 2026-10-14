@@ -211,6 +211,8 @@ _HTML_SPACE_RE = re.compile(r"[\t\n\f\r ]*")
 _SCRIPT_OPEN_RE = re.compile(r"<script[\t\n\f\r />]", re.IGNORECASE)
 # 브라우저(스크립트 실행 가능)가 내용을 글자로 읽는 요소. textarea·title은 Python 패치 버전에 따라 HTMLParser가 태그로 읽으므로 직접 지정한다.
 _TEXT_ONLY_TAGS = {"textarea", "title", "noscript", "xmp", "iframe", "noembed", "noframes"}
+# SVG·MathML 루트와, 그 안에서 내용을 다시 HTML로 읽는 통합 지점
+_HTML_INTEGRATION_TAGS = {"svg": {"foreignobject", "desc", "title"}, "math": {"mi", "mo", "mn", "ms", "mtext"}}
 _JS_TYPES = {"", "text/javascript", "application/javascript", "module"}
 # link를 style로 바꿀 때 버리는 속성. id·class·title·media·data-* 등 스크립트가 찾는 속성은 남긴다.
 _DROPPED_LINK_ATTRS = {"href", "rel", "type", "crossorigin", "integrity", "referrerpolicy", "fetchpriority", "as", "blocking", "hreflang", "charset", "sizes"}
@@ -326,6 +328,7 @@ class _Bundler(HTMLParser):
         self.has_module = False
         self.has_external_defer = False
         self.template_depth = 0
+        self.foreign_stack: list = []
 
     def fail(self, reason: str, message: str):
         raise BundleError(reason, message, self.files, self.missing)
@@ -407,6 +410,10 @@ class _Bundler(HTMLParser):
         self.start(tag, attrs, self_closing=True)
 
     def start(self, tag, attrs, self_closing):
+        top = self.foreign_stack[-1] if self.foreign_stack else None
+        foreign = top if top in _HTML_INTEGRATION_TAGS else None
+        if not self_closing and (tag in _HTML_INTEGRATION_TAGS or (foreign and tag in _HTML_INTEGRATION_TAGS[foreign])):
+            self.foreign_stack.append(tag)
         if tag == "title":
             self.in_title = True
         if tag == "template":
@@ -422,7 +429,8 @@ class _Bundler(HTMLParser):
             self.skip_raw = False
         self.check_tag(tag, attrs)
         self.out.append(_render_tag(tag, self.rewrite_attrs(tag, attrs), self_closing))
-        if tag in _TEXT_ONLY_TAGS:
+        # SVG·MathML 안의 같은 이름 요소는 글자 전용이 아니고 `/>`로 실제로 닫힌다.
+        if tag in _TEXT_ONLY_TAGS and not self_closing and foreign is None:
             self.set_cdata_mode(tag)
 
     def check_tag(self, tag, attrs):
@@ -547,6 +555,9 @@ class _Bundler(HTMLParser):
             self.in_title = False
         if tag == "template" and self.template_depth:
             self.template_depth -= 1
+        if tag in self.foreign_stack:
+            while self.foreign_stack.pop() != tag:
+                pass
         if tag in ("script", "style") and self.raw_tag == tag:
             if self.script_text is not None:
                 self.check_imports("".join(self.script_text), self.script_is_module, f"{self.entry}의 인라인 스크립트")

@@ -377,6 +377,40 @@ def test_template_text_inside_text_only_element_is_not_template(tag):
     assert html.index('id="late"') < html.index("window.a=1") < html.index("</body>")
 
 
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<svg viewBox="0 0 10 10"><title/><rect id="r"/></svg>',
+        '<svg><textarea/><rect id="r"/></svg>',
+        '<svg><title>제목</title><rect id="r"/></svg>',
+        '<svg><g><svg><title/></svg><rect id="r"/></g></svg>',
+        '<math><title/><mi id="r">x</mi></math>',
+    ],
+)
+def test_text_only_tag_in_svg_or_math_does_not_swallow_rest(markup):
+    files = {"m/index.html": page(body=f'{markup}<p id="late">x</p><script src="a.js"></script>'), "m/a.js": "window.a=1;"}
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert 'id="r"' in html and 'id="late"' in html
+    assert "<script>window.a=1;</script>" in html
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        "<svg><foreignObject><textarea><template></textarea></foreignObject></svg>",
+        "<math><mtext><textarea><template></textarea></mtext></math>",
+        "<svg><rect/></svg><textarea><template></textarea>",
+    ],
+)
+def test_text_only_tag_in_html_context_around_svg_is_text(markup):
+    files = {
+        "m/index.html": page(body=f'{markup}<script defer src="a.js"></script><p id="late">x</p>'),
+        "m/a.js": "window.a=1;",
+    }
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert html.index('id="late"') < html.index("window.a=1") < html.index("</body>")
+
+
 def test_defer_without_body_end_is_appended():
     files = {"m/index.html": '<script defer src="a.js"></script><p>x</p>', "m/a.js": "window.a=1;"}
     html = bundle(reader(files), "m/index.html", POLICY).html
