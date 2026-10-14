@@ -267,11 +267,31 @@ def _escape_raw(text: str, tag: str) -> str:
     text = re.sub(rf"</({tag})", r"<\\/\1", text, flags=re.IGNORECASE)
     if tag != "script":
         return text
-    # `<\!--`는 코드 자리의 HTML-like 주석을 문법 오류로 만드므로, double-escaped 상태에 들어갈 수 있을 때만 바꾼다.
-    comment_at = text.find("<!--")
-    if comment_at < 0 or not _SCRIPT_OPEN_RE.search(text, comment_at):
-        return text
-    return text.replace("<!--", "<\\!--")
+    # `<\!--`는 코드 자리의 HTML-like 주석을 문법 오류로 만드므로, 끝까지 double-escaped 상태가 남게 하는 `<!--`만 바꾼다.
+    while (comment_at := _unclosed_double_escape(text)) is not None:
+        text = text[:comment_at] + "<\\!--" + text[comment_at + 4:]
+    return text
+
+
+def _unclosed_double_escape(text: str) -> Optional[int]:
+    """HTML script data 상태를 따라가 텍스트 끝이 double-escaped 상태이면 그 구간을 연 `<!--` 위치를 돌려준다.
+
+    `</script`는 이미 바꿔 두었으므로 double-escaped 상태는 `-->`로만 끝난다.
+    """
+    pos = 0
+    while (comment_at := text.find("<!--", pos)) >= 0:
+        comment_end = text.find("-->", comment_at + 2)
+        script_open = _SCRIPT_OPEN_RE.search(text, comment_at + 4)
+        if script_open is None or 0 <= comment_end < script_open.start():
+            if comment_end < 0:
+                return None
+            pos = comment_end + 3
+            continue
+        double_end = text.find("-->", script_open.end())
+        if double_end < 0:
+            return comment_at
+        pos = double_end + 3
+    return None
 
 
 def _render_tag(tag: str, attrs, self_closing: bool = False) -> str:

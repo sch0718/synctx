@@ -55,8 +55,18 @@ def test_closing_tags_inside_inlined_code_are_escaped():
     assert html.count("</script>") == 1
 
 
-@pytest.mark.parametrize("code", ["window.a=1;\n<!-- c\n", "var s='<!--';", "var s='<!-- <scripts>';"])
-def test_comment_open_without_script_tag_is_kept(code):
+@pytest.mark.parametrize(
+    "code",
+    [
+        "window.a=1;\n<!-- c\n",
+        "var s='<!--';",
+        "var s='<!-- <scripts>';",
+        '<!-- legacy comment -->\nconst marker = "<script>";\nglobalThis.replayed = true;\n',
+        "var s='<!--<script>-->';",
+        "var s='<!-->', t='<script>';",
+    ],
+)
+def test_comment_open_without_double_escape_at_end_is_kept(code):
     files = {"m/index.html": '<script src="a.js"></script>', "m/a.js": code}
     html = bundle(reader(files), "m/index.html", POLICY).html
     assert html.endswith(f"<script>{code}</script>")
@@ -67,6 +77,19 @@ def test_comment_open_before_script_tag_is_escaped(tail):
     files = {"m/index.html": '<script src="a.js"></script>', "m/a.js": f"var s='<!--{tail}';"}
     html = bundle(reader(files), "m/index.html", POLICY).html
     assert f"<\\!--{tail}" in html
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("var a='<!-- -->'; var b='<!--<script>';", "var a='<!-- -->'; var b='<\\!--<script>';"),
+        ("var a='<!--'; var b='<!--<script>';", "var a='<\\!--'; var b='<\\!--<script>';"),
+    ],
+)
+def test_only_comment_opens_reaching_double_escape_are_escaped(code, expected):
+    files = {"m/index.html": '<script src="a.js"></script>', "m/a.js": code}
+    html = bundle(reader(files), "m/index.html", POLICY).html
+    assert html.endswith(f"<script>{expected}</script>")
 
 
 def test_image_becomes_data_uri():
