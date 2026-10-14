@@ -17,10 +17,20 @@ if [ ! -f "${VALUES_LOCAL_FILE}" ]; then
     exit 1
 fi
 
+# Git 토큰 등 커밋하지 않는 값은 values-local.secret.yaml(.gitignore)에서 덮어쓴다
+VALUES_ARGS=(-f "${VALUES_LOCAL_FILE}")
+if [ -f "${VALUES_LOCAL_SECRET_FILE}" ]; then
+    VALUES_ARGS+=(-f "${VALUES_LOCAL_SECRET_FILE}")
+    print_success "values-local.secret.yaml 적용"
+else
+    print_warning "values-local.secret.yaml이 없어 private 저장소를 clone하지 못합니다"
+    print_info "git.secrets.readToken을 담아 생성: ${VALUES_LOCAL_SECRET_FILE}"
+fi
+
 # Helm install/upgrade
 helm upgrade --install synctx "${PROJECT_ROOT}/helm/synctx" \
     -n "${NAMESPACE}" \
-    -f "${VALUES_LOCAL_FILE}" \
+    "${VALUES_ARGS[@]}" \
     --wait --timeout 180s
 
 print_success "synctx Helm 배포 완료"
