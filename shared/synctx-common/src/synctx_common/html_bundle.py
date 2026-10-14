@@ -414,7 +414,7 @@ class _Bundler(HTMLParser):
         foreign = top if top in _HTML_INTEGRATION_TAGS else None
         if not self_closing and (tag in _HTML_INTEGRATION_TAGS or (foreign and tag in _HTML_INTEGRATION_TAGS[foreign])):
             self.foreign_stack.append(tag)
-        if tag == "title":
+        if tag == "title" and foreign is None and not self_closing:
             self.in_title = True
         if tag == "template":
             self.template_depth += 1

@@ -387,6 +387,21 @@ def test_template_text_inside_text_only_element_is_not_template(tag):
         '<math><title/><mi id="r">x</mi></math>',
     ],
 )
+def test_svg_title_is_not_document_title(markup):
+    html_doc = page(body=f'{markup}<p id="late">본문</p>')
+    assert bundle(reader({"m/index.html": html_doc}), "m/index.html", POLICY).title == "모션"
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<svg viewBox="0 0 10 10"><title/><rect id="r"/></svg>',
+        '<svg><textarea/><rect id="r"/></svg>',
+        '<svg><title>제목</title><rect id="r"/></svg>',
+        '<svg><g><svg><title/></svg><rect id="r"/></g></svg>',
+        '<math><title/><mi id="r">x</mi></math>',
+    ],
+)
 def test_text_only_tag_in_svg_or_math_does_not_swallow_rest(markup):
     files = {"m/index.html": page(body=f'{markup}<p id="late">x</p><script src="a.js"></script>'), "m/a.js": "window.a=1;"}
     html = bundle(reader(files), "m/index.html", POLICY).html
