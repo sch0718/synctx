@@ -382,6 +382,139 @@ def _build_repo_options(repos, active_id=None):
     return html
 
 
+# ── Shared tree assets ──
+
+# 저장소 화면과 문서 화면의 파일 트리가 함께 쓴다. 템플릿 format 인자로 넣으므로 중괄호를 두 번 쓰지 않는다.
+TREE_CSS = """
+        .tree { font-family: var(--font-mono); font-size: 14px; }
+        .tree-entry {
+            display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+            border-radius: 6px; cursor: pointer; transition: background .12s; white-space: nowrap;
+        }
+        .tree-entry:hover { background: var(--border-color); }
+        .tree-entry svg { width: 18px; height: 18px; flex-shrink: 0; }
+        .tree-entry .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+        .tree-entry .name a { color: var(--text-primary); text-decoration: none; }
+        .tree-entry .name a:hover { color: var(--primary); }
+        .tree-children { padding-left: 20px; }
+        .tree-children.collapsed { display: none; }
+        .tree-toggle { transition: transform .15s; }
+        .tree-toggle.open { transform: rotate(90deg); }
+
+        .icon-dir { color: var(--primary); }
+        .icon-md { color: #2196F3; }
+        [data-theme="github-dark"] .icon-md, [data-theme="hacker"] .icon-md { color: #64B5F6; }
+        .icon-code { color: #FF9800; }
+        [data-theme="github-dark"] .icon-code, [data-theme="hacker"] .icon-code { color: #FFB74D; }
+        .icon-binary { color: var(--text-disabled); }
+        .tree-entry.current { background: var(--border-color); font-weight: 600; }
+        .tree-entry.disabled { opacity: 0.5; cursor: default; }
+        .tree-entry.disabled:hover { background: transparent; }
+"""
+
+TREE_SCRIPT = """
+        var ICON_DIR = '<svg class="icon-dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>';
+        var ICON_MD = '<svg class="icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
+        var ICON_CODE = '<svg class="icon-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m10 13-2 2 2 2"/><path d="m14 13 2 2-2 2"/></svg>';
+        var ICON_BINARY = '<svg class="icon-binary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+        var FILE_ICONS = { markdown: ICON_MD, code: ICON_CODE, binary: ICON_BINARY };
+
+        function _refParam(sep) {
+            return ACTIVE_REF ? sep + 'ref=' + encodeURIComponent(ACTIVE_REF) : '';
+        }
+
+        function escapeHtml(text) {
+            return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function encodePath(path) {
+            return path.split('/').map(encodeURIComponent).join('/');
+        }
+
+        function toggleDir(el) {
+            var children = el.nextElementSibling;
+            var icon = el.querySelector('.tree-toggle');
+            if (children) {
+                children.classList.toggle('collapsed');
+                icon.classList.toggle('open');
+                if (!children.classList.contains('collapsed') && children.dataset.path && !children.dataset.loaded) {
+                    loadSubtree(children, children.dataset.path);
+                }
+            }
+        }
+
+        async function loadSubtree(container, path) {
+            container.dataset.loaded = '1';
+            container.innerHTML = '<div class="loading" style="padding:8px;font-size:13px;">Loading...</div>';
+            try {
+                var res = await fetch(VIEW_PREFIX + '/api/repos/' + ACTIVE_REPO + '/tree?path=' + encodeURIComponent(path) + _refParam('&'));
+                if (!res.ok) throw new Error('Failed');
+                var data = await res.json();
+                var html = '';
+                var dirs = data.entries.filter(function(e) { return e.type === 'dir'; }).sort(function(a,b) { return a.name.localeCompare(b.name); });
+                var files = data.entries.filter(function(e) { return e.type === 'file'; }).sort(function(a,b) { return a.name.localeCompare(b.name); });
+                for (var i = 0; i < dirs.length; i++) {
+                    var d = dirs[i];
+                    html += '<div class="tree-entry" onclick="toggleDir(this)">' +
+                        '<svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>' +
+                        ICON_DIR +
+                        '<span class="name">' + escapeHtml(d.name) + '/</span></div>' +
+                        '<div class="tree-children collapsed" data-path="' + escapeHtml(d.path) + '"></div>';
+                }
+                for (var j = 0; j < files.length; j++) {
+                    var f = files[j];
+                    var ficon = FILE_ICONS[f.icon_type] || ICON_BINARY;
+                    if (f.viewable) {
+                        html += '<div class="tree-entry">' +
+                            '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
+                            ficon +
+                            '<span class="name"><a href="' + escapeHtml(VIEW_PREFIX + '/' + ACTIVE_REPO + '/' + encodePath(f.path) + _refParam('?')) + '">' + escapeHtml(f.name) + '</a></span></div>';
+                    } else {
+                        html += '<div class="tree-entry disabled">' +
+                            '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
+                            ficon +
+                            '<span class="name">' + escapeHtml(f.name) + '</span></div>';
+                    }
+                }
+                container.innerHTML = html || '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty</div>';
+            } catch(err) {
+                container.innerHTML = '<div style="padding:8px;color:#E01E1F;">Failed to load</div>';
+            }
+        }
+
+        function filterTree(query) {
+            var q = query.toLowerCase();
+            document.querySelectorAll('#file-tree .tree-entry').forEach(function(el) {
+                var name = el.querySelector('.name').textContent.toLowerCase();
+                el.style.display = !q || name.includes(q) ? '' : 'none';
+            });
+        }
+
+        async function expandToPath(path) {
+            var parts = path.split('/').filter(Boolean);
+            var current = '';
+            var target = null;
+            for (var i = 0; i < parts.length; i++) {
+                current = current ? current + '/' + parts[i] : parts[i];
+                var container = Array.prototype.find.call(
+                    document.querySelectorAll('#file-tree .tree-children'),
+                    function(c) { return c.dataset.path === current; }
+                );
+                if (!container) break;
+                var entry = container.previousElementSibling;
+                container.classList.remove('collapsed');
+                entry.querySelector('.tree-toggle').classList.add('open');
+                if (!container.dataset.loaded) await loadSubtree(container, current);
+                target = entry;
+            }
+            if (target) {
+                target.classList.add('current');
+                target.scrollIntoView({ block: 'center' });
+            }
+        }
+"""
+
+
 # ── VIEWER_TEMPLATE ──
 
 VIEWER_TEMPLATE = """<!DOCTYPE html>
@@ -411,12 +544,23 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
     <style>
         body {{ margin: 0; padding: 0; }}
         .viewer-sidebar {{
-            width: 250px; min-width: 250px; padding: 20px; height: 100vh; overflow-y: auto;
+            width: 250px; min-width: 250px; padding: 20px; height: 100vh; overflow: hidden;
             position: fixed; top: 0; left: 0; bottom: 0;
+            display: flex; flex-direction: column;
             background: var(--bg-neutral); border-right: 1px solid var(--border-color);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             color: var(--text-primary); font-size: 14px; line-height: 1.5;
         }}
+        .viewer-sidebar .toc-section {{ flex: 0 1 auto; max-height: 45%; overflow-y: auto; margin-bottom: 12px; }}
+        .viewer-sidebar .tree-section {{
+            flex: 1 1 0; min-height: 120px; overflow: auto; position: relative;
+            border-top: 1px solid var(--border-color); padding-top: 12px;
+        }}
+        .viewer-sidebar .tree {{ font-size: 13px; }}
+        .viewer-sidebar .tree-entry {{ gap: 6px; padding: 4px 6px; }}
+        .viewer-sidebar .tree-entry svg {{ width: 16px; height: 16px; }}
+        .viewer-sidebar .tree-children {{ padding-left: 14px; }}
+        {tree_css}
         .viewer-sidebar h3 {{ margin: 0 0 12px; font-size: 15px; font-weight: 700; }}
         .viewer-sidebar h3 a {{ color: inherit; text-decoration: none; }}
         .viewer-sidebar .path-info {{ font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; word-break: break-all; }}
@@ -465,8 +609,14 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
             <a href="{view_prefix}/{repo_id}{ref_param_first}">{repo_id}</a> / {path_info_trail}
         </div>
         <hr>
-        <div class="toc-title">목차</div>
-        <div class="toc"><ul>{toc_html}</ul></div>
+        <div class="toc-section">
+            <div class="toc-title">목차</div>
+            <div class="toc"><ul>{toc_html}</ul></div>
+        </div>
+        <div class="tree-section">
+            <div class="toc-title">파일</div>
+            <div class="tree" id="file-tree">{tree_html}</div>
+        </div>
     </div>
     <div class="viewer-content">
         <div class="viewer-toolbar">
@@ -486,6 +636,18 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
     <script type="application/json" id="raw-markdown-json">{raw_markdown_json}</script>
     <script src="{cdn_base}/highlight.js/11.9.0/highlight.min.js"></script>
     {mermaid_scripts}
+    <script>
+        var VIEW_PREFIX = {view_prefix_js};
+        var ACTIVE_REPO = {repo_id_js};
+        var ACTIVE_REF = {ref_js};
+        {tree_script}
+
+        (function() {{
+            var current = document.querySelector('#file-tree .tree-entry.current');
+            var box = document.querySelector('.viewer-sidebar .tree-section');
+            if (current && box) box.scrollTop = current.offsetTop - box.clientHeight / 2;
+        }})();
+    </script>
     <script>
         hljs.highlightAll();
 
@@ -644,30 +806,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         .repo-card-name {{ font-size: 18px; font-weight: 700; margin-bottom: 8px; }}
         .repo-card-url {{ font-size: 13px; color: var(--text-secondary); word-break: break-all; }}
 
-        .tree {{ font-family: var(--font-mono); font-size: 14px; }}
-        .tree-entry {{
-            display: flex; align-items: center; gap: 8px; padding: 6px 8px;
-            border-radius: 6px; cursor: pointer; transition: background .12s; white-space: nowrap;
-        }}
-        .tree-entry:hover {{ background: var(--border-color); }}
-        .tree-entry svg {{ width: 18px; height: 18px; flex-shrink: 0; }}
-        .tree-entry .name {{ flex: 1; overflow: hidden; text-overflow: ellipsis; }}
-        .tree-entry .name a {{ color: var(--text-primary); text-decoration: none; }}
-        .tree-entry .name a:hover {{ color: var(--primary); }}
-        .tree-children {{ padding-left: 20px; }}
-        .tree-children.collapsed {{ display: none; }}
-        .tree-toggle {{ transition: transform .15s; }}
-        .tree-toggle.open {{ transform: rotate(90deg); }}
-
-        .icon-dir {{ color: var(--primary); }}
-        .icon-md {{ color: #2196F3; }}
-        [data-theme="github-dark"] .icon-md, [data-theme="hacker"] .icon-md {{ color: #64B5F6; }}
-        .icon-code {{ color: #FF9800; }}
-        [data-theme="github-dark"] .icon-code, [data-theme="hacker"] .icon-code {{ color: #FFB74D; }}
-        .icon-binary {{ color: var(--text-disabled); }}
-        .tree-entry.current {{ background: var(--border-color); font-weight: 600; }}
-        .tree-entry.disabled {{ opacity: 0.5; cursor: default; }}
-        .tree-entry.disabled:hover {{ background: transparent; }}
+        {tree_css}
 
         .loading {{ text-align: center; padding: 40px; color: var(--text-secondary); }}
 
@@ -729,10 +868,6 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         var ACTIVE_REPO = '{active_repo_id}';
         var ACTIVE_REF = '{active_ref}';
 
-        function _refParam(sep) {{
-            return ACTIVE_REF ? sep + 'ref=' + encodeURIComponent(ACTIVE_REF) : '';
-        }}
-
         function changeTheme(theme) {{
             document.documentElement.setAttribute('data-theme', theme);
             localStorage.setItem('synctx-theme', theme);
@@ -761,93 +896,7 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             window.location.href = url;
         }}
 
-        var ICON_DIR = '<svg class="icon-dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>';
-        var ICON_MD = '<svg class="icon-md" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>';
-        var ICON_CODE = '<svg class="icon-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m10 13-2 2 2 2"/><path d="m14 13 2 2-2 2"/></svg>';
-        var ICON_BINARY = '<svg class="icon-binary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
-        var FILE_ICONS = {{ markdown: ICON_MD, code: ICON_CODE, binary: ICON_BINARY }};
-
-        function toggleDir(el) {{
-            var children = el.nextElementSibling;
-            var icon = el.querySelector('.tree-toggle');
-            if (children) {{
-                children.classList.toggle('collapsed');
-                icon.classList.toggle('open');
-                if (!children.classList.contains('collapsed') && children.dataset.path && !children.dataset.loaded) {{
-                    loadSubtree(children, children.dataset.path);
-                }}
-            }}
-        }}
-
-        async function loadSubtree(container, path) {{
-            container.dataset.loaded = '1';
-            container.innerHTML = '<div class="loading" style="padding:8px;font-size:13px;">Loading...</div>';
-            try {{
-                var res = await fetch(VIEW_PREFIX + '/api/repos/' + ACTIVE_REPO + '/tree?path=' + encodeURIComponent(path) + _refParam('&'));
-                if (!res.ok) throw new Error('Failed');
-                var data = await res.json();
-                var html = '';
-                var dirs = data.entries.filter(function(e) {{ return e.type === 'dir'; }}).sort(function(a,b) {{ return a.name.localeCompare(b.name); }});
-                var files = data.entries.filter(function(e) {{ return e.type === 'file'; }}).sort(function(a,b) {{ return a.name.localeCompare(b.name); }});
-                for (var i = 0; i < dirs.length; i++) {{
-                    var d = dirs[i];
-                    html += '<div class="tree-entry" onclick="toggleDir(this)">' +
-                        '<svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>' +
-                        ICON_DIR +
-                        '<span class="name">' + d.name + '/</span></div>' +
-                        '<div class="tree-children collapsed" data-path="' + d.path + '"></div>';
-                }}
-                for (var j = 0; j < files.length; j++) {{
-                    var f = files[j];
-                    var ficon = FILE_ICONS[f.icon_type] || ICON_BINARY;
-                    if (f.viewable) {{
-                        html += '<div class="tree-entry">' +
-                            '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
-                            ficon +
-                            '<span class="name"><a href="' + VIEW_PREFIX + '/' + ACTIVE_REPO + '/' + f.path + _refParam('?') + '">' + f.name + '</a></span></div>';
-                    }} else {{
-                        html += '<div class="tree-entry disabled">' +
-                            '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
-                            ficon +
-                            '<span class="name">' + f.name + '</span></div>';
-                    }}
-                }}
-                container.innerHTML = html || '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty</div>';
-            }} catch(err) {{
-                container.innerHTML = '<div style="padding:8px;color:#E01E1F;">Failed to load</div>';
-            }}
-        }}
-
-        function filterTree(query) {{
-            var q = query.toLowerCase();
-            document.querySelectorAll('#file-tree .tree-entry').forEach(function(el) {{
-                var name = el.querySelector('.name').textContent.toLowerCase();
-                el.style.display = !q || name.includes(q) ? '' : 'none';
-            }});
-        }}
-
-        async function expandToPath(path) {{
-            var parts = path.split('/').filter(Boolean);
-            var current = '';
-            var target = null;
-            for (var i = 0; i < parts.length; i++) {{
-                current = current ? current + '/' + parts[i] : parts[i];
-                var container = Array.prototype.find.call(
-                    document.querySelectorAll('#file-tree .tree-children'),
-                    function(c) {{ return c.dataset.path === current; }}
-                );
-                if (!container) break;
-                var entry = container.previousElementSibling;
-                container.classList.remove('collapsed');
-                entry.querySelector('.tree-toggle').classList.add('open');
-                if (!container.dataset.loaded) await loadSubtree(container, current);
-                target = entry;
-            }}
-            if (target) {{
-                target.classList.add('current');
-                target.scrollIntoView({{ block: 'center' }});
-            }}
-        }}
+        {tree_script}
 
         (function() {{
             var initialPath = new URLSearchParams(window.location.search).get('path');
@@ -897,42 +946,60 @@ def _build_path_trail(repo_id, path, ref, separator):
     return separator.join(items)
 
 
-def _build_tree_html(repo_id, path, ref=None):
+def _build_tree_html(repo_id, path, ref=None, link_ref=None, current=None):
+    """path 폴더의 트리. current 파일이 주어지면 그 파일까지 경로상의 폴더를 펼치고 파일을 선택 상태로 둔다.
+
+    ref는 목록을 읽을 브랜치, link_ref는 파일 링크에 붙일 ref(없으면 ref)다.
+    """
     try:
         manager = get_repo_manager(repo_id)
-        entries = manager.list_tree(path, ref=ref)
+        html = _tree_level_html(manager, repo_id, path, ref, link_ref if link_ref is not None else ref, current)
     except Exception:
         return '<div class="empty-state"><p>Failed to load file tree.</p></div>'
+    if not html:
+        html = '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty repository</div>'
+    return html
 
-    ref_param = f"?ref={ref}" if ref else ""
+
+def _tree_level_html(manager, repo_id, path, ref, link_ref, current):
+    entries = manager.list_tree(path, ref=ref)
+    ref_param = f"?ref={quote(link_ref, safe='')}" if link_ref else ""
     dirs = sorted([e for e in entries if e.type == "dir"], key=lambda e: e.name)
     files = sorted([e for e in entries if e.type == "file"], key=lambda e: e.name)
 
     html = ""
     for e in dirs:
+        name = html_lib.escape(e.name)
+        data_path = html_lib.escape(e.path)
+        if current and current.startswith(e.path + "/"):
+            children = _tree_level_html(manager, repo_id, e.path, ref, link_ref, current)
+            children = children or '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty</div>'
+            toggle_class, children_html = "tree-toggle open", f'<div class="tree-children" data-path="{data_path}" data-loaded="1">{children}</div>'
+        else:
+            toggle_class, children_html = "tree-toggle", f'<div class="tree-children collapsed" data-path="{data_path}"></div>'
         html += f'''<div class="tree-entry" onclick="toggleDir(this)">
-            <svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+            <svg class="{toggle_class}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
             {DIR_ICON_SVG}
-            <span class="name">{e.name}/</span>
+            <span class="name">{name}/</span>
         </div>
-        <div class="tree-children collapsed" data-path="{e.path}"></div>'''
+        {children_html}'''
     for e in files:
         icon = _file_icon_svg(e.path)
+        name = html_lib.escape(e.name)
         if is_viewable(e.path):
-            file_url = _view_url(f"{repo_id}/{e.path}") + ref_param
-            html += f'''<div class="tree-entry">
+            file_url = html_lib.escape(_view_url(f"{repo_id}/{quote(e.path)}") + ref_param)
+            entry_class = "tree-entry current" if e.path == current else "tree-entry"
+            html += f'''<div class="{entry_class}">
             <svg style="width:18px" viewBox="0 0 24 24"></svg>
             {icon}
-            <span class="name"><a href="{file_url}">{e.name}</a></span>
+            <span class="name"><a href="{file_url}">{name}</a></span>
         </div>'''
         else:
             html += f'''<div class="tree-entry disabled">
             <svg style="width:18px" viewBox="0 0 24 24"></svg>
             {icon}
-            <span class="name">{e.name}</span>
+            <span class="name">{name}</span>
         </div>'''
-    if not html:
-        html = '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty repository</div>'
     return html
 
 
@@ -979,6 +1046,8 @@ def view_index():
         branch_options="",
         branch_select_display="none",
         active_ref="",
+        tree_css=TREE_CSS,
+        tree_script=TREE_SCRIPT,
     )
     return HTMLResponse(content=html)
 
@@ -1053,6 +1122,8 @@ def view_repo(repo_id: str, ref: str | None = None):
         branch_options=branch_options,
         branch_select_display="block",
         active_ref=active_ref,
+        tree_css=TREE_CSS,
+        tree_script=TREE_SCRIPT,
     )
     return HTMLResponse(content=html)
 
@@ -1190,6 +1261,12 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             meeting_body=meeting_body,
             path_info_trail=_build_path_trail(repo_id, path, ref, " / "),
             breadcrumb_trail=_build_path_trail(repo_id, path, ref, " &rsaquo; "),
+            tree_html=_build_tree_html(repo_id, "", ref=effective_ref, link_ref=ref, current=path),
+            tree_css=TREE_CSS,
+            tree_script=TREE_SCRIPT,
+            view_prefix_js=_encode_for_script(VIEW_PREFIX),
+            repo_id_js=_encode_for_script(repo_id),
+            ref_js=_encode_for_script(ref or ""),
         )
         return HTMLResponse(content=html)
     except HTTPException:

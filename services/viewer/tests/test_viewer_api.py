@@ -222,6 +222,89 @@ class TestPathBreadcrumb:
         assert "expandToPath(" in resp.text
 
 
+class TestDocumentSidebarTree:
+    TREE = {
+        "": [("docs", "dir"), ("src", "dir"), ("README.md", "file")],
+        "docs": [("sub", "dir"), ("a.md", "file"), ("image.png", "file")],
+        "docs/sub": [("readme.md", "file"), ("other.md", "file")],
+    }
+
+    @pytest.fixture
+    def tree_manager(self, mock_repo_manager):
+        from synctx_common.git_manager import TreeEntry
+
+        def list_tree(path="", ref=None):
+            prefix = f"{path}/" if path else ""
+            return [TreeEntry(name=n, path=prefix + n, type=t) for n, t in self.TREE[path]]
+
+        mock_repo_manager.read_file_text.return_value = "# Hello\n\n## Section"
+        mock_repo_manager.list_tree.side_effect = list_tree
+        return mock_repo_manager
+
+    @staticmethod
+    def _sidebar_tree(text):
+        import re
+        match = re.search(r'<div class="tree" id="file-tree">(.*)</div>\s*</div>\s*</div>\s*<div class="viewer-content">', text, re.S)
+        assert match is not None
+        return match.group(1)
+
+    def test_tree_is_below_toc(self, client, tree_manager):
+        resp = client.get("/test-repo/docs/sub/readme.md")
+        assert resp.status_code == 200
+        assert resp.text.index('<div class="toc">') < resp.text.index('id="file-tree"') < resp.text.index('<div class="viewer-content">')
+
+    def test_folders_on_path_are_expanded_and_others_collapsed(self, client, tree_manager):
+        tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md").text)
+        assert '<div class="tree-children" data-path="docs" data-loaded="1">' in tree
+        assert '<div class="tree-children" data-path="docs/sub" data-loaded="1">' in tree
+        assert '<div class="tree-children collapsed" data-path="src"></div>' in tree
+        assert tree.count('class="tree-toggle open"') == 2
+
+    def test_only_folders_on_path_are_listed(self, client, tree_manager):
+        client.get("/test-repo/docs/sub/readme.md")
+        listed = [c.args[0] if c.args else c.kwargs.get("path", "") for c in tree_manager.list_tree.call_args_list]
+        assert listed == ["", "docs", "docs/sub"]
+
+    def test_current_document_is_selected(self, client, tree_manager):
+        import re
+        tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md").text)
+        current = re.findall(r'<div class="tree-entry current">.*?</div>', tree, re.S)
+        assert len(current) == 1
+        assert 'href="/view/test-repo/docs/sub/readme.md"' in current[0]
+
+    def test_other_documents_link_to_their_view(self, client, tree_manager):
+        tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md").text)
+        assert '<a href="/view/test-repo/docs/sub/other.md">other.md</a>' in tree
+        assert '<a href="/view/test-repo/docs/a.md">a.md</a>' in tree
+        assert '<a href="/view/test-repo/README.md">README.md</a>' in tree
+        assert "image.png" in tree and "/view/test-repo/docs/image.png" not in tree
+
+    def test_ref_is_kept_in_tree_links_and_listing(self, client, tree_manager):
+        tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md?ref=feat/x").text)
+        assert '<a href="/view/test-repo/docs/sub/other.md?ref=feat%2Fx">other.md</a>' in tree
+        assert all(c.kwargs.get("ref") == "feat/x" for c in tree_manager.list_tree.call_args_list)
+
+    def test_tree_scripts_are_available(self, client, tree_manager):
+        text = client.get("/test-repo/docs/sub/readme.md").text
+        assert "function toggleDir(" in text
+        assert 'var ACTIVE_REPO = "test-repo";' in text
+
+    def test_ref_is_encoded_in_script(self, client, tree_manager):
+        import re
+        text = client.get("/test-repo/docs/sub/readme.md", params={"ref": "x';alert(1)//</script>"}).text
+        script = re.search(r"<script>\s*var VIEW_PREFIX = .*?</script>", text, re.S).group(0)
+        assert script.count("</script>") == 1
+        assert 'var ACTIVE_REF = "x\';alert(1)//\\u003c/script\\u003e";' in script
+
+    def test_tree_failure_keeps_document_view(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        mock_repo_manager.list_tree.side_effect = RuntimeError("boom")
+        resp = client.get("/test-repo/docs/readme.md")
+        assert resp.status_code == 200
+        assert "<h1" in resp.text
+        assert "Failed to load file tree." in resp.text
+
+
 class TestRewriteLinks:
     def test_markdown_link_points_to_file_view(self):
         from renderer import rewrite_links
