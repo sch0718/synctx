@@ -333,6 +333,58 @@ class TestRewriteLinks:
         assert 'href="/view/test-repo?path=docs/evidence"' in resp.text
 
 
+class TestRefEscaping:
+    MALICIOUS_REFS = ['x"><b>', "';alert(1)//</script>"]
+
+    @staticmethod
+    def _assert_not_raw(text, ref):
+        assert ref not in text
+        assert '"><b>' not in text
+        assert "'';alert(1)" not in text
+
+    @pytest.mark.parametrize("ref", MALICIOUS_REFS)
+    def test_document_page_escapes_ref(self, client, mock_repo_manager, ref):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/readme.md", params={"ref": ref})
+        assert resp.status_code == 200
+        self._assert_not_raw(resp.text, ref)
+
+    @pytest.mark.parametrize("ref", MALICIOUS_REFS)
+    def test_repo_page_escapes_ref(self, client, mock_repo_manager, ref):
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.list_branches.return_value = ["main", ref]
+        resp = client.get("/test-repo", params={"ref": ref})
+        assert resp.status_code == 200
+        self._assert_not_raw(resp.text, ref)
+
+    def test_repo_page_encodes_ref_for_script(self, client, mock_repo_manager):
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.list_branches.return_value = ["main"]
+        resp = client.get("/test-repo", params={"ref": "';alert(1)//</script>"})
+        assert 'var ACTIVE_REF = "\';alert(1)//\\u003c/script\\u003e";' in resp.text
+        assert 'var ACTIVE_REPO = "test-repo";' in resp.text
+
+    def test_document_page_keeps_normal_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/readme.md?ref=feat/x")
+        assert resp.status_code == 200
+        assert '<a href="/view/test-repo?ref=feat%2Fx">test-repo</a>' in resp.text
+        assert 'href="/view/api/repos/test-repo/download?path=docs/readme.md&amp;ref=feat%2Fx"' in resp.text
+
+    def test_repo_page_keeps_normal_ref(self, client, mock_repo_manager):
+        entry = MagicMock(type="file", path="docs/readme.md")
+        entry.name = "readme.md"
+        mock_repo_manager.profile.name = "Test Repo"
+        mock_repo_manager.list_tree.return_value = [entry]
+        mock_repo_manager.list_branches.return_value = ["main", "feat/x"]
+        resp = client.get("/test-repo?ref=feat/x")
+        assert resp.status_code == 200
+        assert 'var ACTIVE_REF = "feat/x";' in resp.text
+        assert '<option value="feat/x" selected>feat/x</option>' in resp.text
+        assert 'href="/view/test-repo/docs/readme.md?ref=feat%2Fx"' in resp.text
+        assert "Test Repo (feat/x)" in resp.text
+
+
 class TestAPIRoutes:
     def test_repos_list(self, client):
         resp = client.get("/api/repos")

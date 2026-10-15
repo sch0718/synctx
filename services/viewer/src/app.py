@@ -865,8 +865,8 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
 
     <script>
         var VIEW_PREFIX = '{view_prefix}';
-        var ACTIVE_REPO = '{active_repo_id}';
-        var ACTIVE_REF = '{active_ref}';
+        var ACTIVE_REPO = {active_repo_id_js};
+        var ACTIVE_REF = {active_ref_js};
 
         function changeTheme(theme) {{
             document.documentElement.setAttribute('data-theme', theme);
@@ -929,7 +929,7 @@ def _build_branch_options(branches, active_ref, default_ref):
         if b == default_ref:
             label += " (default)"
         sel = " selected" if b == active_ref else ""
-        html += f'<option value="{b}"{sel}>{label}</option>'
+        html += f'<option value="{html_lib.escape(b)}"{sel}>{html_lib.escape(label)}</option>'
     return html
 
 
@@ -1039,13 +1039,13 @@ def view_index():
         sidebar_tree_html=sidebar_tree_html,
         main_content=main_content,
         view_prefix=VIEW_PREFIX,
-        active_repo_id="",
+        active_repo_id_js=_encode_for_script(""),
         theme_vars_css=THEME_VARS_CSS,
         active_theme="github-light",
         theme_options=_build_theme_options(),
         branch_options="",
         branch_select_display="none",
-        active_ref="",
+        active_ref_js=_encode_for_script(""),
         tree_css=TREE_CSS,
         tree_script=TREE_SCRIPT,
     )
@@ -1062,7 +1062,6 @@ def view_repo(repo_id: str, ref: str | None = None):
     repo_options = _build_repo_options(repos, active_id=repo_id)
     repo = manager.profile
 
-    active_ref = ref or ""
     effective_ref = ref if ref and ref != repo.default_ref else None
 
     try:
@@ -1088,7 +1087,7 @@ def view_repo(repo_id: str, ref: str | None = None):
         </div>
         <div class="tree" id="file-tree">{tree_html}</div>'''
 
-    ref_display = f" ({ref})" if ref and ref != repo.default_ref else ""
+    ref_display = f" ({html_lib.escape(ref)})" if ref and ref != repo.default_ref else ""
     main_content = f'''
         <div class="breadcrumb">
             <a href="{VIEW_PREFIX}">Repositories</a><span class="sep">&rsaquo;</span>{repo.name}{ref_display}
@@ -1115,13 +1114,13 @@ def view_repo(repo_id: str, ref: str | None = None):
         sidebar_tree_html=sidebar_tree_html,
         main_content=main_content,
         view_prefix=VIEW_PREFIX,
-        active_repo_id=repo_id,
+        active_repo_id_js=_encode_for_script(repo_id),
         theme_vars_css=THEME_VARS_CSS,
         active_theme="github-light",
         theme_options=_build_theme_options(),
         branch_options=branch_options,
         branch_select_display="block",
-        active_ref=active_ref,
+        active_ref_js=_encode_for_script(ref or ""),
         tree_css=TREE_CSS,
         tree_script=TREE_SCRIPT,
     )
@@ -1149,8 +1148,8 @@ def _sanitize_html(html_str: str) -> str:
 def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     manager = get_repo_manager(repo_id)
     effective_ref = ref if ref and ref != manager.profile.default_ref else None
-    ref_param = f"&ref={ref}" if ref else ""
-    ref_param_first = f"?ref={ref}" if ref else ""
+    ref_param = f"&ref={quote(ref, safe='')}" if ref else ""
+    ref_param_first = f"?ref={quote(ref, safe='')}" if ref else ""
     try:
         try:
             blob_size = manager.file_size(path, ref=effective_ref)
@@ -1220,7 +1219,8 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         if path.endswith(".drawio"):
             toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
         if not toolbar_buttons:
-            toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}{ref_param}">다운로드</a>'
+            download_href = f"{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}{ref_param}"
+            toolbar_buttons += f'<a class="btn" href="{html_lib.escape(download_href)}">다운로드</a>'
         if is_md:
             meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
         else:
@@ -1255,7 +1255,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             html_body=rendered.get("html", ""),
             raw_markdown_json=_encode_for_script({"markdown": content}),
             mermaid_scripts=mermaid_scripts,
-            ref_param_first=ref_param_first,
+            ref_param_first=html_lib.escape(ref_param_first),
             meeting_head=meeting_head,
             meeting_notice=meeting_notice,
             meeting_body=meeting_body,
