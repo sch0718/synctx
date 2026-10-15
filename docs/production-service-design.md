@@ -153,7 +153,7 @@ Ingress 우회 접근은 NetworkPolicy로 차단한다.
 | `platform-admin` | 설정 변경, Secret 연결, 배포 관리 |
 | `service` | 내부 서비스 간 refresh/webhook 호출 |
 
-역할 매핑은 `.synctx.yaml`에 그룹명으로 정의한다.
+역할 매핑은 `.synctx.yaml`에 그룹명으로 정의한다. `role_mappings`의 키는 위 역할 이름의 하이픈을 밑줄로 바꾼 형태(`cdn_admin`)다. 하이픈으로 쓴 키는 오류 없이 무시되어 그 역할이 빈 목록이 된다.
 
 ```yaml
 authz:
@@ -161,10 +161,10 @@ authz:
   role_mappings:
     viewer: ["dev-team", "biz-team"]
     publisher: ["dev-team"]
-    cdn-admin: ["platform-team"]
-    sync-admin: ["platform-team"]
-    feedback-admin: ["platform-team"]
-    platform-admin: ["platform-admin"]
+    cdn_admin: ["platform-team"]
+    sync_admin: ["platform-team"]
+    feedback_admin: ["platform-team"]
+    platform_admin: ["platform-admin"]
 ```
 
 ### 3.3 서비스 간 인증
@@ -233,10 +233,10 @@ authz:
   role_mappings:
     viewer: ["dev-team", "biz-team"]
     publisher: ["dev-team"]
-    cdn-admin: ["platform-team"]
-    sync-admin: ["platform-team"]
-    feedback-admin: ["platform-team"]
-    platform-admin: ["platform-admin"]
+    cdn_admin: ["platform-team"]
+    sync_admin: ["platform-team"]
+    feedback_admin: ["platform-team"]
+    platform_admin: ["platform-admin"]
 
 html_embed:
   allowed_origins: []
