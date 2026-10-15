@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 
 RepoState = Literal["ready", "cloning", "error"]
 
+# Marp처럼 요청마다 매니저를 새로 만드는 곳이 있어, 잠금은 인스턴스가 아니라 저장소 디렉터리마다 둔다
+_SYNC_LOCKS: dict[str, threading.Lock] = {}
+_SYNC_LOCKS_GUARD = threading.Lock()
+
+
+def _repo_sync_lock(repo_dir: Path) -> threading.Lock:
+    key = str(repo_dir.resolve())
+    with _SYNC_LOCKS_GUARD:
+        return _SYNC_LOCKS.setdefault(key, threading.Lock())
+
 
 @dataclass
 class TreeEntry:
@@ -49,7 +59,7 @@ class GitRepoManager:
         self._head_sha = ""
         self._last_error: str | None = None
         # executor 스레드에서 도는 clone·fetch가 같은 저장소 디렉터리를 동시에 건드리지 않게 한다
-        self._sync_lock = threading.Lock()
+        self._sync_lock = _repo_sync_lock(self.repo_dir)
 
     @property
     def status(self) -> RepoState:

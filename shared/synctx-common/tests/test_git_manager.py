@@ -190,3 +190,23 @@ async def test_concurrent_ensure_on_same_repo_is_serialized(tmp_path, remote, mo
     await asyncio.gather(manager.ensure(), manager.ensure(), manager.fetch())
     assert manager.status == "ready"
     assert manager.head_sha() == _git(bare, "rev-parse", "main")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_ensure_from_separate_managers_of_same_repo_is_serialized(tmp_path, remote, monkeypatch):
+    import asyncio
+    import time
+
+    bare, _, _ = remote
+    managers = [_manager(tmp_path, bare), _manager(tmp_path, bare)]
+    for manager in managers:
+        original = manager._run_git
+
+        def slow_git(*args, _original=original, **kwargs):
+            time.sleep(0.2)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(manager, "_run_git", slow_git)
+    await asyncio.gather(*(m.ensure() for m in managers))
+    assert [m.status for m in managers] == ["ready", "ready"]
+    assert {m.head_sha() for m in managers} == {_git(bare, "rev-parse", "main")}

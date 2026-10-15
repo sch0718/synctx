@@ -152,6 +152,45 @@ class TestListPublished:
         assert items[0]["path"] == "_published/slides/deck.html"
 
 
+    def test_concurrent_listing_on_empty_cache_returns_items_for_both(self, monkeypatch, tmp_path):
+        import asyncio
+        import os
+        import subprocess
+        import time
+        import app as marp_app
+        from synctx_common.git_manager import GitRepoManager
+
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+        git = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True, env=env)
+        bare, work = tmp_path / "slides.git", tmp_path / "work"
+        git(tmp_path, "init", "-q", "--bare", "-b", "main", str(bare))
+        git(tmp_path, "clone", "-q", str(bare), str(work))
+        git(work, "checkout", "-q", "-b", "main")
+        (work / "_published/slides").mkdir(parents=True)
+        (work / "_published/slides/deck.html").write_text("<html></html>")
+        git(work, "add", "-A")
+        git(work, "commit", "-qm", "deck")
+        git(work, "push", "-q", "origin", "main")
+
+        monkeypatch.setattr(marp_app.config.marp, "publish_repo", bare.as_uri())
+        monkeypatch.setattr(marp_app.config.marp, "publish_branch", "main")
+        monkeypatch.setattr(marp_app.config.marp, "worktree_path", str(tmp_path / "publish-worktree"))
+        monkeypatch.setattr(marp_app.config, "repositories", [])
+        original = GitRepoManager._run_git
+
+        def slow_clone(self, *args, **kwargs):
+            if args and args[0] == "clone":
+                time.sleep(0.2)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(GitRepoManager, "_run_git", slow_clone)
+
+        async def both():
+            return await asyncio.gather(marp_app.list_published(), marp_app.list_published())
+
+        results = asyncio.run(both())
+        assert [[item["path"] for item in r["items"]] for r in results] == [["_published/slides/deck.html"]] * 2
+
 class TestUnpublish:
     def test_unpublish_success(self, client, tmp_path, monkeypatch):
         monkeypatch.setattr("app.config.marp.publish_repo", "https://git.internal/slides.git")
