@@ -703,7 +703,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
 
         async function publishMarpSlide() {{
             var md = getRawMarkdown();
-            var filename = '{path}'.split('/').pop().replace('.md', '');
+            var filename = {path_js}.split('/').pop().replace('.md', '');
             try {{
                 var res = await fetch('/marp/api/marp/publish', {{
                     method: 'POST',
@@ -1219,7 +1219,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         if path.endswith(".drawio"):
             toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
         if not toolbar_buttons:
-            download_href = f"{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}{ref_param}"
+            download_href = f"{VIEW_PREFIX}/api/repos/{repo_id}/download?path={quote(path)}{ref_param}"
             toolbar_buttons += f'<a class="btn" href="{html_lib.escape(download_href)}">다운로드</a>'
         if is_md:
             meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
@@ -1248,7 +1248,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             view_prefix=VIEW_PREFIX,
             cdn_base=cdn_base,
             repo_id=repo_id,
-            path=path,
+            path_js=_encode_for_script(path),
             toc_html=toc_html,
             theme_options=theme_options,
             toolbar_buttons=toolbar_buttons,
