@@ -1179,7 +1179,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         rendered = render_markdown(prepared.text if prepared else render_source)
         rendered["html"] = _sanitize_html(rendered.get("html", ""))
         if is_md:
-            rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path)
+            rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path, ref=ref)
             rendered["html"] = embed_view.fill(
                 rendered["html"], prepared,
                 md_path=path,

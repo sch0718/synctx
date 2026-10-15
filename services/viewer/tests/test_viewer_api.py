@@ -332,6 +332,23 @@ class TestRewriteLinks:
         assert resp.status_code == 200
         assert 'href="/view/test-repo?path=docs/evidence"' in resp.text
 
+    def test_folder_link_keeps_ref(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="sub/">s</a>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'href="/view/test-repo?path=docs/sub&amp;ref=feature%2Fx"' in html
+
+    def test_folder_link_in_rendered_page_keeps_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "[근거](evidence/)"
+        resp = client.get("/test-repo/docs/readme.md?ref=feature/x")
+        assert resp.status_code == 200
+        assert 'href="/view/test-repo?path=docs/evidence&amp;ref=feature%2Fx"' in resp.text
+
+    def test_folder_link_with_ampersand_in_rendered_page(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "[ab](a&b/)"
+        resp = client.get("/test-repo/docs/readme.md")
+        assert resp.status_code == 200
+        assert 'href="/view/test-repo?path=docs/a%26b"' in resp.text
+
 
 class TestRefEscaping:
     MALICIOUS_REFS = ['x"><b>', "';alert(1)//</script>"]

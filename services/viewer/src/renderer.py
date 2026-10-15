@@ -121,8 +121,8 @@ def _rewrite_tag_attr(
     return tag_re.sub(replace_tag, html)
 
 
-def rewrite_links(html: str, repo_id: str, base_path: str) -> str:
-    """상대 이미지/링크를 repo permalink 경로로 재작성한다."""
+def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = None) -> str:
+    """상대 이미지/링크를 repo permalink 경로로 재작성한다. ref가 있으면 폴더 링크에 붙여 같은 브랜치를 유지한다."""
 
     def rewrite_src(raw: str) -> str | None:
         if _is_external_link(raw):
@@ -133,10 +133,12 @@ def rewrite_links(html: str, repo_id: str, base_path: str) -> str:
     def rewrite_href(raw: str) -> str | None:
         if _is_external_link(raw):
             return None
-        target = raw.split("?", 1)[0].split("#", 1)[0]
+        # 속성값은 HTML 이스케이프된 상태(`a&amp;b/`)로 들어오므로 경로로 쓰기 전에 되돌린다
+        target = html_lib.unescape(raw).split("?", 1)[0].split("#", 1)[0]
         if target.endswith("/"):
             folder = unquote(_resolve_relative_path(base_path, target))
-            return f"/view/{repo_id}?path={quote(folder, safe='/')}"
+            ref_param = f"&amp;ref={quote(ref, safe='')}" if ref else ""
+            return f"/view/{repo_id}?path={quote(folder, safe='/')}{ref_param}"
         pure = PurePosixPath(target)
         if pure.suffix.lower() not in {".md", ".markdown"}:
             return None
