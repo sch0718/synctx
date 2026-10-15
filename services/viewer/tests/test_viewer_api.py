@@ -222,6 +222,76 @@ class TestPathBreadcrumb:
         assert "expandToPath(" in resp.text
 
 
+class TestPathEscaping:
+    @staticmethod
+    def _script_filename(text):
+        import re
+        match = re.search(r"var filename = (.*?)\.split\('/'\)", text)
+        assert match is not None
+        return match.group(1)
+
+    @staticmethod
+    def _repo_page(client, mock_repo_manager, entries):
+        mock_repo_manager.list_tree.return_value = entries
+        mock_repo_manager.list_branches.return_value = ["main"]
+        resp = client.get("/test-repo")
+        assert resp.status_code == 200
+        return resp.text
+
+    def test_script_filename_is_json_literal(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/x%27%3Balert(1)%3B%27%3C%2Fscript%3E.md")
+        assert resp.status_code == 200
+        literal = self._script_filename(resp.text)
+        assert "<" not in literal
+        assert json.loads(literal) == "docs/x';alert(1);'</script>.md"
+
+    def test_script_filename_keeps_normal_path(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/readme.md")
+        assert self._script_filename(resp.text) == '"docs/readme.md"'
+
+    def test_tree_entries_are_escaped(self, client, mock_repo_manager):
+        from types import SimpleNamespace
+        text = self._repo_page(client, mock_repo_manager, [
+            SimpleNamespace(type="dir", name="<img src=x onerror=alert(1)>", path='d"><img src=x onerror=alert(1)>'),
+            SimpleNamespace(type="file", name='"><script>alert(1)</script>.md', path='"><script>alert(1)</script>.md'),
+            SimpleNamespace(type="file", name="<b>bin</b>.png", path="<b>bin</b>.png"),
+        ])
+        assert "<img src=x" not in text
+        assert "<script>alert(1)" not in text
+        assert "<b>bin</b>" not in text
+        assert '<span class="name">&lt;img src=x onerror=alert(1)&gt;/</span>' in text
+        assert 'data-path="d&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"' in text
+        assert '<a href="/view/test-repo/%22%3E%3Cscript%3Ealert%281%29%3C/script%3E.md">&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.md</a>' in text
+        assert '<span class="name">&lt;b&gt;bin&lt;/b&gt;.png</span>' in text
+
+    def test_tree_keeps_normal_paths(self, client, mock_repo_manager):
+        from types import SimpleNamespace
+        text = self._repo_page(client, mock_repo_manager, [
+            SimpleNamespace(type="dir", name="docs", path="docs"),
+            SimpleNamespace(type="file", name="readme.md", path="docs/readme.md"),
+        ])
+        assert '<span class="name">docs/</span>' in text
+        assert 'data-path="docs"' in text
+        assert '<a href="/view/test-repo/docs/readme.md">readme.md</a>' in text
+
+    def test_subtree_script_escapes_entries(self, client, mock_repo_manager):
+        text = self._repo_page(client, mock_repo_manager, [])
+        assert "escapeHtml(d.name)" in text
+        assert "escapeHtml(d.path)" in text
+        assert "encodePath(f.path)" in text
+        assert "escapeHtml(f.name)" in text
+        assert "+ f.name +" not in text
+        assert "+ d.name +" not in text
+
+    def test_download_link_encodes_path(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "print(1)"
+        resp = client.get('/test-repo/src/a%26b%23c%22%3E.py')
+        assert resp.status_code == 200
+        assert 'href="/view/api/repos/test-repo/download?path=src/a%26b%23c%22%3E.py"' in resp.text
+
+
 class TestAPIRoutes:
     def test_repos_list(self, client):
         resp = client.get("/api/repos")

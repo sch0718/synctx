@@ -541,7 +541,7 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
 
         async function publishMarpSlide() {{
             var md = getRawMarkdown();
-            var filename = '{path}'.split('/').pop().replace('.md', '');
+            var filename = {path_js}.split('/').pop().replace('.md', '');
             try {{
                 var res = await fetch('/marp/api/marp/publish', {{
                     method: 'POST',
@@ -733,6 +733,14 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
             return ACTIVE_REF ? sep + 'ref=' + encodeURIComponent(ACTIVE_REF) : '';
         }}
 
+        function escapeHtml(text) {{
+            return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }}
+
+        function encodePath(path) {{
+            return path.split('/').map(encodeURIComponent).join('/');
+        }}
+
         function changeTheme(theme) {{
             document.documentElement.setAttribute('data-theme', theme);
             localStorage.setItem('synctx-theme', theme);
@@ -794,8 +802,8 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                     html += '<div class="tree-entry" onclick="toggleDir(this)">' +
                         '<svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>' +
                         ICON_DIR +
-                        '<span class="name">' + d.name + '/</span></div>' +
-                        '<div class="tree-children collapsed" data-path="' + d.path + '"></div>';
+                        '<span class="name">' + escapeHtml(d.name) + '/</span></div>' +
+                        '<div class="tree-children collapsed" data-path="' + escapeHtml(d.path) + '"></div>';
                 }}
                 for (var j = 0; j < files.length; j++) {{
                     var f = files[j];
@@ -804,12 +812,12 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                         html += '<div class="tree-entry">' +
                             '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
                             ficon +
-                            '<span class="name"><a href="' + VIEW_PREFIX + '/' + ACTIVE_REPO + '/' + f.path + _refParam('?') + '">' + f.name + '</a></span></div>';
+                            '<span class="name"><a href="' + escapeHtml(VIEW_PREFIX + '/' + ACTIVE_REPO + '/' + encodePath(f.path) + _refParam('?')) + '">' + escapeHtml(f.name) + '</a></span></div>';
                     }} else {{
                         html += '<div class="tree-entry disabled">' +
                             '<svg style="width:18px" viewBox="0 0 24 24"></svg>' +
                             ficon +
-                            '<span class="name">' + f.name + '</span></div>';
+                            '<span class="name">' + escapeHtml(f.name) + '</span></div>';
                     }}
                 }}
                 container.innerHTML = html || '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty</div>';
@@ -910,26 +918,29 @@ def _build_tree_html(repo_id, path, ref=None):
 
     html = ""
     for e in dirs:
+        name = html_lib.escape(e.name)
+        data_path = html_lib.escape(e.path)
         html += f'''<div class="tree-entry" onclick="toggleDir(this)">
             <svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
             {DIR_ICON_SVG}
-            <span class="name">{e.name}/</span>
+            <span class="name">{name}/</span>
         </div>
-        <div class="tree-children collapsed" data-path="{e.path}"></div>'''
+        <div class="tree-children collapsed" data-path="{data_path}"></div>'''
     for e in files:
         icon = _file_icon_svg(e.path)
+        name = html_lib.escape(e.name)
         if is_viewable(e.path):
-            file_url = _view_url(f"{repo_id}/{e.path}") + ref_param
+            file_url = html_lib.escape(_view_url(f"{repo_id}/{quote(e.path)}") + ref_param)
             html += f'''<div class="tree-entry">
             <svg style="width:18px" viewBox="0 0 24 24"></svg>
             {icon}
-            <span class="name"><a href="{file_url}">{e.name}</a></span>
+            <span class="name"><a href="{file_url}">{name}</a></span>
         </div>'''
         else:
             html += f'''<div class="tree-entry disabled">
             <svg style="width:18px" viewBox="0 0 24 24"></svg>
             {icon}
-            <span class="name">{e.name}</span>
+            <span class="name">{name}</span>
         </div>'''
     if not html:
         html = '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty repository</div>'
@@ -1149,7 +1160,8 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         if path.endswith(".drawio"):
             toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
         if not toolbar_buttons:
-            toolbar_buttons += f'<a class="btn" href="{VIEW_PREFIX}/api/repos/{repo_id}/download?path={path}{ref_param}">다운로드</a>'
+            download_href = f"{VIEW_PREFIX}/api/repos/{repo_id}/download?path={quote(path)}{ref_param}"
+            toolbar_buttons += f'<a class="btn" href="{html_lib.escape(download_href)}">다운로드</a>'
         if is_md:
             meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
         else:
@@ -1177,7 +1189,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             view_prefix=VIEW_PREFIX,
             cdn_base=cdn_base,
             repo_id=repo_id,
-            path=path,
+            path_js=_encode_for_script(path),
             toc_html=toc_html,
             theme_options=theme_options,
             toolbar_buttons=toolbar_buttons,
