@@ -2,7 +2,7 @@
 name = "synctx-feedback"
 version = "0.1.0"
 description = "Outbound Feedback Exporter for synctx"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "synctx-common",
     "httpx>=0.27.0",

@@ -436,7 +436,7 @@ workspace/
 
 | 영역 | 기술 |
 |------|------|
-| 언어 | Python 3.10+, Node.js (Marp CLI) |
+| 언어 | Python 3.13, Node.js (Marp CLI) |
 | 프론트엔드 | HTML/CSS/Vanilla JS (서버 렌더링 기반, Phase 6 고인터랙션 기능에 한해 React/Vite 별도 번들로 선택 도입) |
 | 웹 서버 | FastAPI + Uvicorn |
 | Markdown 렌더링 | `markdown` 라이브러리 (서버사이드) |

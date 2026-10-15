@@ -2,7 +2,7 @@
 name = "synctx-cdn"
 version = "0.1.0"
 description = "CDN Service for synctx"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "synctx-common",
     "fastapi>=0.111.0",

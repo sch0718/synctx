@@ -2,7 +2,7 @@
 name = "synctx-sync"
 version = "0.1.0"
 description = "Sync Engine for synctx"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "synctx-common",
     "httpx>=0.27.0",

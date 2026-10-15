@@ -463,7 +463,7 @@ marp:
 Marp CLI는 Node.js 기반이므로 Python + Node.js 멀티 런타임 이미지를 사용한다.
 
 ```dockerfile
-FROM python:3.12-slim
+FROM python:3.13.16-slim-trixie
 
 # Node.js 설치 (Marp CLI 실행용)
 RUN apt-get update && apt-get install -y nodejs npm chromium \

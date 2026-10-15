@@ -1,5 +1,5 @@
 ARG NODE_IMAGE=node:20-slim
-ARG PYTHON_IMAGE=python:3.12-slim
+ARG PYTHON_IMAGE=python:3.13.16-slim-trixie
 
 FROM ${NODE_IMAGE} AS node-env
 RUN npm install -g @mermaid-js/mermaid-cli
