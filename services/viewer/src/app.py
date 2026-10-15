@@ -31,20 +31,37 @@ config = load_config()
 logger = logging.getLogger(__name__)
 
 
-@asynccontextmanager
-async def lifespan(application: FastAPI):
+_startup_sync: asyncio.Task | None = None
+
+
+async def _sync_repos_on_startup():
     for repo in config.repositories:
         try:
             manager = get_repo_manager(repo.id)
             await manager.ensure()
         except Exception as e:
             print(f"Failed to initialize repo {repo.id}: {e}")
-    yield
+
+
+def _startup_sync_finished() -> bool:
+    """처음 clone·fetch가 끝나야 트래픽을 받는다. 실패한 저장소는 요청 때 오류로 알린다."""
+    return _startup_sync is None or _startup_sync.done()
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    # 저장소를 다 받을 때까지 기다리면 startup probe 시간을 넘기므로 백그라운드로 돌린다
+    global _startup_sync
+    _startup_sync = asyncio.create_task(_sync_repos_on_startup())
+    try:
+        yield
+    finally:
+        _startup_sync.cancel()
 
 
 app = FastAPI(title="synctx-viewer", description="Viewer Service for synctx", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
-register_observability_routes(app, version=__version__, service_name="viewer")
+register_observability_routes(app, version=__version__, service_name="viewer", ready_check=_startup_sync_finished)
 
 
 @app.middleware("http")

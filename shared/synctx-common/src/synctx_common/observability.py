@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 
 from fastapi import Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from prometheus_client import (
     CollectorRegistry,
     Counter,
@@ -170,8 +170,10 @@ def register_observability_routes(
 
     @app.get("/readyz")
     def readyz():
-        ready = ready_check() if ready_check else True
-        return {"status": "ready" if ready else "not_ready"}
+        # Kubernetes readiness probe는 상태 코드만 보므로 준비 전에는 503을 돌려준다
+        if ready_check and not ready_check():
+            return JSONResponse(status_code=503, content={"status": "not_ready"})
+        return {"status": "ready"}
 
     @app.get("/version")
     def version_endpoint():

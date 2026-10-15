@@ -50,6 +50,7 @@ class TestObservabilityRoutes:
         register_observability_routes(app, version="0.1.0", service_name="test", ready_check=lambda: False)
         client = TestClient(app)
         resp = client.get("/readyz")
+        assert resp.status_code == 503
         assert resp.json() == {"status": "not_ready"}
 
     def test_version(self, client):
