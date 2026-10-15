@@ -339,6 +339,31 @@ class TestRewriteLinks:
         html = rewrite_links('<img alt="a" src="img/a&amp;b.png">', "test-repo", "docs/readme.md")
         assert 'src="/raw/test-repo/docs/img/a&amp;b.png"' in html
 
+    @pytest.mark.parametrize(
+        ("src", "expected"),
+        [
+            ("img/icons.svg#warning", "/raw/test-repo/docs/img/icons.svg?ref=feature%2Fx#warning"),
+            ("img/icons.svg?color=red#warning", "/raw/test-repo/docs/img/icons.svg?color=red&amp;ref=feature%2Fx#warning"),
+        ],
+    )
+    def test_image_src_keeps_ref_before_fragment(self, src, expected):
+        from renderer import rewrite_links
+        html = rewrite_links(f'<img alt="i" src="{src}">', "test-repo", "docs/readme.md", ref="feature/x")
+        assert f'src="{expected}"' in html
+
+    def test_image_with_fragment_in_rendered_page_reads_ref(self, client, mock_repo_manager):
+        import re
+        from urllib.parse import parse_qs, urlsplit
+        mock_repo_manager.read_file_text.return_value = "![icon](img/icons.svg#warning)"
+        text = client.get("/test-repo/docs/readme.md?ref=feature/x").text
+        src = re.search(r'<img[^>]*src="([^"]+)"', text).group(1).replace("&amp;", "&")
+        parts = urlsplit(src)
+        assert parts.fragment == "warning"
+        assert parse_qs(parts.query) == {"ref": ["feature/x"]}
+        mock_repo_manager.read_file.return_value = b"<svg/>"
+        client.get(f"{parts.path}?{parts.query}")
+        mock_repo_manager.read_file.assert_called_with("docs/img/icons.svg", ref="feature/x")
+
     def test_image_in_rendered_page_keeps_ref(self, client, mock_repo_manager):
         mock_repo_manager.read_file_text.return_value = "![구성도](img/arch.png)"
         resp = client.get("/test-repo/docs/readme.md?ref=feature/x")

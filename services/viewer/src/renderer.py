@@ -126,13 +126,18 @@ def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = Non
 
     ref_query = f"ref={quote(ref, safe='')}" if ref else ""
 
+    def to_attr(prefix: str, relative: str) -> str:
+        """경로·쿼리에 ref를 붙이고 #앵커는 그 뒤에 둔 뒤 속성값으로 이스케이프한다."""
+        path_and_query, hash_sign, fragment = relative.partition("#")
+        url = f"{prefix}/{_resolve_relative_path(base_path, path_and_query)}"
+        if ref_query:
+            url += ("&" if "?" in url else "?") + ref_query
+        return html_lib.escape(url + hash_sign + fragment)
+
     def rewrite_src(raw: str) -> str | None:
         if _is_external_link(raw):
             return None
-        url = f"/raw/{repo_id}/{_resolve_relative_path(base_path, html_lib.unescape(raw))}"
-        if ref_query:
-            url += ("&" if "?" in url else "?") + ref_query
-        return html_lib.escape(url)
+        return to_attr(f"/raw/{repo_id}", html_lib.unescape(raw))
 
     def rewrite_href(raw: str) -> str | None:
         if _is_external_link(raw):
@@ -147,11 +152,7 @@ def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = Non
         pure = PurePosixPath(target)
         if pure.suffix.lower() not in {".md", ".markdown"}:
             return None
-        path_and_query, hash_sign, fragment = unescaped.partition("#")
-        url = f"/view/{repo_id}/{_resolve_relative_path(base_path, path_and_query)}"
-        if ref_query:
-            url += ("&" if "?" in url else "?") + ref_query
-        return html_lib.escape(url + hash_sign + fragment)
+        return to_attr(f"/view/{repo_id}", unescaped)
 
     preserved: list[str] = []
     marker_prefix = "__MD_PREVIEW_PRESERVED_BLOCK_"
