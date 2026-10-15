@@ -51,8 +51,9 @@ class LeaseLock:
         if not self.use_k8s:
             return self._acquire_file_lock()
 
+        timeout = self.duration_seconds / 10
         try:
-            lease = self.api.read_namespaced_lease(self.name, self.namespace)
+            lease = self.api.read_namespaced_lease(self.name, self.namespace, _request_timeout=timeout)
             now = time.time()
             renew_time = lease.spec.renew_time.timestamp() if lease.spec.renew_time else 0
 
@@ -65,7 +66,7 @@ class LeaseLock:
                 lease.spec.holder_identity = self.identity
                 lease.spec.renew_time = datetime.now(timezone.utc)
                 lease.spec.lease_duration_seconds = self.duration_seconds
-                self.api.replace_namespaced_lease(self.name, self.namespace, lease)
+                self.api.replace_namespaced_lease(self.name, self.namespace, lease, _request_timeout=timeout)
                 return True
             return False
 
@@ -80,11 +81,14 @@ class LeaseLock:
                     )
                 )
                 try:
-                    self.api.create_namespaced_lease(self.namespace, lease)
+                    self.api.create_namespaced_lease(self.namespace, lease, _request_timeout=timeout)
                     return True
                 except ApiException as create_e:
                     if create_e.status == 409:
                         return False
+                    logger.error(f"Failed to create lease {self.name}: {create_e}")
+                    return False
+                except Exception as create_e:
                     logger.error(f"Failed to create lease {self.name}: {create_e}")
                     return False
             logger.error(f"Failed to acquire lease {self.name}: {e}")
@@ -150,15 +154,18 @@ class LeaseLock:
             self._release_file_lock()
             return
 
+        timeout = self.duration_seconds / 10
         try:
-            lease = self.api.read_namespaced_lease(self.name, self.namespace)
+            lease = self.api.read_namespaced_lease(self.name, self.namespace, _request_timeout=timeout)
             if lease.spec.holder_identity == self.identity:
                 # Clear identity to release
                 lease.spec.holder_identity = ""
-                self.api.replace_namespaced_lease(self.name, self.namespace, lease)
+                self.api.replace_namespaced_lease(self.name, self.namespace, lease, _request_timeout=timeout)
         except ApiException as e:
             if e.status != 404:
                 logger.error(f"Failed to release lease: {e}")
+        except Exception as e:
+            logger.error(f"Failed to release lease: {e}")
 
     def _acquire_file_lock(self) -> bool:
         try:

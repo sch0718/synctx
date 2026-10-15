@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from kubernetes import client
 from kubernetes.client.rest import ApiException
+from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
 import lease as lease_module
 from lease import LeaseLock, LeaseLostError, repo_lock
@@ -38,6 +39,10 @@ def existing_lease(holder, renewed_seconds_ago, duration=300):
             renew_time=datetime.now(timezone.utc) - timedelta(seconds=renewed_seconds_ago),
         ),
     )
+
+
+def request_timeout():
+    return ReadTimeoutError(None, "/apis/coordination.k8s.io/v1", "Read timed out.")
 
 
 def replaced_lease(api):
@@ -90,6 +95,39 @@ class TestLeaseAcquire:
     def test_lease_created_concurrently_is_not_acquired(self, api):
         api.read_namespaced_lease.side_effect = ApiException(status=404)
         api.create_namespaced_lease.side_effect = ApiException(status=409)
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-new").acquire() is False
+
+    def test_acquire_requests_have_timeout(self, api):
+        api.read_namespaced_lease.return_value = existing_lease("", renewed_seconds_ago=10)
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-new").acquire() is True
+
+        assert api.read_namespaced_lease.call_args.kwargs["_request_timeout"] == 30
+        assert api.replace_namespaced_lease.call_args.kwargs["_request_timeout"] == 30
+
+    def test_create_request_has_timeout(self, api):
+        api.read_namespaced_lease.side_effect = ApiException(status=404)
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-new").acquire() is True
+
+        assert api.read_namespaced_lease.call_args.kwargs["_request_timeout"] == 30
+        assert api.create_namespaced_lease.call_args.kwargs["_request_timeout"] == 30
+
+    def test_read_timeout_is_not_acquired(self, api):
+        api.read_namespaced_lease.side_effect = MaxRetryError(None, "/", request_timeout())
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-new").acquire() is False
+
+    def test_replace_timeout_is_not_acquired(self, api):
+        api.read_namespaced_lease.return_value = existing_lease("", renewed_seconds_ago=10)
+        api.replace_namespaced_lease.side_effect = MaxRetryError(None, "/", request_timeout())
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-new").acquire() is False
+
+    def test_create_timeout_is_not_acquired(self, api):
+        api.read_namespaced_lease.side_effect = ApiException(status=404)
+        api.create_namespaced_lease.side_effect = request_timeout()
 
         assert LeaseLock(NAMESPACE, REPO_ID, "sync-new").acquire() is False
 
@@ -277,10 +315,27 @@ class TestLeaseRelease:
 
         api.replace_namespaced_lease.assert_not_called()
 
+    def test_release_requests_have_timeout(self, api):
+        api.read_namespaced_lease.return_value = existing_lease("sync-old", renewed_seconds_ago=10)
+
+        LeaseLock(NAMESPACE, REPO_ID, "sync-old").release()
+
+        assert api.read_namespaced_lease.call_args.kwargs["_request_timeout"] == 30
+        assert api.replace_namespaced_lease.call_args.kwargs["_request_timeout"] == 30
+
+    @pytest.mark.parametrize("failing", ["read_namespaced_lease", "replace_namespaced_lease"])
+    def test_release_timeout_is_logged_not_raised(self, api, caplog, failing):
+        api.read_namespaced_lease.return_value = existing_lease("sync-old", renewed_seconds_ago=10)
+        getattr(api, failing).side_effect = MaxRetryError(None, "/", request_timeout())
+
+        LeaseLock(NAMESPACE, REPO_ID, "sync-old").release()
+
+        assert "Failed to release lease" in caplog.text
+
     def test_next_run_acquires_right_after_release(self, api):
         stored = existing_lease("sync-old", renewed_seconds_ago=0)
-        api.read_namespaced_lease.side_effect = lambda *args: stored
-        api.replace_namespaced_lease.side_effect = lambda name, ns, body: body
+        api.read_namespaced_lease.side_effect = lambda *args, **kwargs: stored
+        api.replace_namespaced_lease.side_effect = lambda name, ns, body, **kwargs: body
 
         LeaseLock(NAMESPACE, REPO_ID, "sync-old").release()
 
