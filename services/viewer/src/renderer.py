@@ -134,16 +134,21 @@ def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = Non
         if _is_external_link(raw):
             return None
         # 속성값은 HTML 이스케이프된 상태(`a&amp;b/`)로 들어오므로 경로로 쓰기 전에 되돌린다
-        target = html_lib.unescape(raw).split("?", 1)[0].split("#", 1)[0]
+        unescaped = html_lib.unescape(raw)
+        target = unescaped.split("?", 1)[0].split("#", 1)[0]
+        ref_query = f"ref={quote(ref, safe='')}" if ref else ""
         if target.endswith("/"):
             folder = unquote(_resolve_relative_path(base_path, target))
-            ref_param = f"&amp;ref={quote(ref, safe='')}" if ref else ""
+            ref_param = f"&amp;{ref_query}" if ref_query else ""
             return f"/view/{repo_id}?path={quote(folder, safe='/')}{ref_param}"
         pure = PurePosixPath(target)
         if pure.suffix.lower() not in {".md", ".markdown"}:
             return None
-        resolved = _resolve_relative_path(base_path, raw)
-        return f"/view/{repo_id}/{resolved}"
+        path_and_query, hash_sign, fragment = unescaped.partition("#")
+        url = f"/view/{repo_id}/{_resolve_relative_path(base_path, path_and_query)}"
+        if ref_query:
+            url += ("&" if "?" in url else "?") + ref_query
+        return html_lib.escape(url + hash_sign + fragment)
 
     preserved: list[str] = []
     marker_prefix = "__MD_PREVIEW_PRESERVED_BLOCK_"

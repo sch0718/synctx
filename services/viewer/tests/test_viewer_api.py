@@ -332,6 +332,29 @@ class TestRewriteLinks:
         assert resp.status_code == 200
         assert 'href="/view/test-repo?path=docs/evidence"' in resp.text
 
+    def test_markdown_link_keeps_ref_before_fragment(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="sub/guide.md#s1">g</a>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'href="/view/test-repo/docs/sub/guide.md?ref=feature%2Fx#s1"' in html
+
+    def test_markdown_link_with_query_appends_ref(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="guide.md?mode=meeting">g</a>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'href="/view/test-repo/docs/guide.md?mode=meeting&amp;ref=feature%2Fx"' in html
+
+    def test_markdown_link_with_ampersand_keeps_name(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="a&amp;b.md">f</a>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'href="/view/test-repo/docs/a&amp;b.md?ref=feature%2Fx"' in html
+        html = rewrite_links('<a href="a&amp;b.md">f</a>', "test-repo", "docs/readme.md")
+        assert 'href="/view/test-repo/docs/a&amp;b.md"' in html
+
+    def test_markdown_link_in_rendered_page_keeps_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "[가이드](guide.md#start)"
+        resp = client.get("/test-repo/docs/readme.md?ref=feature/x")
+        assert resp.status_code == 200
+        assert 'href="/view/test-repo/docs/guide.md?ref=feature%2Fx#start"' in resp.text
+
     def test_folder_link_keeps_ref(self):
         from renderer import rewrite_links
         html = rewrite_links('<a href="sub/">s</a>', "test-repo", "docs/readme.md", ref="feature/x")
