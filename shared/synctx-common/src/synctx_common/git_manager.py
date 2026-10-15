@@ -124,12 +124,12 @@ class GitRepoManager:
             return pat_args_empty
         return [*args, "-c", f"http.extraHeader={git_token_auth_header(token)}"]
 
-    def _run_git(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    def _run_git(self, *args: str, cwd: Path | None = None, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
         try:
             return subprocess.run(
                 ["git", *self._git_config_args(), *args],
                 cwd=str(cwd or self.repo_dir),
-                env=self._git_env(),
+                env={**self._git_env(), **(extra_env or {})},
                 check=True,
                 capture_output=True,
             )
@@ -363,21 +363,15 @@ class GitRepoManager:
         abs_path.write_bytes(content)
         
         self._run_git("add", target)
-        
-        env = self._git_env()
-        env["GIT_AUTHOR_NAME"] = author_name
-        env["GIT_AUTHOR_EMAIL"] = author_email
-        env["GIT_COMMITTER_NAME"] = author_name
-        env["GIT_COMMITTER_EMAIL"] = author_email
-        
-        subprocess.run(
-            ["git", *self._git_config_args(), "commit", "-m", message],
-            cwd=str(self.repo_dir),
-            env=env,
-            check=True,
-            capture_output=True,
-        )
-        
-        self._run_git("pull", "--rebase", "origin", self.profile.default_ref)
+
+        # rebase도 커밋을 다시 쓰므로 committer가 필요하다. 운영 컨테이너에는 git 사용자 설정이 없다
+        identity = {
+            "GIT_AUTHOR_NAME": author_name,
+            "GIT_AUTHOR_EMAIL": author_email,
+            "GIT_COMMITTER_NAME": author_name,
+            "GIT_COMMITTER_EMAIL": author_email,
+        }
+        self._run_git("commit", "-m", message, extra_env=identity)
+        self._run_git("pull", "--rebase", "origin", self.profile.default_ref, extra_env=identity)
         self._run_git("push", "origin", self.profile.default_ref)
         return self.head_sha()

@@ -43,6 +43,16 @@ def _commit(work: Path, path: str, content: str, message: str) -> str:
     return _git(work, "rev-parse", "HEAD")
 
 
+@pytest.fixture(autouse=True)
+def _no_git_identity(monkeypatch):
+    """운영 컨테이너처럼 git 사용자 설정이 없고 이메일 추측도 하지 않는 환경에서 실행한다."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "user.useConfigOnly")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
+
+
 @pytest.fixture
 def remote(tmp_path):
     bare = tmp_path / "origin.git"
