@@ -10,7 +10,7 @@ from kubernetes import client
 from kubernetes.client.rest import ApiException
 
 import lease as lease_module
-from lease import LeaseLock
+from lease import LeaseLock, LeaseLostError, repo_lock
 
 
 NAMESPACE = "synctx"
@@ -93,6 +93,148 @@ class TestLeaseAcquire:
         assert LeaseLock(NAMESPACE, REPO_ID, "sync-new").acquire() is False
 
 
+class TestLeaseRenew:
+    def test_renew_updates_own_renew_time(self, api):
+        api.read_namespaced_lease.return_value = existing_lease("sync-old", renewed_seconds_ago=200)
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-old").renew() is True
+
+        body = replaced_lease(api)
+        assert body.spec.holder_identity == "sync-old"
+        assert (datetime.now(timezone.utc) - body.spec.renew_time).total_seconds() < 5
+
+    def test_renew_fails_when_holder_changed(self, api):
+        api.read_namespaced_lease.return_value = existing_lease("sync-new", renewed_seconds_ago=10)
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-old").renew() is False
+        api.replace_namespaced_lease.assert_not_called()
+
+    def test_renew_fails_when_lease_deleted(self, api):
+        api.read_namespaced_lease.side_effect = ApiException(status=404)
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-old").renew() is False
+
+    def test_renew_raises_on_transient_error(self, api):
+        api.read_namespaced_lease.side_effect = ApiException(status=500)
+
+        with pytest.raises(ApiException):
+            LeaseLock(NAMESPACE, REPO_ID, "sync-old").renew()
+
+
+def wait_until(predicate, timeout=3.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def is_lost(lock):
+    try:
+        lock.ensure_held()
+        return False
+    except LeaseLostError:
+        return True
+
+
+class TestLeaseRenewer:
+    @pytest.fixture
+    def stored(self, api):
+        stored = existing_lease("sync-old", renewed_seconds_ago=0)
+        api.read_namespaced_lease.side_effect = lambda *args: stored
+        api.replace_namespaced_lease.side_effect = lambda name, ns, body: body
+        return stored
+
+    def start(self, duration=0.3):
+        lock = LeaseLock(NAMESPACE, REPO_ID, "sync-old", duration_seconds=duration)
+        lock.start_renewing()
+        return lock
+
+    def test_renews_periodically_while_held(self, api, stored):
+        lock = self.start()
+        try:
+            assert wait_until(lambda: api.replace_namespaced_lease.call_count >= 3)
+            lock.ensure_held()
+        finally:
+            lock.stop_renewing()
+
+    def test_stop_renewing_ends_renewal(self, api, stored):
+        lock = self.start()
+        assert wait_until(lambda: api.replace_namespaced_lease.call_count >= 1)
+        lock.stop_renewing()
+        count = api.replace_namespaced_lease.call_count
+
+        time.sleep(0.3)
+
+        assert api.replace_namespaced_lease.call_count == count
+
+    def test_holder_change_marks_lease_lost(self, api, stored):
+        stored.spec.holder_identity = "sync-new"
+        lock = self.start()
+        try:
+            assert wait_until(lambda: is_lost(lock))
+            api.replace_namespaced_lease.assert_not_called()
+        finally:
+            lock.stop_renewing()
+
+    def test_transient_errors_past_duration_mark_lease_lost(self, api):
+        api.read_namespaced_lease.side_effect = ApiException(status=500)
+        lock = self.start()
+        try:
+            assert wait_until(lambda: is_lost(lock))
+        finally:
+            lock.stop_renewing()
+
+    def test_transient_error_then_success_keeps_lease(self, api, stored):
+        failures = iter([ApiException(status=500)])
+
+        def read(*args):
+            error = next(failures, None)
+            if error:
+                raise error
+            return stored
+
+        api.read_namespaced_lease.side_effect = read
+        lock = self.start(duration=0.6)
+        try:
+            assert wait_until(lambda: api.replace_namespaced_lease.call_count >= 2)
+            lock.ensure_held()
+        finally:
+            lock.stop_renewing()
+
+    def test_lease_not_renewed_within_duration_is_lost(self, api, stored):
+        lock = LeaseLock(NAMESPACE, REPO_ID, "sync-old", duration_seconds=0.1)
+        lock.start_renewing()
+        lock.stop_renewing()
+
+        time.sleep(0.15)
+
+        assert is_lost(lock)
+
+
+class TestRepoLock:
+    def test_yields_none_when_not_acquired(self, api):
+        api.read_namespaced_lease.return_value = existing_lease("sync-other", renewed_seconds_ago=10)
+
+        with repo_lock(NAMESPACE, REPO_ID, "sync-new") as lock:
+            assert lock is None
+        api.replace_namespaced_lease.assert_not_called()
+
+    def test_renews_while_held_and_releases_on_exit(self, api):
+        stored = existing_lease("sync-new", renewed_seconds_ago=0)
+        api.read_namespaced_lease.side_effect = lambda *args: stored
+        api.replace_namespaced_lease.side_effect = lambda name, ns, body: body
+
+        with repo_lock(NAMESPACE, REPO_ID, "sync-new") as lock:
+            lock.ensure_held()
+            renewer = lock._renewer
+            assert renewer.is_alive()
+
+        assert not renewer.is_alive()
+        assert stored.spec.holder_identity == ""
+
+
 class TestLeaseRelease:
     def test_release_clears_own_holder(self, api):
         api.read_namespaced_lease.return_value = existing_lease("sync-old", renewed_seconds_ago=10)
@@ -149,3 +291,27 @@ class TestFileLock:
         os.utime(make_lock("sync-crashed").lock_file, (stale, stale))
 
         assert make_lock("sync-new").acquire() is True
+
+    def test_renew_touches_own_lock_file(self, make_lock):
+        lock = make_lock("sync-old")
+        assert lock.acquire() is True
+        old = time.time() - 200
+        os.utime(lock.lock_file, (old, old))
+
+        assert lock.renew() is True
+        assert time.time() - os.stat(lock.lock_file).st_mtime < 5
+
+    def test_renew_fails_when_lock_taken_by_other(self, make_lock):
+        assert make_lock("sync-crashed").acquire() is True
+        stale = time.time() - 310
+        os.utime(make_lock("sync-crashed").lock_file, (stale, stale))
+        assert make_lock("sync-new").acquire() is True
+
+        assert make_lock("sync-crashed").renew() is False
+
+    def test_renew_fails_when_lock_file_removed(self, make_lock):
+        lock = make_lock("sync-old")
+        assert lock.acquire() is True
+        os.unlink(lock.lock_file)
+
+        assert lock.renew() is False

@@ -143,8 +143,8 @@ class SyncEngine:
         identity = os.getenv("HOSTNAME", "sync-engine-local")
         run_id = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
 
-        with repo_lock(self.config.sync.lease_namespace, repo.id, identity) as acquired:
-            if not acquired:
+        with repo_lock(self.config.sync.lease_namespace, repo.id, identity) as lock:
+            if lock is None:
                 logger.info(f"Could not acquire lock for {repo.id}, skipping sync.")
                 return None
 
@@ -185,6 +185,7 @@ class SyncEngine:
                 if not dry_run:
                     state.last_successful_sha = head_sha
                     self._mark_html_state(state, fingerprint)
+                    lock.ensure_held()
                     self.state_manager.save_state(repo.id, state)
                 return None
 
@@ -194,6 +195,8 @@ class SyncEngine:
             for status, path in changes:
                 if not self._should_process(path, repo):
                     continue
+
+                lock.ensure_held()
 
                 if dry_run:
                     logger.info(f"[DRY-RUN] Would process {status} {path}")
@@ -225,6 +228,7 @@ class SyncEngine:
                     self._record_html_errors(report, repo, path)
 
             for path in sorted(self._kept_pages_to_reclaim(state, publisher)):
+                lock.ensure_held()
                 if dry_run:
                     logger.info(f"[DRY-RUN] Would reclaim XWiki author of orphan page {path}")
                     report.record_skip(path)
@@ -239,6 +243,9 @@ class SyncEngine:
                     logger.error(f"Failed to reclaim XWiki author of orphan page {path}: [{error_type}] {e}")
                     if not can_advance_state(error_type):
                         has_blocking_failure = True
+
+            if not dry_run:
+                lock.ensure_held()
 
             if not has_blocking_failure and report.fail_count == 0 and not dry_run:
                 state.last_successful_sha = head_sha
