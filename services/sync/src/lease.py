@@ -3,9 +3,10 @@
 import os
 import time
 import logging
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Generator
+from typing import Generator, Optional
 
 try:
     from kubernetes import client, config
@@ -15,6 +16,11 @@ except ImportError:
     HAS_KUBERNETES = False
 
 logger = logging.getLogger(__name__)
+
+
+class LeaseLostError(RuntimeError):
+    """동기화 도중 lease를 더 이상 보유하지 않음."""
+
 
 class LeaseLock:
     def __init__(self, namespace: str, repo_id: str, identity: str, duration_seconds: int = 300):
@@ -35,6 +41,11 @@ class LeaseLock:
 
         # File lock fallback for local development
         self.lock_file = f"/tmp/{self.name}.lock"
+
+        self._renewed_at = 0.0
+        self._lost = threading.Event()
+        self._stop = threading.Event()
+        self._renewer: Optional[threading.Thread] = None
 
     def acquire(self) -> bool:
         if not self.use_k8s:
@@ -82,6 +93,58 @@ class LeaseLock:
             logger.error(f"Unexpected error acquiring lease {self.name}: {e}")
             return False
 
+    def renew(self) -> bool:
+        """보유 중인 lease의 renew_time을 갱신. 다른 실행이 가져갔거나 사라졌으면 False."""
+        if not self.use_k8s:
+            return self._renew_file_lock()
+
+        timeout = self.duration_seconds / 10
+        try:
+            lease = self.api.read_namespaced_lease(self.name, self.namespace, _request_timeout=timeout)
+        except ApiException as e:
+            if e.status == 404:
+                return False
+            raise
+
+        if lease.spec.holder_identity != self.identity:
+            return False
+        lease.spec.renew_time = datetime.now(timezone.utc)
+        self.api.replace_namespaced_lease(self.name, self.namespace, lease, _request_timeout=timeout)
+        return True
+
+    def start_renewing(self) -> None:
+        self._renewed_at = time.monotonic()
+        self._renewer = threading.Thread(target=self._renew_loop, name=f"{self.name}-renewer", daemon=True)
+        self._renewer.start()
+
+    def stop_renewing(self) -> None:
+        self._stop.set()
+        if self._renewer:
+            self._renewer.join()
+
+    def ensure_held(self) -> None:
+        if self._lost.is_set() or time.monotonic() - self._renewed_at >= self.duration_seconds:
+            raise LeaseLostError(f"Lease {self.name} is no longer held by {self.identity}")
+
+    def _renew_loop(self) -> None:
+        interval = self.duration_seconds / 3
+        while not self._stop.wait(interval):
+            started = time.monotonic()
+            try:
+                if self.renew():
+                    self._renewed_at = started
+                    continue
+                logger.error(f"Lease {self.name} was taken over or removed, stopping sync")
+                self._lost.set()
+                return
+            except Exception as e:
+                logger.warning(f"Failed to renew lease {self.name}: {e}")
+
+            if time.monotonic() - self._renewed_at + interval >= self.duration_seconds:
+                logger.error(f"Lease {self.name} could not be renewed before expiry, stopping sync")
+                self._lost.set()
+                return
+
     def release(self) -> None:
         if not self.use_k8s:
             self._release_file_lock()
@@ -114,6 +177,16 @@ class LeaseLock:
         except OSError:
             return False
 
+    def _renew_file_lock(self) -> bool:
+        try:
+            with open(self.lock_file, "r") as f:
+                if f.read().strip() != self.identity:
+                    return False
+            os.utime(self.lock_file)
+            return True
+        except FileNotFoundError:
+            return False
+
     def _release_file_lock(self) -> None:
         try:
             if os.path.exists(self.lock_file):
@@ -124,12 +197,15 @@ class LeaseLock:
             pass
 
 @contextmanager
-def repo_lock(namespace: str, repo_id: str, identity: str) -> Generator[bool, None, None]:
-    """Context manager for acquiring and releasing a per-repo lock."""
+def repo_lock(namespace: str, repo_id: str, identity: str) -> Generator[Optional[LeaseLock], None, None]:
+    """Per-repo lock을 획득해 보유하는 동안 주기적으로 갱신. 획득하지 못하면 None."""
     lock = LeaseLock(namespace, repo_id, identity)
-    acquired = lock.acquire()
+    if not lock.acquire():
+        yield None
+        return
+    lock.start_renewing()
     try:
-        yield acquired
+        yield lock
     finally:
-        if acquired:
-            lock.release()
+        lock.stop_renewing()
+        lock.release()

@@ -5,7 +5,8 @@ import hashlib
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from synctx_common.config import SynctxConfig, RepoProfile, TargetRetryConfig
 from synctx_common.git_manager import GitRepoManager
@@ -16,7 +17,7 @@ from synctx_common.observability import (
     sync_last_success_timestamp,
 )
 from state import StateManager, RepoState, SyncedFileState
-from lease import repo_lock
+from lease import LeaseLock, LeaseLostError, repo_lock
 from targets.xwiki import XWikiClient
 from targets.openproject import OpenProjectClient
 from urllib.parse import quote
@@ -129,6 +130,7 @@ class SyncEngine:
         self._analysis_cache: Dict[Tuple[str, str, str], MarkdownAnalysis] = {}
         self._analysis_by_path: Dict[Tuple[str, str], MarkdownAnalysis] = {}
         self._repo_xwiki_clients: Dict[str, XWikiClient] = {}
+        self._lease: Optional[LeaseLock] = None
 
     async def close(self):
         if self.xwiki_client:
@@ -138,13 +140,27 @@ class SyncEngine:
         if self.op_client:
             await self.op_client.close()
 
+    @contextmanager
+    def _holding(self, lock: Optional[LeaseLock]) -> Iterator[None]:
+        self._lease = lock
+        try:
+            yield
+        finally:
+            self._lease = None
+
+    def _save_state(self, repo_id: str, state: RepoState) -> None:
+        """lease를 잃었으면 다른 실행이 저장한 state를 덮어쓰지 않도록 저장 전에 중단한다."""
+        if self._lease is not None:
+            self._lease.ensure_held()
+        self.state_manager.save_state(repo_id, state)
+
     async def run_sync(self, repo: RepoProfile, dry_run: bool = False) -> Optional[SyncReport]:
         """단일 저장소에 대한 동기화 실행."""
         identity = os.getenv("HOSTNAME", "sync-engine-local")
         run_id = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
 
-        with repo_lock(self.config.sync.lease_namespace, repo.id, identity) as acquired:
-            if not acquired:
+        with repo_lock(self.config.sync.lease_namespace, repo.id, identity) as lock, self._holding(lock):
+            if lock is None:
                 logger.info(f"Could not acquire lock for {repo.id}, skipping sync.")
                 return None
 
@@ -185,7 +201,7 @@ class SyncEngine:
                 if not dry_run:
                     state.last_successful_sha = head_sha
                     self._mark_html_state(state, fingerprint)
-                    self.state_manager.save_state(repo.id, state)
+                    self._save_state(repo.id, state)
                 return None
 
             report = SyncReport()
@@ -194,6 +210,8 @@ class SyncEngine:
             for status, path in changes:
                 if not self._should_process(path, repo):
                     continue
+
+                lock.ensure_held()
 
                 if dry_run:
                     logger.info(f"[DRY-RUN] Would process {status} {path}")
@@ -225,6 +243,7 @@ class SyncEngine:
                     self._record_html_errors(report, repo, path)
 
             for path in sorted(self._kept_pages_to_reclaim(state, publisher)):
+                lock.ensure_held()
                 if dry_run:
                     logger.info(f"[DRY-RUN] Would reclaim XWiki author of orphan page {path}")
                     report.record_skip(path)
@@ -232,6 +251,8 @@ class SyncEngine:
                 try:
                     await self._reclaim_kept_page(repo, state, path)
                     report.record_success(path)
+                except LeaseLostError:
+                    raise
                 except Exception as e:
                     error_type = classify_error(e)
                     report.record_failure(path, str(e), "xwiki", error_type)
@@ -239,6 +260,9 @@ class SyncEngine:
                     logger.error(f"Failed to reclaim XWiki author of orphan page {path}: [{error_type}] {e}")
                     if not can_advance_state(error_type):
                         has_blocking_failure = True
+
+            if not dry_run:
+                lock.ensure_held()
 
             if not has_blocking_failure and report.fail_count == 0 and not dry_run:
                 state.last_successful_sha = head_sha
@@ -254,7 +278,7 @@ class SyncEngine:
                 logger.warning(f"Sync completed with issues for {repo.id}. {report.summary()}")
 
             if not dry_run:
-                self.state_manager.save_state(repo.id, state)
+                self._save_state(repo.id, state)
 
             return report
     def _get_changes(self, git_manager: GitRepoManager, last_sha: Optional[str], repo: RepoProfile) -> List[Tuple[str, str]]:
@@ -399,7 +423,7 @@ class SyncEngine:
         space, page = self._derive_xwiki_target(repo, path)
         if synced.publisher is not None:
             synced.publisher = None
-            self.state_manager.save_state(repo.id, state)
+            self._save_state(repo.id, state)
         existing = await self.xwiki_client.get_page(space, page)
         if existing is None:
             state.synced_files.pop(path, None)
@@ -432,7 +456,7 @@ class SyncEngine:
                 synced.publisher = None
                 if "xwiki:" not in synced.resource_id:
                     synced.resource_id = ",".join(filter(None, [synced.resource_id, resource]))
-                self.state_manager.save_state(repo.id, state)
+                self._save_state(repo.id, state)
         force_author = force_author or (synced is not None and synced.publisher != publisher)
         body = await self._process_mermaid_blocks(space, page, body, client)
         await client.upsert_page(space, page, title, body, force_author=force_author)
@@ -510,6 +534,8 @@ class SyncEngine:
                     )
                     self._carry_orphan_xwiki_page(state, path, previous)
                 return True, ""
+            except LeaseLostError:
+                raise
             except Exception as e:
                 last_error = str(e)
                 error_type = classify_error(e)

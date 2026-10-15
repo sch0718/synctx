@@ -196,6 +196,7 @@ from contextlib import contextmanager
 
 import sync_engine
 from synctx_common.git_manager import TreeEntry
+from lease import LeaseLostError
 from state import StateManager
 
 
@@ -250,9 +251,18 @@ def fake_manager_class(repo):
     return FakeManager
 
 
+class FakeLock:
+    def __init__(self):
+        self.lost = False
+
+    def ensure_held(self):
+        if self.lost:
+            raise LeaseLostError("lease lost")
+
+
 @contextmanager
 def always_locked(*args, **kwargs):
-    yield True
+    yield FakeLock()
 
 
 @pytest.fixture
@@ -261,6 +271,72 @@ def repo(monkeypatch):
     monkeypatch.setattr(sync_engine, "GitRepoManager", fake_manager_class(fake))
     monkeypatch.setattr(sync_engine, "repo_lock", always_locked)
     return fake
+
+
+def locked_with(monkeypatch, lock):
+    @contextmanager
+    def locked(*args, **kwargs):
+        yield lock
+
+    monkeypatch.setattr(sync_engine, "repo_lock", locked)
+
+
+@pytest.mark.asyncio
+async def test_lost_lease_stops_before_publishing(tmp_path, monkeypatch, repo):
+    lock = FakeLock()
+    lock.lost = True
+    locked_with(monkeypatch, lock)
+    eng = engine(tmp_path, monkeypatch)
+
+    with pytest.raises(LeaseLostError):
+        await eng.run_sync(profile())
+
+    eng.xwiki_client.upsert_page.assert_not_awaited()
+    assert StateManager(str(tmp_path)).get_state("r").last_successful_sha is None
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_during_sync_skips_state_save(tmp_path, monkeypatch, repo):
+    lock = FakeLock()
+    locked_with(monkeypatch, lock)
+    eng = engine(tmp_path, monkeypatch)
+
+    async def publish_then_lose(*args, **kwargs):
+        lock.lost = True
+        return True
+
+    eng.xwiki_client.upsert_page.side_effect = publish_then_lose
+
+    with pytest.raises(LeaseLostError):
+        await eng.run_sync(profile())
+
+    eng.xwiki_client.upsert_page.assert_awaited()
+    assert StateManager(str(tmp_path)).get_state("r").last_successful_sha is None
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_before_publisher_record_skips_state_save(tmp_path, monkeypatch, repo):
+    eng = engine(tmp_path, monkeypatch)
+    dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    assert publishers(tmp_path) == {MD: "htmlbot"}
+    eng.xwiki_client.upsert_page.reset_mock()
+
+    lock = FakeLock()
+    locked_with(monkeypatch, lock)
+    compute = eng._compute_content_sha
+
+    def compute_then_lose(*args, **kwargs):
+        lock.lost = True
+        return compute(*args, **kwargs)
+
+    monkeypatch.setattr(eng, "_compute_content_sha", compute_then_lose)
+
+    with pytest.raises(LeaseLostError):
+        await eng.run_sync(profile(enabled=False))
+
+    eng.xwiki_client.upsert_page.assert_not_awaited()
+    assert publishers(tmp_path) == {MD: "htmlbot"}
 
 
 def published(eng):
