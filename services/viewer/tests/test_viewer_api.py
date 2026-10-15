@@ -332,6 +332,19 @@ class TestRewriteLinks:
         assert resp.status_code == 200
         assert 'href="/view/test-repo?path=docs/evidence"' in resp.text
 
+    def test_image_src_keeps_ref(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<img alt="a" src="img/a&amp;b.png">', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'src="/raw/test-repo/docs/img/a&amp;b.png?ref=feature%2Fx"' in html
+        html = rewrite_links('<img alt="a" src="img/a&amp;b.png">', "test-repo", "docs/readme.md")
+        assert 'src="/raw/test-repo/docs/img/a&amp;b.png"' in html
+
+    def test_image_in_rendered_page_keeps_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "![구성도](img/arch.png)"
+        resp = client.get("/test-repo/docs/readme.md?ref=feature/x")
+        assert resp.status_code == 200
+        assert 'src="/raw/test-repo/docs/img/arch.png?ref=feature%2Fx"' in resp.text
+
     def test_markdown_link_keeps_ref_before_fragment(self):
         from renderer import rewrite_links
         html = rewrite_links('<a href="sub/guide.md#s1">g</a>', "test-repo", "docs/readme.md", ref="feature/x")

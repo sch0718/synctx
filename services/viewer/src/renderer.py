@@ -122,13 +122,17 @@ def _rewrite_tag_attr(
 
 
 def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = None) -> str:
-    """상대 이미지/링크를 repo permalink 경로로 재작성한다. ref가 있으면 폴더 링크에 붙여 같은 브랜치를 유지한다."""
+    """상대 이미지/링크를 repo permalink 경로로 재작성한다. ref가 있으면 이미지·문서·폴더 주소에 붙여 같은 브랜치를 유지한다."""
+
+    ref_query = f"ref={quote(ref, safe='')}" if ref else ""
 
     def rewrite_src(raw: str) -> str | None:
         if _is_external_link(raw):
             return None
-        resolved = _resolve_relative_path(base_path, raw)
-        return f"/raw/{repo_id}/{resolved}"
+        url = f"/raw/{repo_id}/{_resolve_relative_path(base_path, html_lib.unescape(raw))}"
+        if ref_query:
+            url += ("&" if "?" in url else "?") + ref_query
+        return html_lib.escape(url)
 
     def rewrite_href(raw: str) -> str | None:
         if _is_external_link(raw):
@@ -136,7 +140,6 @@ def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = Non
         # 속성값은 HTML 이스케이프된 상태(`a&amp;b/`)로 들어오므로 경로로 쓰기 전에 되돌린다
         unescaped = html_lib.unescape(raw)
         target = unescaped.split("?", 1)[0].split("#", 1)[0]
-        ref_query = f"ref={quote(ref, safe='')}" if ref else ""
         if target.endswith("/"):
             folder = unquote(_resolve_relative_path(base_path, target))
             ref_param = f"&amp;{ref_query}" if ref_query else ""
