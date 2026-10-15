@@ -332,6 +332,67 @@ class TestRewriteLinks:
         assert resp.status_code == 200
         assert 'href="/view/test-repo?path=docs/evidence"' in resp.text
 
+    def test_image_src_keeps_ref(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<img alt="a" src="img/a&amp;b.png">', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'src="/raw/test-repo/docs/img/a&amp;b.png?ref=feature%2Fx"' in html
+        html = rewrite_links('<img alt="a" src="img/a&amp;b.png">', "test-repo", "docs/readme.md")
+        assert 'src="/raw/test-repo/docs/img/a&amp;b.png"' in html
+
+    @pytest.mark.parametrize(
+        ("src", "expected"),
+        [
+            ("img/icons.svg#warning", "/raw/test-repo/docs/img/icons.svg?ref=feature%2Fx#warning"),
+            ("img/icons.svg?color=red#warning", "/raw/test-repo/docs/img/icons.svg?color=red&amp;ref=feature%2Fx#warning"),
+        ],
+    )
+    def test_image_src_keeps_ref_before_fragment(self, src, expected):
+        from renderer import rewrite_links
+        html = rewrite_links(f'<img alt="i" src="{src}">', "test-repo", "docs/readme.md", ref="feature/x")
+        assert f'src="{expected}"' in html
+
+    def test_image_with_fragment_in_rendered_page_reads_ref(self, client, mock_repo_manager):
+        import re
+        from urllib.parse import parse_qs, urlsplit
+        mock_repo_manager.read_file_text.return_value = "![icon](img/icons.svg#warning)"
+        text = client.get("/test-repo/docs/readme.md?ref=feature/x").text
+        src = re.search(r'<img[^>]*src="([^"]+)"', text).group(1).replace("&amp;", "&")
+        parts = urlsplit(src)
+        assert parts.fragment == "warning"
+        assert parse_qs(parts.query) == {"ref": ["feature/x"]}
+        mock_repo_manager.read_file.return_value = b"<svg/>"
+        client.get(f"{parts.path}?{parts.query}")
+        mock_repo_manager.read_file.assert_called_with("docs/img/icons.svg", ref="feature/x")
+
+    def test_image_in_rendered_page_keeps_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "![구성도](img/arch.png)"
+        resp = client.get("/test-repo/docs/readme.md?ref=feature/x")
+        assert resp.status_code == 200
+        assert 'src="/raw/test-repo/docs/img/arch.png?ref=feature%2Fx"' in resp.text
+
+    def test_markdown_link_keeps_ref_before_fragment(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="sub/guide.md#s1">g</a>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'href="/view/test-repo/docs/sub/guide.md?ref=feature%2Fx#s1"' in html
+
+    def test_markdown_link_with_query_appends_ref(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="guide.md?mode=meeting">g</a>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'href="/view/test-repo/docs/guide.md?mode=meeting&amp;ref=feature%2Fx"' in html
+
+    def test_markdown_link_with_ampersand_keeps_name(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="a&amp;b.md">f</a>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'href="/view/test-repo/docs/a&amp;b.md?ref=feature%2Fx"' in html
+        html = rewrite_links('<a href="a&amp;b.md">f</a>', "test-repo", "docs/readme.md")
+        assert 'href="/view/test-repo/docs/a&amp;b.md"' in html
+
+    def test_markdown_link_in_rendered_page_keeps_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "[가이드](guide.md#start)"
+        resp = client.get("/test-repo/docs/readme.md?ref=feature/x")
+        assert resp.status_code == 200
+        assert 'href="/view/test-repo/docs/guide.md?ref=feature%2Fx#start"' in resp.text
+
     def test_folder_link_keeps_ref(self):
         from renderer import rewrite_links
         html = rewrite_links('<a href="sub/">s</a>', "test-repo", "docs/readme.md", ref="feature/x")

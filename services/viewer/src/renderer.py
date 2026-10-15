@@ -122,28 +122,37 @@ def _rewrite_tag_attr(
 
 
 def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = None) -> str:
-    """상대 이미지/링크를 repo permalink 경로로 재작성한다. ref가 있으면 폴더 링크에 붙여 같은 브랜치를 유지한다."""
+    """상대 이미지/링크를 repo permalink 경로로 재작성한다. ref가 있으면 이미지·문서·폴더 주소에 붙여 같은 브랜치를 유지한다."""
+
+    ref_query = f"ref={quote(ref, safe='')}" if ref else ""
+
+    def to_attr(prefix: str, relative: str) -> str:
+        """경로·쿼리에 ref를 붙이고 #앵커는 그 뒤에 둔 뒤 속성값으로 이스케이프한다."""
+        path_and_query, hash_sign, fragment = relative.partition("#")
+        url = f"{prefix}/{_resolve_relative_path(base_path, path_and_query)}"
+        if ref_query:
+            url += ("&" if "?" in url else "?") + ref_query
+        return html_lib.escape(url + hash_sign + fragment)
 
     def rewrite_src(raw: str) -> str | None:
         if _is_external_link(raw):
             return None
-        resolved = _resolve_relative_path(base_path, raw)
-        return f"/raw/{repo_id}/{resolved}"
+        return to_attr(f"/raw/{repo_id}", html_lib.unescape(raw))
 
     def rewrite_href(raw: str) -> str | None:
         if _is_external_link(raw):
             return None
         # 속성값은 HTML 이스케이프된 상태(`a&amp;b/`)로 들어오므로 경로로 쓰기 전에 되돌린다
-        target = html_lib.unescape(raw).split("?", 1)[0].split("#", 1)[0]
+        unescaped = html_lib.unescape(raw)
+        target = unescaped.split("?", 1)[0].split("#", 1)[0]
         if target.endswith("/"):
             folder = unquote(_resolve_relative_path(base_path, target))
-            ref_param = f"&amp;ref={quote(ref, safe='')}" if ref else ""
+            ref_param = f"&amp;{ref_query}" if ref_query else ""
             return f"/view/{repo_id}?path={quote(folder, safe='/')}{ref_param}"
         pure = PurePosixPath(target)
         if pure.suffix.lower() not in {".md", ".markdown"}:
             return None
-        resolved = _resolve_relative_path(base_path, raw)
-        return f"/view/{repo_id}/{resolved}"
+        return to_attr(f"/view/{repo_id}", unescaped)
 
     preserved: list[str] = []
     marker_prefix = "__MD_PREVIEW_PRESERVED_BLOCK_"
