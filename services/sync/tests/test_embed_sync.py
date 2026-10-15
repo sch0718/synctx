@@ -314,6 +314,31 @@ async def test_lease_lost_during_sync_skips_state_save(tmp_path, monkeypatch, re
     assert StateManager(str(tmp_path)).get_state("r").last_successful_sha is None
 
 
+@pytest.mark.asyncio
+async def test_lease_lost_before_publisher_record_skips_state_save(tmp_path, monkeypatch, repo):
+    eng = engine(tmp_path, monkeypatch)
+    dedicated_client(eng)
+    await eng.run_sync(trusted_profile())
+    assert publishers(tmp_path) == {MD: "htmlbot"}
+    eng.xwiki_client.upsert_page.reset_mock()
+
+    lock = FakeLock()
+    locked_with(monkeypatch, lock)
+    compute = eng._compute_content_sha
+
+    def compute_then_lose(*args, **kwargs):
+        lock.lost = True
+        return compute(*args, **kwargs)
+
+    monkeypatch.setattr(eng, "_compute_content_sha", compute_then_lose)
+
+    with pytest.raises(LeaseLostError):
+        await eng.run_sync(profile(enabled=False))
+
+    eng.xwiki_client.upsert_page.assert_not_awaited()
+    assert publishers(tmp_path) == {MD: "htmlbot"}
+
+
 def published(eng):
     contents = [call.args[3] for call in eng.xwiki_client.upsert_page.await_args_list]
     eng.xwiki_client.upsert_page.reset_mock()

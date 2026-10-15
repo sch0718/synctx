@@ -98,8 +98,9 @@ class LeaseLock:
         if not self.use_k8s:
             return self._renew_file_lock()
 
+        timeout = self.duration_seconds / 10
         try:
-            lease = self.api.read_namespaced_lease(self.name, self.namespace)
+            lease = self.api.read_namespaced_lease(self.name, self.namespace, _request_timeout=timeout)
         except ApiException as e:
             if e.status == 404:
                 return False
@@ -108,7 +109,7 @@ class LeaseLock:
         if lease.spec.holder_identity != self.identity:
             return False
         lease.spec.renew_time = datetime.now(timezone.utc)
-        self.api.replace_namespaced_lease(self.name, self.namespace, lease)
+        self.api.replace_namespaced_lease(self.name, self.namespace, lease, _request_timeout=timeout)
         return True
 
     def start_renewing(self) -> None:
@@ -128,9 +129,10 @@ class LeaseLock:
     def _renew_loop(self) -> None:
         interval = self.duration_seconds / 3
         while not self._stop.wait(interval):
+            started = time.monotonic()
             try:
                 if self.renew():
-                    self._renewed_at = time.monotonic()
+                    self._renewed_at = started
                     continue
                 logger.error(f"Lease {self.name} was taken over or removed, stopping sync")
                 self._lost.set()

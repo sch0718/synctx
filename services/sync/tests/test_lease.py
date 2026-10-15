@@ -1,6 +1,7 @@
 """LeaseLock acquire/release 단위 테스트."""
 
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
@@ -114,6 +115,14 @@ class TestLeaseRenew:
 
         assert LeaseLock(NAMESPACE, REPO_ID, "sync-old").renew() is False
 
+    def test_renew_requests_have_timeout(self, api):
+        api.read_namespaced_lease.return_value = existing_lease("sync-old", renewed_seconds_ago=200)
+
+        assert LeaseLock(NAMESPACE, REPO_ID, "sync-old").renew() is True
+
+        assert api.read_namespaced_lease.call_args.kwargs["_request_timeout"] == 30
+        assert api.replace_namespaced_lease.call_args.kwargs["_request_timeout"] == 30
+
     def test_renew_raises_on_transient_error(self, api):
         api.read_namespaced_lease.side_effect = ApiException(status=500)
 
@@ -142,8 +151,8 @@ class TestLeaseRenewer:
     @pytest.fixture
     def stored(self, api):
         stored = existing_lease("sync-old", renewed_seconds_ago=0)
-        api.read_namespaced_lease.side_effect = lambda *args: stored
-        api.replace_namespaced_lease.side_effect = lambda name, ns, body: body
+        api.read_namespaced_lease.side_effect = lambda *args, **kwargs: stored
+        api.replace_namespaced_lease.side_effect = lambda name, ns, body, **kwargs: body
         return stored
 
     def start(self, duration=0.3):
@@ -189,7 +198,7 @@ class TestLeaseRenewer:
     def test_transient_error_then_success_keeps_lease(self, api, stored):
         failures = iter([ApiException(status=500)])
 
-        def read(*args):
+        def read(*args, **kwargs):
             error = next(failures, None)
             if error:
                 raise error
@@ -200,6 +209,24 @@ class TestLeaseRenewer:
         try:
             assert wait_until(lambda: api.replace_namespaced_lease.call_count >= 2)
             lock.ensure_held()
+        finally:
+            lock.stop_renewing()
+
+    def test_late_renew_response_does_not_extend_past_request_time(self, api, stored):
+        responded = threading.Event()
+        delays = iter([0.35])
+
+        def replace(name, ns, body, **kwargs):
+            time.sleep(next(delays, 0))
+            responded.set()
+            return body
+
+        api.replace_namespaced_lease.side_effect = replace
+        lock = self.start()
+        try:
+            assert responded.wait(3)
+            time.sleep(0.02)
+            assert is_lost(lock)
         finally:
             lock.stop_renewing()
 
@@ -223,8 +250,8 @@ class TestRepoLock:
 
     def test_renews_while_held_and_releases_on_exit(self, api):
         stored = existing_lease("sync-new", renewed_seconds_ago=0)
-        api.read_namespaced_lease.side_effect = lambda *args: stored
-        api.replace_namespaced_lease.side_effect = lambda name, ns, body: body
+        api.read_namespaced_lease.side_effect = lambda *args, **kwargs: stored
+        api.replace_namespaced_lease.side_effect = lambda name, ns, body, **kwargs: body
 
         with repo_lock(NAMESPACE, REPO_ID, "sync-new") as lock:
             lock.ensure_held()
