@@ -48,7 +48,9 @@ class LeaseLock:
             if lease.spec.holder_identity == self.identity:
                 return True
 
-            if now > renew_time + (lease.spec.lease_duration_seconds or 0):
+            released = not lease.spec.holder_identity
+            expired = now > renew_time + (lease.spec.lease_duration_seconds or 0)
+            if released or expired:
                 lease.spec.holder_identity = self.identity
                 lease.spec.renew_time = datetime.now(timezone.utc)
                 lease.spec.lease_duration_seconds = self.duration_seconds
