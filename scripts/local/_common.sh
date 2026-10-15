@@ -67,6 +67,7 @@ THIRD_PARTY_IMAGES=(
 )
 
 VALUES_LOCAL_FILE="${PROJECT_ROOT}/helm/synctx/values-local.yaml"
+VALUES_LOCAL_SECRET_FILE="${PROJECT_ROOT}/helm/synctx/values-local.secret.yaml"
 
 # 서브도메인
 SYNCTX_SUBDOMAIN="synctx.${DOMAIN}"

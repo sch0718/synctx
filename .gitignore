@@ -45,3 +45,4 @@ logs/
 
 # Helm
 helm/synctx/charts/*.tgz
+helm/synctx/values-local.secret.yaml

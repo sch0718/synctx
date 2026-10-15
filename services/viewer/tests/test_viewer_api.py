@@ -222,6 +222,256 @@ class TestPathBreadcrumb:
         assert "expandToPath(" in resp.text
 
 
+class TestDocumentSidebarTree:
+    TREE = {
+        "": [("docs", "dir"), ("src", "dir"), ("README.md", "file")],
+        "docs": [("sub", "dir"), ("a.md", "file"), ("image.png", "file")],
+        "docs/sub": [("readme.md", "file"), ("other.md", "file")],
+    }
+
+    @pytest.fixture
+    def tree_manager(self, mock_repo_manager):
+        from synctx_common.git_manager import TreeEntry
+
+        def list_tree(path="", ref=None):
+            prefix = f"{path}/" if path else ""
+            return [TreeEntry(name=n, path=prefix + n, type=t) for n, t in self.TREE[path]]
+
+        mock_repo_manager.read_file_text.return_value = "# Hello\n\n## Section"
+        mock_repo_manager.list_tree.side_effect = list_tree
+        return mock_repo_manager
+
+    @staticmethod
+    def _sidebar_tree(text):
+        import re
+        match = re.search(r'<div class="tree" id="file-tree">(.*)</div>\s*</div>\s*</div>\s*<div class="viewer-content">', text, re.S)
+        assert match is not None
+        return match.group(1)
+
+    def test_tree_is_below_toc(self, client, tree_manager):
+        resp = client.get("/test-repo/docs/sub/readme.md")
+        assert resp.status_code == 200
+        assert resp.text.index('<div class="toc">') < resp.text.index('id="file-tree"') < resp.text.index('<div class="viewer-content">')
+
+    def test_folders_on_path_are_expanded_and_others_collapsed(self, client, tree_manager):
+        tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md").text)
+        assert '<div class="tree-children" data-path="docs" data-loaded="1">' in tree
+        assert '<div class="tree-children" data-path="docs/sub" data-loaded="1">' in tree
+        assert '<div class="tree-children collapsed" data-path="src"></div>' in tree
+        assert tree.count('class="tree-toggle open"') == 2
+
+    def test_only_folders_on_path_are_listed(self, client, tree_manager):
+        client.get("/test-repo/docs/sub/readme.md")
+        listed = [c.args[0] if c.args else c.kwargs.get("path", "") for c in tree_manager.list_tree.call_args_list]
+        assert listed == ["", "docs", "docs/sub"]
+
+    def test_current_document_is_selected(self, client, tree_manager):
+        import re
+        tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md").text)
+        current = re.findall(r'<div class="tree-entry current">.*?</div>', tree, re.S)
+        assert len(current) == 1
+        assert 'href="/view/test-repo/docs/sub/readme.md"' in current[0]
+
+    def test_other_documents_link_to_their_view(self, client, tree_manager):
+        tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md").text)
+        assert '<a href="/view/test-repo/docs/sub/other.md">other.md</a>' in tree
+        assert '<a href="/view/test-repo/docs/a.md">a.md</a>' in tree
+        assert '<a href="/view/test-repo/README.md">README.md</a>' in tree
+        assert "image.png" in tree and "/view/test-repo/docs/image.png" not in tree
+
+    def test_ref_is_kept_in_tree_links_and_listing(self, client, tree_manager):
+        tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md?ref=feat/x").text)
+        assert '<a href="/view/test-repo/docs/sub/other.md?ref=feat%2Fx">other.md</a>' in tree
+        assert all(c.kwargs.get("ref") == "feat/x" for c in tree_manager.list_tree.call_args_list)
+
+    def test_tree_scripts_are_available(self, client, tree_manager):
+        text = client.get("/test-repo/docs/sub/readme.md").text
+        assert "function toggleDir(" in text
+        assert 'var ACTIVE_REPO = "test-repo";' in text
+
+    def test_ref_is_encoded_in_script(self, client, tree_manager):
+        import re
+        text = client.get("/test-repo/docs/sub/readme.md", params={"ref": "x';alert(1)//</script>"}).text
+        script = re.search(r"<script>\s*var VIEW_PREFIX = .*?</script>", text, re.S).group(0)
+        assert script.count("</script>") == 1
+        assert 'var ACTIVE_REF = "x\';alert(1)//\\u003c/script\\u003e";' in script
+
+    def test_tree_failure_keeps_document_view(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        mock_repo_manager.list_tree.side_effect = RuntimeError("boom")
+        resp = client.get("/test-repo/docs/readme.md")
+        assert resp.status_code == 200
+        assert "<h1" in resp.text
+        assert "Failed to load file tree." in resp.text
+
+
+class TestRewriteLinks:
+    def test_markdown_link_points_to_file_view(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="sub/guide.md#s1">g</a>', "test-repo", "docs/readme.md")
+        assert 'href="/view/test-repo/docs/sub/guide.md#s1"' in html
+
+    def test_folder_link_points_to_repo_tree(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="sub/">s</a>', "test-repo", "docs/readme.md")
+        assert 'href="/view/test-repo?path=docs/sub"' in html
+
+    def test_parent_folder_link_is_resolved(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="../other/#top">o</a>', "test-repo", "docs/sub/readme.md")
+        assert 'href="/view/test-repo?path=docs/other"' in html
+
+    def test_percent_encoded_folder_link_is_not_double_encoded(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="9.%EA%B7%BC%EA%B1%B0/">r</a>', "test-repo", "10. docs/README.md")
+        assert 'href="/view/test-repo?path=10.%20docs/9.%EA%B7%BC%EA%B1%B0"' in html
+
+    def test_folder_link_in_rendered_page(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "[근거](evidence/)"
+        resp = client.get("/test-repo/docs/readme.md")
+        assert resp.status_code == 200
+        assert 'href="/view/test-repo?path=docs/evidence"' in resp.text
+
+    def test_folder_link_keeps_ref(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<a href="sub/">s</a>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'href="/view/test-repo?path=docs/sub&amp;ref=feature%2Fx"' in html
+
+    def test_folder_link_in_rendered_page_keeps_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "[근거](evidence/)"
+        resp = client.get("/test-repo/docs/readme.md?ref=feature/x")
+        assert resp.status_code == 200
+        assert 'href="/view/test-repo?path=docs/evidence&amp;ref=feature%2Fx"' in resp.text
+
+    def test_folder_link_with_ampersand_in_rendered_page(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "[ab](a&b/)"
+        resp = client.get("/test-repo/docs/readme.md")
+        assert resp.status_code == 200
+        assert 'href="/view/test-repo?path=docs/a%26b"' in resp.text
+
+
+class TestRefEscaping:
+    MALICIOUS_REFS = ['x"><b>', "';alert(1)//</script>"]
+
+    @staticmethod
+    def _assert_not_raw(text, ref):
+        assert ref not in text
+        assert '"><b>' not in text
+        assert "'';alert(1)" not in text
+
+    @pytest.mark.parametrize("ref", MALICIOUS_REFS)
+    def test_document_page_escapes_ref(self, client, mock_repo_manager, ref):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/readme.md", params={"ref": ref})
+        assert resp.status_code == 200
+        self._assert_not_raw(resp.text, ref)
+
+    @pytest.mark.parametrize("ref", MALICIOUS_REFS)
+    def test_repo_page_escapes_ref(self, client, mock_repo_manager, ref):
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.list_branches.return_value = ["main", ref]
+        resp = client.get("/test-repo", params={"ref": ref})
+        assert resp.status_code == 200
+        self._assert_not_raw(resp.text, ref)
+
+    def test_repo_page_encodes_ref_for_script(self, client, mock_repo_manager):
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.list_branches.return_value = ["main"]
+        resp = client.get("/test-repo", params={"ref": "';alert(1)//</script>"})
+        assert 'var ACTIVE_REF = "\';alert(1)//\\u003c/script\\u003e";' in resp.text
+        assert 'var ACTIVE_REPO = "test-repo";' in resp.text
+
+    def test_document_page_keeps_normal_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/readme.md?ref=feat/x")
+        assert resp.status_code == 200
+        assert '<a href="/view/test-repo?ref=feat%2Fx">test-repo</a>' in resp.text
+        assert 'href="/view/api/repos/test-repo/download?path=docs/readme.md&amp;ref=feat%2Fx"' in resp.text
+
+    def test_repo_page_keeps_normal_ref(self, client, mock_repo_manager):
+        entry = MagicMock(type="file", path="docs/readme.md")
+        entry.name = "readme.md"
+        mock_repo_manager.profile.name = "Test Repo"
+        mock_repo_manager.list_tree.return_value = [entry]
+        mock_repo_manager.list_branches.return_value = ["main", "feat/x"]
+        resp = client.get("/test-repo?ref=feat/x")
+        assert resp.status_code == 200
+        assert 'var ACTIVE_REF = "feat/x";' in resp.text
+        assert '<option value="feat/x" selected>feat/x</option>' in resp.text
+        assert 'href="/view/test-repo/docs/readme.md?ref=feat%2Fx"' in resp.text
+        assert "Test Repo (feat/x)" in resp.text
+
+
+class TestPathEscaping:
+    @staticmethod
+    def _script_filename(text):
+        import re
+        match = re.search(r"var filename = (.*?)\.split\('/'\)", text)
+        assert match is not None
+        return match.group(1)
+
+    @staticmethod
+    def _repo_page(client, mock_repo_manager, entries):
+        mock_repo_manager.list_tree.return_value = entries
+        mock_repo_manager.list_branches.return_value = ["main"]
+        resp = client.get("/test-repo")
+        assert resp.status_code == 200
+        return resp.text
+
+    def test_script_filename_is_json_literal(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/x%27%3Balert(1)%3B%27%3C%2Fscript%3E.md")
+        assert resp.status_code == 200
+        literal = self._script_filename(resp.text)
+        assert "<" not in literal
+        assert json.loads(literal) == "docs/x';alert(1);'</script>.md"
+
+    def test_script_filename_keeps_normal_path(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        resp = client.get("/test-repo/docs/readme.md")
+        assert self._script_filename(resp.text) == '"docs/readme.md"'
+
+    def test_tree_entries_are_escaped(self, client, mock_repo_manager):
+        from types import SimpleNamespace
+        text = self._repo_page(client, mock_repo_manager, [
+            SimpleNamespace(type="dir", name="<img src=x onerror=alert(1)>", path='d"><img src=x onerror=alert(1)>'),
+            SimpleNamespace(type="file", name='"><script>alert(1)</script>.md', path='"><script>alert(1)</script>.md'),
+            SimpleNamespace(type="file", name="<b>bin</b>.png", path="<b>bin</b>.png"),
+        ])
+        assert "<img src=x" not in text
+        assert "<script>alert(1)" not in text
+        assert "<b>bin</b>" not in text
+        assert '<span class="name">&lt;img src=x onerror=alert(1)&gt;/</span>' in text
+        assert 'data-path="d&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"' in text
+        assert '<a href="/view/test-repo/%22%3E%3Cscript%3Ealert%281%29%3C/script%3E.md">&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.md</a>' in text
+        assert '<span class="name">&lt;b&gt;bin&lt;/b&gt;.png</span>' in text
+
+    def test_tree_keeps_normal_paths(self, client, mock_repo_manager):
+        from types import SimpleNamespace
+        text = self._repo_page(client, mock_repo_manager, [
+            SimpleNamespace(type="dir", name="docs", path="docs"),
+            SimpleNamespace(type="file", name="readme.md", path="docs/readme.md"),
+        ])
+        assert '<span class="name">docs/</span>' in text
+        assert 'data-path="docs"' in text
+        assert '<a href="/view/test-repo/docs/readme.md">readme.md</a>' in text
+
+    def test_subtree_script_escapes_entries(self, client, mock_repo_manager):
+        text = self._repo_page(client, mock_repo_manager, [])
+        assert "escapeHtml(d.name)" in text
+        assert "escapeHtml(d.path)" in text
+        assert "encodePath(f.path)" in text
+        assert "escapeHtml(f.name)" in text
+        assert "+ f.name +" not in text
+        assert "+ d.name +" not in text
+
+    def test_download_link_encodes_path(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "print(1)"
+        resp = client.get('/test-repo/src/a%26b%23c%22%3E.py')
+        assert resp.status_code == 200
+        assert 'href="/view/api/repos/test-repo/download?path=src/a%26b%23c%22%3E.py"' in resp.text
+
+
 class TestAPIRoutes:
     def test_repos_list(self, client):
         resp = client.get("/api/repos")

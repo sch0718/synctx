@@ -153,6 +153,29 @@ synctxConfig:
           credential_env: GIT_READ_TOKEN
         watch_paths:
           - "10. 문서/**/*.md"
+      - id: team-docs
+        name: "팀 문서"
+        url: "https://github.com/example-org/example-infra.git"
+        default_ref: feature/team-docs-minimal
+        auth:
+          type: token
+          credential_env: GIT_READ_TOKEN
+        watch_paths:
+          - "10. 문서/팀문서/**/*.md"
+      - id: meeting-docs
+        name: "회의 자료·모션 그래픽"
+        url: "https://github.com/sch0718/meeting-docs.git"
+        default_ref: main
+        auth:
+          type: token
+          credential_env: GIT_READ_TOKEN
+        watch_paths:
+          - "**/*.md"
+        collab:
+          enabled: true
+        html_embed:
+          enabled: true
+          xwiki_credential_env: XWIKI_HTML_CREDENTIAL
 
     mappings:
       - match:

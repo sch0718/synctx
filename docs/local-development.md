@@ -201,6 +201,16 @@ minikube tunnel
 | `synctxConfig.data.repositories[].url` | values-local.yaml | Sync Engine이 동기화할 Git repo URL |
 | `synctxConfig.data.targets.openproject.status_map` | values-local.yaml | OpenProject status ID 매핑 |
 | `synctxConfig.data.targets.xwiki.base_url` | values-local.yaml | XWiki REST API URL (클러스터 내부) |
+| `git.secrets.readToken`, `git.secrets.publishToken` | values-local.secret.yaml | private 저장소 clone·publish용 GitHub PAT |
+
+`helm/synctx/values-local.secret.yaml`은 `.gitignore`에 등록된 파일로, 있으면 `deploy-synctx.sh`가 `values-local.yaml` 다음에 적용한다. 토큰처럼 커밋하지 않는 값만 넣는다.
+
+```yaml
+git:
+  secrets:
+    readToken: "<GitHub PAT>"
+    publishToken: "<GitHub PAT>"
+```
 
 ### 6.3 XWiki 초기 설정
 
