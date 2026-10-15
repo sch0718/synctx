@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
@@ -9,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import threading
 from typing import Literal
 
 from .config import RepoProfile
@@ -46,6 +48,8 @@ class GitRepoManager:
         self._last_sync_source: str | None = None
         self._head_sha = ""
         self._last_error: str | None = None
+        # executor 스레드에서 도는 clone·fetch가 같은 저장소 디렉터리를 동시에 건드리지 않게 한다
+        self._sync_lock = threading.Lock()
 
     @property
     def status(self) -> RepoState:
@@ -172,34 +176,46 @@ class GitRepoManager:
             )
 
     async def ensure(self) -> None:
-        try:
-            if not (self.repo_dir / ".git").exists():
-                self._status = "cloning"
-                self._clone()
-            else:
-                self._run_git("fetch", "origin", self.profile.default_ref)
-            self._head_sha = self.head_sha()
-            self._status = "ready"
-            self._last_sync_at = datetime.now(timezone.utc)
-            self._last_sync_source = "startup"
-            self._last_error = None
-        except subprocess.CalledProcessError:
-            self._status = "error"
-            self._last_error = "startup sync failed"
+        # git은 동기 subprocess라 이벤트 루프를 막지 않도록 executor에서 실행한다
+        await asyncio.get_running_loop().run_in_executor(None, self._ensure_sync)
+
+    def _ensure_sync(self) -> None:
+        with self._sync_lock:
+            try:
+                if not (self.repo_dir / ".git").exists():
+                    self._status = "cloning"
+                    self._clone()
+                else:
+                    self._run_git("fetch", "origin", self.profile.default_ref)
+                self._head_sha = self.head_sha()
+                self._status = "ready"
+                self._last_sync_at = datetime.now(timezone.utc)
+                self._last_sync_source = "startup"
+                self._last_error = None
+            except subprocess.CalledProcessError:
+                self._status = "error"
+                self._last_error = "startup sync failed"
 
     async def fetch(self, source: str = "manual") -> str:
-        try:
-            self._run_git("fetch", "origin", self.profile.default_ref)
-            self._head_sha = self.head_sha()
-            self._status = "ready"
-            self._last_sync_at = datetime.now(timezone.utc)
-            self._last_sync_source = source
-            self._last_error = None
-            return self._head_sha
-        except subprocess.CalledProcessError:
-            self._status = "error"
-            self._last_error = "fetch failed"
-            raise
+        return await asyncio.get_running_loop().run_in_executor(None, self._fetch_sync, source)
+
+    def _fetch_sync(self, source: str) -> str:
+        with self._sync_lock:
+            try:
+                # 잠금 순서가 보장되지 않아 첫 clone보다 먼저 올 수 있다
+                if not (self.repo_dir / ".git").exists():
+                    self._clone()
+                self._run_git("fetch", "origin", self.profile.default_ref)
+                self._head_sha = self.head_sha()
+                self._status = "ready"
+                self._last_sync_at = datetime.now(timezone.utc)
+                self._last_sync_source = source
+                self._last_error = None
+                return self._head_sha
+            except subprocess.CalledProcessError:
+                self._status = "error"
+                self._last_error = "fetch failed"
+                raise
 
     def invalidate_cache(self) -> None:
         return
