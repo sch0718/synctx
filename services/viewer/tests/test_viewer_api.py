@@ -68,6 +68,55 @@ class TestHealthEndpoints:
         assert "synctx_http_requests_total" in resp.text
 
 
+class TestStartupSync:
+    @staticmethod
+    def _manager(release, fail=False):
+        import asyncio
+
+        class SlowManager:
+            status = "cloning"
+
+            async def ensure(self):
+                while not release.is_set():
+                    await asyncio.sleep(0.01)
+                if fail:
+                    self.status = "error"
+                    raise RuntimeError("clone failed")
+                self.status = "ready"
+
+        return SlowManager()
+
+    @staticmethod
+    def _wait_ready(client):
+        import time
+        deadline = time.time() + 5
+        while client.get("/readyz").status_code != 200 and time.time() < deadline:
+            time.sleep(0.05)
+        return client.get("/readyz")
+
+    @pytest.mark.parametrize("fail", [False, True])
+    def test_server_answers_while_repos_sync_and_ready_after(self, monkeypatch, fail):
+        import threading
+        import app as viewer_app
+        release = threading.Event()
+        monkeypatch.setattr(viewer_app, "repo_managers", {"test-repo": self._manager(release, fail)})
+        timer = threading.Timer(1.5, release.set)
+        timer.start()
+        try:
+            with TestClient(viewer_app.app) as c:
+                assert c.get("/healthz").status_code == 200
+                not_ready = c.get("/readyz")
+                assert not_ready.status_code == 503
+                assert not_ready.json() == {"status": "not_ready"}
+                release.set()
+                ready = self._wait_ready(c)
+                assert ready.status_code == 200
+                assert ready.json() == {"status": "ready"}
+        finally:
+            timer.cancel()
+            release.set()
+
+
 class TestCSPHeaders:
     def test_html_response_has_csp(self, client, mock_repo_manager):
         mock_repo_manager.read_file_text.return_value = "# Hello"

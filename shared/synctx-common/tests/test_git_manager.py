@@ -136,3 +136,77 @@ async def test_file_paths_lists_every_blob_including_hidden_and_special_names(tm
 
     assert {"docs/a.md", "other/b.md", "docs/.hidden.md", "docs/한글.md", 'docs/a "b".md', "docs/tab\tname.md", ".github/x.md"} <= paths
     assert not any(path.endswith("/") or path in {"docs", "other"} for path in paths)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["clone", "ensure_existing", "fetch"])
+async def test_git_work_does_not_block_event_loop(tmp_path, remote, monkeypatch, method):
+    import asyncio
+    import time
+
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    if method != "clone":
+        await manager.ensure()
+    original = manager._run_git
+
+    def slow_git(*args, **kwargs):
+        time.sleep(0.3)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_run_git", slow_git)
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.02)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    if method == "fetch":
+        await manager.fetch()
+    else:
+        await manager.ensure()
+    task.cancel()
+    assert manager.status == "ready"
+    assert ticks >= 5
+
+
+@pytest.mark.asyncio
+async def test_concurrent_ensure_on_same_repo_is_serialized(tmp_path, remote, monkeypatch):
+    import asyncio
+    import time
+
+    bare, _, first = remote
+    manager = _manager(tmp_path, bare)
+    original = manager._run_git
+
+    def slow_git(*args, **kwargs):
+        time.sleep(0.2)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_run_git", slow_git)
+    await asyncio.gather(manager.ensure(), manager.ensure(), manager.fetch())
+    assert manager.status == "ready"
+    assert manager.head_sha() == _git(bare, "rev-parse", "main")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_ensure_from_separate_managers_of_same_repo_is_serialized(tmp_path, remote, monkeypatch):
+    import asyncio
+    import time
+
+    bare, _, _ = remote
+    managers = [_manager(tmp_path, bare), _manager(tmp_path, bare)]
+    for manager in managers:
+        original = manager._run_git
+
+        def slow_git(*args, _original=original, **kwargs):
+            time.sleep(0.2)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(manager, "_run_git", slow_git)
+    await asyncio.gather(*(m.ensure() for m in managers))
+    assert [m.status for m in managers] == ["ready", "ready"]
+    assert {m.head_sha() for m in managers} == {_git(bare, "rev-parse", "main")}
