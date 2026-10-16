@@ -4,6 +4,7 @@ import functools
 import json
 import html as html_lib
 import logging
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
 from urllib.parse import quote
@@ -219,6 +220,13 @@ def get_tree(repo_id: str, path: str = "", ref: str | None = None):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _attachment_disposition(filename: str) -> str:
+    """RFC 6266/5987: 구형 클라이언트용 ASCII filename과 원래 이름을 담은 filename*를 함께 보낸다."""
+    fallback = "".join(c if " " <= c < "\x7f" else "_" for c in filename)
+    fallback = fallback.replace("\\", "\\\\").replace('"', '\\"')
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
 @app.get("/api/repos/{repo_id}/download", dependencies=[Depends(verify_viewer_access)])
 async def download_file(repo_id: str, path: str, format: str = "raw", ref: str | None = None):
     manager = get_repo_manager(repo_id)
@@ -231,7 +239,7 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
             return Response(
                 content=content,
                 media_type="application/octet-stream",
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+                headers={"Content-Disposition": _attachment_disposition(filename)},
             )
 
         if format == "pdf" and not _service_enabled("marp"):
@@ -256,7 +264,7 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
             return Response(
                 content=html_doc.encode("utf-8"),
                 media_type="text/html",
-                headers={"Content-Disposition": f'attachment; filename="{filename_base}.html"'},
+                headers={"Content-Disposition": _attachment_disposition(f"{filename_base}.html")},
             )
 
         if format == "pdf":
@@ -266,17 +274,21 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
             )
             import httpx
             marp_url = config.viewer.marp_service_url.rstrip("/")
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"{marp_url}/api/marp/convert",
-                    json={"markdown": text_content},
-                )
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(
+                        f"{marp_url}/api/marp/convert",
+                        json={"markdown": text_content},
+                    )
+            except httpx.HTTPError:
+                logger.warning("marp_convert_failed repo_id=%s path=%s", repo_id, path, exc_info=True)
+                raise HTTPException(status_code=502, detail="PDF conversion failed")
             if resp.status_code != 200:
                 raise HTTPException(status_code=502, detail="PDF conversion failed")
             return Response(
                 content=resp.content,
                 media_type="application/pdf",
-                headers={"Content-Disposition": f'attachment; filename="{filename_base}.pdf"'},
+                headers={"Content-Disposition": _attachment_disposition(f"{filename_base}.pdf")},
             )
 
         raise HTTPException(status_code=400, detail=f"Unsupported format: {format}. Use raw, html, or pdf.")
@@ -284,7 +296,10 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
+        if isinstance(e, (subprocess.CalledProcessError, ValueError)) and not isinstance(e, UnicodeEncodeError):
+            raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
+        logger.exception("download_failed repo_id=%s path=%s format=%s", repo_id, path, format)
+        raise HTTPException(status_code=500, detail="Download failed")
 
 
 @app.get("/raw/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])

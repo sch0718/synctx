@@ -595,6 +595,130 @@ class TestAPIRoutes:
         assert resp.status_code == 404
 
 
+class TestDownloadFilename:
+    @staticmethod
+    def _disposition(resp):
+        value = resp.headers["content-disposition"]
+        value.encode("latin-1")
+        assert value.startswith("attachment; ")
+        params = dict(part.split("=", 1) for part in value.removeprefix("attachment; ").split("; "))
+        return params["filename"], params["filename*"]
+
+    @pytest.fixture
+    def fake_marp(self, monkeypatch):
+        import httpx
+        import app as viewer_app
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, json):
+                return MagicMock(status_code=200, content=b"%PDF-1.4")
+
+        monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)
+        monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+        monkeypatch.setattr(viewer_app, "_prepare_pdf_markdown", lambda *args: "# A")
+
+    @pytest.fixture
+    def fake_html(self, monkeypatch):
+        import app as viewer_app
+        monkeypatch.setattr(viewer_app, "_render_download_html", lambda *args: "<html></html>")
+
+    @pytest.mark.parametrize("fmt,expected", [
+        ("raw", "회의록 1차.md"),
+        ("html", "회의록 1차.html"),
+        ("pdf", "회의록 1차.pdf"),
+    ])
+    def test_korean_name(self, client, mock_repo_manager, fake_marp, fake_html, fmt, expected):
+        from urllib.parse import unquote
+        mock_repo_manager.read_file.return_value = b"# A"
+        resp = client.get("/api/repos/test-repo/download", params={"path": "docs/회의록 1차.md", "format": fmt})
+        assert resp.status_code == 200
+        fallback, encoded = self._disposition(resp)
+        assert fallback == f'"___ 1_.{expected.rsplit(".", 1)[1]}"'
+        assert encoded.startswith("UTF-8''")
+        assert " " not in encoded
+        assert unquote(encoded.removeprefix("UTF-8''")) == expected
+
+    @pytest.mark.parametrize("fmt,suffix", [("raw", ".md"), ("html", ".html"), ("pdf", ".pdf")])
+    def test_quote_and_backslash_are_escaped(self, client, mock_repo_manager, fake_marp, fake_html, fmt, suffix):
+        mock_repo_manager.read_file.return_value = b"# A"
+        resp = client.get("/api/repos/test-repo/download", params={"path": 'docs/a"b\\c.md', "format": fmt})
+        assert resp.status_code == 200
+        fallback, encoded = self._disposition(resp)
+        assert fallback == f'"a\\"b\\\\c{suffix}"'
+        assert encoded == f"UTF-8''a%22b%5Cc{suffix}"
+
+    def test_control_characters_are_replaced(self, client, mock_repo_manager):
+        mock_repo_manager.read_file.return_value = b"x"
+        resp = client.get("/api/repos/test-repo/download", params={"path": "docs/a\r\nb.txt"})
+        assert resp.status_code == 200
+        fallback, encoded = self._disposition(resp)
+        assert fallback == '"a__b.txt"'
+        assert encoded == "UTF-8''a%0D%0Ab.txt"
+
+    def test_ascii_name(self, client, mock_repo_manager):
+        mock_repo_manager.read_file.return_value = b"x"
+        resp = client.get("/api/repos/test-repo/download", params={"path": "docs/readme.md"})
+        assert resp.status_code == 200
+        assert resp.headers["content-disposition"] == "attachment; filename=\"readme.md\"; filename*=UTF-8''readme.md"
+
+    def test_missing_file_is_404(self, client, mock_repo_manager):
+        import subprocess
+        mock_repo_manager.read_file.side_effect = subprocess.CalledProcessError(128, ["git", "show"])
+        resp = client.get("/api/repos/test-repo/download", params={"path": "docs/none.md"})
+        assert resp.status_code == 404
+
+    def test_invalid_path_is_404(self, client, mock_repo_manager):
+        mock_repo_manager.read_file.side_effect = ValueError("Invalid path: ../x")
+        resp = client.get("/api/repos/test-repo/download", params={"path": "../x"})
+        assert resp.status_code == 404
+
+    def test_unexpected_error_is_500_and_logged(self, client, monkeypatch, caplog):
+        import app as viewer_app
+
+        def broken(*args):
+            raise UnicodeEncodeError("latin-1", "회", 0, 1, "ordinal not in range(256)")
+
+        monkeypatch.setattr(viewer_app, "_render_download_html", broken)
+        with caplog.at_level("ERROR"):
+            resp = client.get("/api/repos/test-repo/download", params={"path": "docs/a.md", "format": "html"})
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == "Download failed"
+        assert any("download_failed" in r.getMessage() for r in caplog.records)
+
+    def test_marp_unreachable_is_502(self, client, monkeypatch):
+        import httpx
+        import app as viewer_app
+
+        class DownClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, url, json):
+                raise httpx.ConnectError("connection refused")
+
+        monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)
+        monkeypatch.setattr(httpx, "AsyncClient", DownClient)
+        monkeypatch.setattr(viewer_app, "_prepare_pdf_markdown", lambda *args: "# A")
+        resp = client.get("/api/repos/test-repo/download", params={"path": "docs/a.md", "format": "pdf"})
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "PDF conversion failed"
+
+
 class TestWebhookToken:
     def test_webhook_no_token_passes_when_unset(self, client, mock_repo_manager, monkeypatch):
         from unittest.mock import AsyncMock
