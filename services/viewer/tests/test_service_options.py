@@ -108,6 +108,20 @@ class TestToolbar:
         assert '<dialog id="publish-dialog"' in text and "team/slides" in text
         assert "_published/slides/deck.html" in text
 
+    @pytest.mark.parametrize("repo_url, shown", [
+        ("https://publisher:secret@git.internal/slides.git", "slides"),
+        ("https://token@git.internal/team/slides.git/", "team/slides"),
+        ("git@git.internal:team/slides.git", "team/slides"),
+    ])
+    def test_publish_dialog_hides_repo_credentials(self, client, mock_repo_manager, monkeypatch, repo_url, shown):
+        import app as viewer_app
+        monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)
+        monkeypatch.setattr(viewer_app.config.marp, "publish_repo", repo_url)
+        mock_repo_manager.read_file_text.return_value = MARP_DOC
+        text = client.get("/test-repo/docs/deck.md").text
+        assert f"<dd>{shown} (" in text
+        assert "secret" not in text and "publisher:" not in text and "token@" not in text and "git@" not in text
+
     def test_meeting_doc_primary_action(self, client, mock_repo_manager):
         from app import _build_toolbar
         html = _build_toolbar("test-repo", "m.md", True, {}, "", meeting_href="/view/test-repo/m.md?mode=meeting")

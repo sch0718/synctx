@@ -8,7 +8,7 @@ import logging
 import subprocess
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, Query
 from fastapi.responses import HTMLResponse, Response
@@ -751,11 +751,19 @@ def _build_toolbar(repo_id: str, path: str, is_md: bool, front_matter: dict, ref
     return "".join(buttons)
 
 
+def _repo_display_name(repo_url: str) -> str:
+    """화면에 보일 저장소 이름. URL에 든 사용자명·토큰이 문서 HTML에 실리지 않게 경로만 쓴다."""
+    parts = urlsplit(repo_url)
+    path = parts.path if parts.scheme else repo_url.split(":", 1)[-1]
+    segments = [s for s in path.rstrip("/").removesuffix(".git").split("/") if s]
+    return "/".join(segments[-2:]) or (parts.hostname or "")
+
+
 def _publish_dialog(path: str) -> str:
     repo_url = config.marp.publish_repo
     if not repo_url:
         return ""
-    name = "/".join(repo_url.rstrip("/").removesuffix(".git").split("/")[-2:])
+    name = _repo_display_name(repo_url)
     target = f"{config.marp.publish_base_path.strip('/')}/{PurePosixPath(path).stem}.html"
     return f'''<dialog id="publish-dialog" aria-labelledby="publish-title">
   <form method="dialog">
