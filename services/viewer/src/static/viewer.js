@@ -459,9 +459,12 @@
       if (tab) { showNavTab(tab.dataset.navTab); return; }
       var anchor = e.target.closest('a[href^="#"]');
       if (anchor && navOpen() && anchor.closest('#shell-nav')) {
-        setNav(false);
+        // 서랍을 inert로 만들기 전에 링크의 기본 이동(해시 이동)이 끝나도록 한 틱 미룬다
         var heading = document.getElementById(decodeURIComponent(anchor.getAttribute('href').slice(1)));
-        if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
+        window.setTimeout(function () {
+          setNav(false);
+          if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
+        }, 0);
         return;
       }
       var el = e.target.closest('[data-action]');

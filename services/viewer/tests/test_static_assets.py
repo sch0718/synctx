@@ -69,3 +69,29 @@ def test_mobile_header_keeps_only_menu_logo_and_finder():
     mobile = css.split("@media (max-width: 767px)")[1]
     for needle in (".shell-header .shell-spacer", ".shell-header .shell-status", '.shell-header [data-action="shortcuts"]'):
         assert needle in mobile
+
+
+def _rule(css, selector):
+    import re
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    assert match is not None, selector
+    return match.group(1)
+
+
+def test_anchor_targets_clear_the_sticky_header():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    body = _rule(css, ".markdown-body [id], #main")
+    assert "scroll-margin-top: calc(var(--shell-header-h) + 12px)" in body
+
+
+def test_drawer_becomes_visible_immediately_when_opened():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    mobile = css.split("@media (max-width: 767px)")[1]
+    assert "visibility 0.2s" in _rule(mobile, ".shell-nav, .shell-nav-mobile-only")
+    assert "visibility 0s" in _rule(mobile, ".shell-nav.is-open")
+
+
+def test_drawer_toc_link_closes_after_default_navigation():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    block = js.split("if (anchor && navOpen() && anchor.closest('#shell-nav')) {")[1].split("return;")[0]
+    assert "window.setTimeout(" in block and "setNav(false)" in block
