@@ -9,6 +9,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -148,14 +149,15 @@ class GitRepoManager:
         timeout: float | None = None,
     ) -> subprocess.CompletedProcess:
         try:
-            return subprocess.run(
-                ["git", *self._git_config_args(), *args],
-                cwd=str(cwd or self.repo_dir),
-                env={**self._git_env(), **(extra_env or {})},
-                check=True,
-                capture_output=True,
-                timeout=timeout,
-            )
+            if timeout is None:
+                return subprocess.run(
+                    ["git", *self._git_config_args(), *args],
+                    cwd=str(cwd or self.repo_dir),
+                    env={**self._git_env(), **(extra_env or {})},
+                    check=True,
+                    capture_output=True,
+                )
+            return self._run_git_with_deadline(args, cwd, extra_env, timeout)
         except subprocess.CalledProcessError as exc:
             stderr = self._sanitize_git_text((exc.stderr or b"").decode("utf-8", errors="replace"))
             logger.warning(
@@ -165,6 +167,47 @@ class GitRepoManager:
                 stderr.strip(),
             )
             raise
+
+    def _run_git_with_deadline(
+        self,
+        args: Sequence[str],
+        cwd: Path | None,
+        extra_env: dict[str, str] | None,
+        timeout: float,
+    ) -> subprocess.CompletedProcess:
+        # 시간 초과 때 git만 끝내면 ssh·git-remote-https 같은 전송 프로세스가 남으므로
+        # 프로세스 그룹째로 끝낸다. SIGTERM을 먼저 보내 git이 ref 잠금 파일을 정리할 틈을 준다.
+        proc = subprocess.Popen(
+            ["git", *self._git_config_args(), *args],
+            cwd=str(cwd or self.repo_dir),
+            env={**self._git_env(), **(extra_env or {})},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self._stop_process_group(proc)
+            # cmd에는 인증 헤더가 든 설정 인자를 넣지 않는다
+            raise subprocess.TimeoutExpired(["git", *args], timeout) from None
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, ["git", *args], stdout, stderr)
+        return subprocess.CompletedProcess(["git", *args], proc.returncode, stdout, stderr)
+
+    @staticmethod
+    def _stop_process_group(proc: subprocess.Popen, grace: float = 0.5) -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.communicate(timeout=grace)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
+        # git이 먼저 끝나도 SIGTERM을 무시한 전송 프로세스가 그룹에 남을 수 있다
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
 
     def _clone_with_args(self, clone_args: list[str]) -> None:
         self.base_dir.mkdir(parents=True, exist_ok=True)

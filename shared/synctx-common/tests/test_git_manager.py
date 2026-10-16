@@ -1,6 +1,7 @@
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -340,6 +341,37 @@ async def test_grep_times_out_without_results(tmp_path, remote):
     manager = _manager(tmp_path, bare)
     await manager.ensure()
     assert manager.grep("v1", timeout=0) == GrepResult(status="timeout", matches=[], truncated=False)
+
+
+def _process_gone(pid: int, wait: float = 3.0) -> bool:
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+@pytest.mark.asyncio
+async def test_fetch_timeout_also_stops_transport_processes(tmp_path, remote, monkeypatch):
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    _git(manager.repo_dir, "remote", "set-url", "origin", "ssh://example.invalid/repo.git")
+    pid_file = tmp_path / "transport.pid"
+    # git이 뒤에 붙이는 인자는 안쪽 sh의 위치 인자로 버려진다
+    monkeypatch.setenv("GIT_SSH_COMMAND", f"sh -c 'echo $$ > {pid_file}; exec sleep 30' --")
+    assert manager.grep("v1", ref="feature", timeout=0.5).status == "timeout"
+    pid = int(pid_file.read_text().strip())
+    try:
+        assert _process_gone(pid), "fetch timeout left the transport process running"
+    finally:
+        try:
+            os.kill(pid, 9)
+        except ProcessLookupError:
+            pass
 
 
 @pytest.mark.asyncio
