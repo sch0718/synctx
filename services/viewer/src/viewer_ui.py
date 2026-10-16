@@ -283,7 +283,9 @@ def render_search_page(*, view_prefix: str, query: str, raw_query: str, repos: S
         total = sum(len(g["matches"]) for g in results)
         found = sum(1 for g in results if g["matches"])
         parts.append(f'<p class="search-summary" role="status">{found}개 저장소에서 {total}건</p>')
-        if total == 0 and not any(g["truncated"] for g in results):
+        searched_nothing = not results
+        if (total == 0 and (searched_nothing or any(g["status"] == "ok" for g in results))
+                and not any(g["truncated"] for g in results)):
             parts.append('<p class="search-note search-note-empty">찾은 결과가 없습니다</p>')
         for index, group in enumerate(results):
             if group["matches"] or group["truncated"] or group["status"] != "ok":

@@ -131,6 +131,24 @@ test('개수를 자르고 한 글자 검색어에는 전체 결과를 넣지 않
   assert.equal(core.finderOptions(['f.md'], null, 'a').some((o) => o.kind === 'all'), false);
 });
 
+test('검색어 길이를 UTF-16 단위가 아니라 글자 수로 세고 100글자까지만 받는다', () => {
+  assert.equal(core.isSearchable('\u{1F600}'), false);
+  assert.equal(core.isSearchable('\u{1F600}\u{1F600}'), true);
+  assert.equal(core.isSearchable('a'), false);
+  assert.equal(core.isSearchable('a'.repeat(100)), true);
+  assert.equal(core.isSearchable('a'.repeat(101)), false);
+  assert.equal(core.isSearchable('\u{1F600}'.repeat(100)), true);
+  assert.equal(core.isSearchable('  ab  '), true);
+});
+
+test('이모지 한 글자나 101글자 검색어에는 전체 결과를 넣지 않는다', () => {
+  const has = (q) => core.finderOptions(['f.md'], null, q).some((o) => o.kind === 'all');
+  assert.equal(has('\u{1F600}'), false);
+  assert.equal(has('\u{1F600}\u{1F600}'), true);
+  assert.equal(has('a'.repeat(100)), true);
+  assert.equal(has('a'.repeat(101)), false);
+});
+
 test('본문 응답이 없거나 실패 상태면 본문 묶음이 없다', () => {
   const data = { repos: [{ id: 'r', status: 'timeout', matches: [] }] };
   assert.deepEqual(core.finderOptions([], data, 'ab').map((o) => o.kind), ['all']);

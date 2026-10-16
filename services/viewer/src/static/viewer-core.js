@@ -86,7 +86,13 @@
 
   var FINDER_FILE_LIMIT = 8;
   var FINDER_CONTENT_LIMIT = 5;
-  var FINDER_ALL_MIN = 2;
+  var SEARCH_MIN = 2;
+  var SEARCH_MAX = 100;
+
+  function isSearchable(query) {
+    var length = Array.from(String(query || '').trim()).length;
+    return length >= SEARCH_MIN && length <= SEARCH_MAX;
+  }
 
   function finderOptions(fileMatches, searchData, query) {
     var options = (fileMatches || []).slice(0, FINDER_FILE_LIMIT).map(function (path) {
@@ -106,7 +112,7 @@
       }
     }
     options = options.concat(content);
-    if (String(query || '').trim().length >= FINDER_ALL_MIN) options.push({ kind: 'all', group: null });
+    if (isSearchable(query)) options.push({ kind: 'all', group: null });
     return options;
   }
 
@@ -154,6 +160,7 @@
     createFileLoader: createFileLoader,
     branchChoices: branchChoices,
     finderOptions: finderOptions,
+    isSearchable: isSearchable,
     createSearchScheduler: createSearchScheduler,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

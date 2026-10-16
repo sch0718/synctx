@@ -156,6 +156,20 @@ def test_search_page_statuses_empty_and_invalid():
     assert "두 글자 이상, 100글자 이하로 한 줄만 입력하세요" in bad and 'value="a"' in bad
 
 
+def test_search_page_does_not_claim_no_results_when_every_repo_failed():
+    rs = [{"id": s, "name": s, "status": s, "truncated": False, "matches": []}
+          for s in ("timeout", "unsupported", "unavailable", "failed")]
+    html = ui.render_search_page(view_prefix="/view", query="ab", raw_query="ab", repos=REPOS,
+                                 active_repo=None, ref=None, results=rs)
+    assert "찾은 결과가 없습니다" not in html
+    for key in ("timeout", "unsupported", "unavailable", "failed"):
+        assert ui.SEARCH_STATUS_COPY[key] in html
+    only_timeout = [{"id": "r1", "name": "One", "status": "timeout", "truncated": False, "matches": []}]
+    timeout_html = ui.render_search_page(view_prefix="/view", query="ab", raw_query="ab", repos=REPOS,
+                                         active_repo=None, ref=None, results=only_timeout)
+    assert "찾은 결과가 없습니다" not in timeout_html and ui.SEARCH_STATUS_COPY["timeout"] in timeout_html
+
+
 def test_search_page_keeps_ref_only_for_its_repo():
     rs = [{"id": "r1", "name": "One", "status": "ok", "truncated": False,
            "matches": [{"path": "a.md", "line": 1, "before": "", "match": "ab", "after": ""}]}]

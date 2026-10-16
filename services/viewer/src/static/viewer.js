@@ -417,7 +417,7 @@
       if (!input.value.trim()) { clearResults(); return; }
       var q = input.value.trim();
       moved = false;
-      if (q.length >= 2) scheduler.schedule(q); else scheduler.cancel();
+      if (core.isSearchable(q)) scheduler.schedule(q); else scheduler.cancel();
       showFiles();
     }
     function go(option) {
