@@ -142,3 +142,16 @@ def test_finder_enter_needs_visible_results_and_skips_ime_composition():
     assert "e.isComposing || e.keyCode === 229" in finder
     assert "if (!input.value.trim()) { clearResults(); return; }" in finder
     assert "if (active >= 0 && !list.hidden)" in finder
+
+
+def test_finder_late_file_list_does_not_reopen_dismissed_results():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    finder = js.split("function initFinder(")[1].split("function focusFinder")[0]
+    assert "if (dismissed || document.activeElement !== input || !input.value.trim()) return;" in finder
+    assert "dismissed = true;" in finder and "dismissed = false;" in finder
+
+
+def test_finder_scrolls_active_result_into_view():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    paint = js.split("function paint()")[1].split("function render()")[0]
+    assert "scrollIntoView({ block: 'nearest' })" in paint

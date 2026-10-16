@@ -322,6 +322,7 @@
     });
     var items = [];
     var active = -1;
+    var dismissed = false;
 
     function setOpen(open) { list.hidden = !open; input.setAttribute('aria-expanded', String(open)); }
     function clearResults() { items = []; active = -1; input.setAttribute('aria-activedescendant', ''); setOpen(false); }
@@ -334,6 +335,9 @@
       }).join('');
       input.setAttribute('aria-activedescendant', active >= 0 ? 'finder-opt-' + active : '');
       setOpen(true);
+      // 포커스는 입력칸에 있으므로 선택한 결과가 목록 밖이면 직접 스크롤한다
+      var current = active >= 0 && document.getElementById('finder-opt-' + active);
+      if (current) current.scrollIntoView({ block: 'nearest' });
     }
     function render() {
       if (!ACTIVE_REPO) { message('저장소를 먼저 고르세요.'); return; }
@@ -342,7 +346,8 @@
       if (files === null) {
         message('파일 목록을 불러오는 중…');
         loader.load().then(function (result) {
-          if (!input.value.trim()) return;
+          // 기다리는 동안 사용자가 닫았거나 다른 곳으로 옮겼으면 다시 열지 않는다
+          if (dismissed || document.activeElement !== input || !input.value.trim()) return;
           if (result.ok) render();
           else message('파일 목록을 불러오지 못했습니다. 검색어를 고치면 다시 시도합니다.');
         });
@@ -356,7 +361,7 @@
     function go(path) {
       window.location.href = VIEW_PREFIX + '/' + encodeURIComponent(ACTIVE_REPO) + '/' + encodePath(path) + _refParam('?');
     }
-    input.addEventListener('input', render);
+    input.addEventListener('input', function () { dismissed = false; render(); });
     input.addEventListener('focus', function () { if (ACTIVE_REPO) loader.load(); });
     input.addEventListener('keydown', function (e) {
       // 한글 조합을 끝내는 Enter·방향키는 검색 결과 조작이 아니다
@@ -369,6 +374,7 @@
       } else if (e.key === 'Enter') {
         if (active >= 0 && !list.hidden) { e.preventDefault(); go(items[active]); }
       } else if (e.key === 'Escape') {
+        dismissed = true;
         setOpen(false);
       }
     });
