@@ -74,18 +74,20 @@ class TestToolbar:
         mock_repo_manager.read_file_text.return_value = MARP_DOC
         resp = client.get("/test-repo/docs/deck.md")
         assert resp.status_code == 200
-        assert "PDF (Marp)" in resp.text
-        assert "출판 (Marp)" in resp.text
+        assert 'data-action="marp-pdf"' in resp.text
+        assert "슬라이드 미리보기" in resp.text and 'data-action="marp-preview"' in resp.text
+        assert 'data-action="marp-publish"' not in resp.text
 
     def test_marp_off_hides_buttons_and_shows_download(self, client, mock_repo_manager, monkeypatch):
         monkeypatch.setenv("SYNCTX_ENABLED_SERVICES", "viewer,cdn")
         mock_repo_manager.read_file_text.return_value = MARP_DOC
         resp = client.get("/test-repo/docs/deck.md")
         assert resp.status_code == 200
-        assert "PDF (Marp)" not in resp.text
-        assert "미리보기 (Marp)" not in resp.text
-        assert "출판 (Marp)" not in resp.text
+        assert 'data-action="marp-pdf"' not in resp.text
+        assert 'data-action="marp-preview"' not in resp.text
+        assert 'data-action="marp-publish"' not in resp.text
         assert 'href="/view/api/repos/test-repo/download?path=docs/deck.md"' in resp.text
+        assert "format=pdf" not in resp.text
 
     def test_drawio_button_follows_option(self, monkeypatch):
         from app import _build_toolbar
@@ -94,7 +96,22 @@ class TestToolbar:
         monkeypatch.setenv("SYNCTX_ENABLED_SERVICES", "viewer,cdn")
         toolbar = _build_toolbar("test-repo", "a.drawio", False, {}, "")
         assert 'href="/drawio/"' not in toolbar
-        assert "다운로드" in toolbar
+        assert "내려받기" in toolbar
+
+    def test_publish_dialog_only_with_publish_repo(self, client, mock_repo_manager, monkeypatch):
+        import app as viewer_app
+        monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)
+        monkeypatch.setattr(viewer_app.config.marp, "publish_repo", "https://git.test/team/slides.git")
+        mock_repo_manager.read_file_text.return_value = MARP_DOC
+        text = client.get("/test-repo/docs/deck.md").text
+        assert 'data-action="marp-publish"' in text
+        assert '<dialog id="publish-dialog"' in text and "team/slides" in text
+        assert "_published/slides/deck.html" in text
+
+    def test_meeting_doc_primary_action(self, client, mock_repo_manager):
+        from app import _build_toolbar
+        html = _build_toolbar("test-repo", "m.md", True, {}, "", meeting_href="/view/test-repo/m.md?mode=meeting")
+        assert html.startswith('<a class="btn btn-primary" href="/view/test-repo/m.md?mode=meeting">회의 모드로 열기</a>')
 
 
 class TestPdfDownload:

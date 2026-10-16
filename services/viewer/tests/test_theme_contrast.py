@@ -41,14 +41,16 @@ def test_button_text_meets_aa_on_primary_backgrounds(bg):
     assert not failures, failures
 
 
+def _css_source():
+    return (Path(__file__).resolve().parents[1] / "src" / "static" / "viewer.css").read_text(encoding="utf-8")
+
+
+def _css_rule(selector):
+    return re.search(rf"(?m)^{re.escape(selector)} \{{([^}}]*)\}}", _css_source()).group(1)
+
+
 def test_primary_buttons_use_on_primary_text():
-    rule = re.search(r"\.viewer-toolbar \.btn \{\{([^}]*)\}\}", _app_source()).group(1)
-    assert re.search(r"(?<![-\w])color:\s*var\(--on-primary\)", rule)
-
-
-def _toolbar_rule(selector):
-    pattern = rf"\.viewer-toolbar {re.escape(selector)} \{{\{{([^}}]*)\}}\}}"
-    return re.search(pattern, _app_source()).group(1)
+    assert re.search(r"(?<![-\w])color:\s*var\(--on-primary\)", _css_rule(".btn-primary"))
 
 
 def _decl(rule, prop):
@@ -63,9 +65,9 @@ def _resolve(value, values):
 
 @pytest.mark.parametrize("state", ["", ":hover"])
 def test_secondary_button_text_meets_aa(state):
-    base = _toolbar_rule(".btn-secondary")
-    background = _decl(_toolbar_rule(f".btn-secondary{state}"), "background") if state else _decl(base, "background")
-    color = _decl(base, "color") or _decl(_toolbar_rule(".btn"), "color")
+    base = _css_rule(".btn")
+    background = _decl(_css_rule(f".btn{state}"), "background") if state else _decl(base, "background")
+    color = _decl(base, "color")
     failures = []
     for theme in _themes():
         values = theme_vars(theme)
@@ -76,21 +78,16 @@ def test_secondary_button_text_meets_aa(state):
 
 
 def test_text_disabled_is_only_used_for_icons():
-    lines = [line.strip() for line in _app_source().splitlines()
+    lines = [line.strip() for src in (_app_source(), _css_source()) for line in src.splitlines()
              if re.search(r"(?<![-\w])color:\s*var\(--text-disabled\)", line)]
     assert lines
     assert all(re.match(r"\.(icon-|\S+ svg)", line) for line in lines), lines
 
 
-def _static_rule(selector):
-    css = (Path(__file__).resolve().parents[1] / "src" / "static" / "viewer.css").read_text(encoding="utf-8")
-    return re.search(rf"^{re.escape(selector)} \{{([^}}]*)\}}", css, re.M).group(1)
-
-
 def test_nav_tab_labels_meet_aa_on_their_backgrounds():
-    track = _decl(_static_rule(".nav-tabs"), "background")
-    unselected = _decl(_static_rule('.nav-tabs [role="tab"]'), "color")
-    selected_rule = _static_rule('.nav-tabs [role="tab"][aria-selected="true"]')
+    track = _decl(_css_rule(".nav-tabs"), "background")
+    unselected = _decl(_css_rule('.nav-tabs [role="tab"]'), "color")
+    selected_rule = _css_rule('.nav-tabs [role="tab"][aria-selected="true"]')
     cases = [("unselected", unselected, track), ("selected", _decl(selected_rule, "color"), _decl(selected_rule, "background"))]
     failures = []
     for theme in _themes():

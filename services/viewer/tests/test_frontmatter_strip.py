@@ -63,7 +63,7 @@ def test_raw_markdown_keeps_front_matter(client, manager):
 def test_marp_toolbar_still_detected(client, manager):
     manager.read_file_text.return_value = "---\nmarp: true\n---\n# Slide"
     resp = client.get("/test-repo/docs/slides.md")
-    assert "convertMarpPdf()" in resp.text
+    assert 'data-action="marp-pdf"' in resp.text
     assert "marp: true" not in _article(resp.text)
 
 
@@ -78,7 +78,7 @@ def test_title_is_escaped(client, manager):
     resp = client.get("/test-repo/docs/a.md")
     head = resp.text.split("</head>")[0]
     assert "<script>alert(1)</script>" not in head
-    assert "&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt; - synctx Viewer</title>" in head
+    assert "&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt; - synctx</title>" in head
 
 
 def test_code_file_unaffected(client, manager):

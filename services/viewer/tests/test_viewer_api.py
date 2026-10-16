@@ -239,13 +239,11 @@ class TestPathBreadcrumb:
         assert '<span class="current">readme.md</span>' in crumb
         assert "path=docs/sub/readme.md" not in crumb
 
-    def test_sidebar_path_info_has_folder_links(self, client, mock_repo_manager):
-        import re
+    def test_path_info_is_merged_into_breadcrumb(self, client, mock_repo_manager):
         mock_repo_manager.read_file_text.return_value = "# Hello"
         resp = client.get("/test-repo/docs/sub/readme.md")
-        match = re.search(r'<div class="path-info">(.*?)</div>', resp.text, re.S)
-        assert match is not None
-        assert '<a href="/view/test-repo?path=docs/sub">sub</a>' in match.group(1)
+        assert 'class="path-info"' not in resp.text
+        assert '<a href="/view/test-repo?path=docs/sub">sub</a>' in self._toolbar_breadcrumb(resp.text)
 
     def test_ref_is_preserved_in_folder_links(self, client, mock_repo_manager):
         mock_repo_manager.read_file_text.return_value = "# Hello"
@@ -293,14 +291,13 @@ class TestDocumentSidebarTree:
     @staticmethod
     def _sidebar_tree(text):
         import re
-        match = re.search(r'<div class="tree" id="file-tree">(.*)</div>\s*</div>\s*</div>\s*<div class="viewer-content">', text, re.S)
+        match = re.search(r'<div class="tree" id="file-tree">(.*?)</div>\s*' + re.escape('<section class="recent"'), text, re.S)
         assert match is not None
         return match.group(1)
 
-    def test_tree_is_below_toc(self, client, tree_manager):
-        resp = client.get("/test-repo/docs/sub/readme.md")
-        assert resp.status_code == 200
-        assert resp.text.index('<div class="toc">') < resp.text.index('id="file-tree"') < resp.text.index('<div class="viewer-content">')
+    def test_tree_content_and_toc_order(self, client, tree_manager):
+        text = client.get("/test-repo/docs/sub/readme.md").text
+        assert text.index('id="file-tree"') < text.index('<main id="main" class="viewer-content"') < text.index('<aside class="shell-toc"')
 
     def test_folders_on_path_are_expanded_and_others_collapsed(self, client, tree_manager):
         tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md").text)
@@ -335,14 +332,14 @@ class TestDocumentSidebarTree:
 
     def test_tree_scripts_are_available(self, client, tree_manager):
         text = client.get("/test-repo/docs/sub/readme.md").text
-        assert "function toggleDir(" in text
+        assert '<script src="/view/static/viewer.js"></script>' in text
         assert 'var ACTIVE_REPO = "test-repo";' in text
 
     def test_folders_are_buttons_toggled_by_script(self, client, tree_manager):
         text = client.get("/test-repo/docs/sub/readme.md").text
         assert '<button type="button" class="tree-entry tree-dir" aria-expanded="true">' in text
         assert '<button type="button" class="tree-entry tree-dir" aria-expanded="false">' in text
-        assert "closest('.tree-dir')" in text and "onclick=" not in text
+        assert '<script src="/view/static/viewer.js"></script>' in text and "onclick=" not in text
 
     def test_ref_is_encoded_in_script(self, client, tree_manager):
         import re
@@ -501,7 +498,7 @@ class TestRefEscaping:
         mock_repo_manager.read_file_text.return_value = "# Hello"
         resp = client.get("/test-repo/docs/readme.md?ref=feat/x")
         assert resp.status_code == 200
-        assert '<a href="/view/test-repo?ref=feat%2Fx">test-repo</a>' in resp.text
+        assert 'href="/view/test-repo?ref=feat%2Fx"' in resp.text
         assert 'href="/view/api/repos/test-repo/download?path=docs/readme.md&amp;ref=feat%2Fx"' in resp.text
 
     def test_repo_page_keeps_normal_ref(self, client, mock_repo_manager):
@@ -520,9 +517,9 @@ class TestRefEscaping:
 
 class TestPathEscaping:
     @staticmethod
-    def _script_filename(text):
+    def _doc_config_raw(text):
         import re
-        match = re.search(r"var filename = (.*?)\.split\('/'\)", text)
+        match = re.search(r"var SYNCTX_DOC = (\{.*?\});", text)
         assert match is not None
         return match.group(1)
 
@@ -538,14 +535,14 @@ class TestPathEscaping:
         mock_repo_manager.read_file_text.return_value = "# Hello"
         resp = client.get("/test-repo/docs/x%27%3Balert(1)%3B%27%3C%2Fscript%3E.md")
         assert resp.status_code == 200
-        literal = self._script_filename(resp.text)
-        assert "<" not in literal
-        assert json.loads(literal) == "docs/x';alert(1);'</script>.md"
+        raw = self._doc_config_raw(resp.text)
+        assert "<" not in raw
+        assert json.loads(raw)["path"] == "docs/x';alert(1);'</script>.md"
 
     def test_script_filename_keeps_normal_path(self, client, mock_repo_manager):
         mock_repo_manager.read_file_text.return_value = "# Hello"
         resp = client.get("/test-repo/docs/readme.md")
-        assert self._script_filename(resp.text) == '"docs/readme.md"'
+        assert json.loads(self._doc_config_raw(resp.text))["path"] == "docs/readme.md"
 
     def test_tree_entries_are_escaped(self, client, mock_repo_manager):
         from types import SimpleNamespace
@@ -632,6 +629,76 @@ class TestShellPages:
         resp = client.get("/api/repos/test-repo/files")
         assert resp.status_code == 502
         assert "SECRET" not in resp.text
+
+
+class TestDocumentPage:
+    def test_doc_meta_shows_last_commit(self, client, mock_repo_manager):
+        from synctx_common.git_manager import CommitInfo
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        mock_repo_manager.last_commit.return_value = CommitInfo(sha="1234567890abc", author="lee", authored_at="2026-10-16T00:00:00+00:00")
+        text = client.get("/test-repo/docs/a.md").text
+        assert "마지막 커밋 lee" in text and '<code class="sha">1234567</code>' in text
+        mock_repo_manager.last_commit.assert_called_with("docs/a.md", ref=None)
+
+    def test_layout_landmarks_and_toc(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# T\n\n## A\n\n## B"
+        text = client.get("/test-repo/docs/a.md").text
+        assert 'class="skip-link" href="#main"' in text
+        assert '<nav id="shell-nav" class="shell-nav"' in text
+        assert '<aside class="shell-toc" aria-label="이 문서의 목차">' in text
+        assert 'data-action="open-toc"' in text
+        assert '<article class="markdown-body">' in text
+        assert 'data-theme-mode="query"' in text
+
+    def test_download_menu_offers_formats(self, client, mock_repo_manager, monkeypatch):
+        monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        text = client.get("/test-repo/docs/a.md").text
+        assert '<summary class="btn">내려받기</summary>' in text
+        assert 'download?path=docs/a.md&amp;format=html' in text
+        assert 'download?path=docs/a.md&amp;format=pdf' in text
+
+    def test_doc_config_defined_before_viewer_script(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        text = client.get("/test-repo/docs/a.md").text
+        assert text.index("var SYNCTX_DOC = {") < text.index('<script src="/view/static/viewer.js"></script>')
+
+    def test_binary_file_is_rejected_before_reading(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.side_effect = UnicodeDecodeError("utf-8", b"\x89", 0, 1, "invalid start byte")
+        resp = client.get("/api/repos/test-repo/render", params={"path": "img/logo.png"})
+        assert resp.status_code == 415
+        mock_repo_manager.read_file_text.assert_not_called()
+
+    def test_no_alert_calls_in_page(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "---\nmarp: true\n---\n# S"
+        assert "alert(" not in client.get("/test-repo/docs/deck.md").text
+
+    def test_default_branch_is_recorded_as_empty_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        text = client.get("/test-repo/docs/a.md", params={"ref": mock_repo_manager.profile.default_ref}).text
+        assert 'var ACTIVE_REF = "";' in text
+
+    def test_other_branch_is_recorded_as_ref(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        assert 'var ACTIVE_REF = "feat/x";' in client.get("/test-repo/docs/a.md", params={"ref": "feat/x"}).text
+
+    def test_branches_are_listed_once_per_render(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        mock_repo_manager.list_branches.return_value = ["main", "dev"]
+        assert client.get("/test-repo/docs/a.md").status_code == 200
+        assert mock_repo_manager.list_branches.call_count == 1
+
+    def test_branch_lookup_failure_falls_back_to_default(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        mock_repo_manager.list_branches.side_effect = RuntimeError("offline")
+        assert client.get("/test-repo/docs/a.md").status_code == 200
+        assert mock_repo_manager.list_branches.call_count == 1
+
+    def test_repo_page_lists_branches_once(self, client, mock_repo_manager):
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.list_branches.return_value = ["main"]
+        assert client.get("/test-repo").status_code == 200
+        assert mock_repo_manager.list_branches.call_count == 1
 
 
 class TestAPIRoutes:

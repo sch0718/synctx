@@ -125,7 +125,7 @@ class TestRenderModes:
         resp = client.get("/test-repo/docs/m.md")
         assert resp.status_code == 200
         assert 'href="/view/test-repo/docs/m.md?mode=meeting"' in resp.text
-        assert "다운로드" in resp.text
+        assert "내려받기" in resp.text
         assert config_json(resp.text) is None
 
     def test_meeting_mode_injects_assets(self, client, manager):
