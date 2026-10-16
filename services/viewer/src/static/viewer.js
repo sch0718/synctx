@@ -364,7 +364,7 @@
           '<span class="finder-path">' + escapeHtml(o.path) + '</span></li>';
       }
       return head + '<span class="finder-name">' + escapeHtml(o.path.split('/').pop()) + '</span>' +
-        '<span class="finder-path">' + escapeHtml((ACTIVE_REPO ? '' : o.repo + ' · ') + o.path + ' · ' + o.line + '행') + '</span>' +
+        '<span class="finder-path">' + escapeHtml((ACTIVE_REPO ? '' : o.repoName + ' · ') + o.path + ' · ' + o.line + '행') + '</span>' +
         '<span class="finder-snippet">' + escapeHtml(o.before) + (o.match ? '<mark>' + escapeHtml(o.match) + '</mark>' : '') + escapeHtml(o.after) + '</span></li>';
     }
     function paint() {

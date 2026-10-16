@@ -113,13 +113,14 @@ test('형식이 맞지 않는 브랜치 응답은 무시한다', () => {
 });
 
 test('파일, 본문, 전체 결과 순서로 묶는다', () => {
-  const data = { repos: [{ id: 'r', status: 'ok', matches: [
+  const data = { repos: [{ id: 'r', name: 'Repo R', status: 'ok', matches: [
     { path: 'a.md', line: 1, before: '', match: 'x', after: '' }, { path: 'b.md', line: 2, before: '', match: 'y', after: '' }] }] };
   const opts = core.finderOptions(['f1.md', 'f2.md'], data, 'ab');
   assert.deepEqual(opts.map((o) => o.kind), ['file', 'file', 'content', 'content', 'all']);
   assert.equal(opts[0].group, '파일');
   assert.equal(opts[2].group, '본문');
   assert.equal(opts[2].repo, 'r');
+  assert.equal(opts[2].repoName, 'Repo R');
 });
 
 test('개수를 자르고 한 글자 검색어에는 전체 결과를 넣지 않는다', () => {
@@ -248,3 +249,16 @@ test('진행 중 요청을 취소한 뒤 도착한 응답은 넘기지 않는다
   resolve({}); await Promise.resolve();
   assert.deepEqual(got, []);
 });
+
+test('onResult가 예외를 던져도 처리되지 않은 거절을 남기지 않는다', () => withUnhandledCheck(async () => {
+  const clock = fakeClock(); let called = 0;
+  const s = core.createSearchScheduler({
+    delay: 250,
+    request: async () => ({}),
+    onResult: () => { called += 1; throw new Error('render'); },
+    ...clock,
+  });
+  s.schedule('회의'); clock.tick(250);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(called, 1);
+}));

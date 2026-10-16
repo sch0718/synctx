@@ -100,7 +100,7 @@
       for (var j = 0; j < repo.matches.length && content.length < FINDER_CONTENT_LIMIT; j++) {
         var m = repo.matches[j];
         content.push({
-          kind: 'content', group: '본문', repo: repo.id, path: m.path, line: m.line,
+          kind: 'content', group: '본문', repo: repo.id, repoName: repo.name || repo.id, path: m.path, line: m.line,
           before: m.before, match: m.match, after: m.after,
         });
       }
@@ -139,7 +139,7 @@
           }
           result.then(function (data) {
             if (mine === seq) opts.onResult(query, data);
-          }, function () { return; });
+          }).catch(function () { return; });
         }, opts.delay);
       },
       cancel: stop,
