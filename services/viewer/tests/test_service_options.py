@@ -209,6 +209,19 @@ class TestStartupCheck:
             monkeypatch.setenv("SYNCTX_ENABLED_SERVICES", enabled)
         _check_service_dependencies(self._config("/cdn"))
 
+    def test_repository_id_shadowing_reserved_path_warns(self, monkeypatch, caplog):
+        from app import _check_service_dependencies
+        from synctx_common.config import SynctxConfig, ViewerConfig, RepoProfile, RepoAuthConfig
+        monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)
+        cfg = SynctxConfig(
+            viewer=ViewerConfig(cdn_base_url="/cdn"),
+            repositories=[RepoProfile(id="search", name="Search", url="https://git.test/s.git",
+                                      auth=RepoAuthConfig(type="none"))],
+        )
+        with caplog.at_level("WARNING"):
+            _check_service_dependencies(cfg)
+        assert any("search" in record.getMessage() for record in caplog.records)
+
     def test_startup_fails_fast(self, monkeypatch):
         import app as viewer_app
         monkeypatch.setenv("SYNCTX_ENABLED_SERVICES", "viewer,marp")

@@ -761,6 +761,64 @@ class TestAPIRoutes:
         assert resp.status_code == 404
 
 
+class TestSearchApi:
+    def test_search_returns_repo_groups(self, client, mock_repo_manager):
+        from synctx_common.git_manager import GrepMatch, GrepResult
+        mock_repo_manager.grep.return_value = GrepResult("ok", [GrepMatch("docs/a.md", 2, "Hello Search")], False)
+        data = client.get("/api/search", params={"q": " search "}).json()
+        assert data["query"] == "search"
+        assert data["repos"] == [{"id": "test-repo", "name": "Test Repo", "status": "ok", "truncated": False,
+                                  "matches": [{"path": "docs/a.md", "line": 2, "before": "Hello ", "match": "Search", "after": ""}]}]
+        kwargs = mock_repo_manager.grep.call_args.kwargs
+        assert ":(glob,icase)**/*.md" in kwargs["pathspecs"] and kwargs["limit"] == 50 and 0 < kwargs["timeout"] <= 3.0
+
+    def test_search_hides_unviewable_files(self, client, mock_repo_manager):
+        from synctx_common.git_manager import GrepResult
+        mock_repo_manager.grep.return_value = GrepResult("ok", [], False)
+        client.get("/api/search", params={"q": "ab"})
+        path_filter = mock_repo_manager.grep.call_args.kwargs["path_filter"]
+        assert path_filter("docs/a.md") and not path_filter(".env") and not path_filter("x/.md")
+        assert not path_filter("docs/a\nb.md") and not path_filter("docs/a\tb.md")
+        assert not path_filter(".hidden.md") and not path_filter(".gitignore") and not path_filter(".github/x.md")
+
+    @pytest.mark.parametrize("q", ["a", "x" * 101, "a\nb", ""])
+    def test_search_rejects_bad_queries(self, client, mock_repo_manager, q):
+        assert client.get("/api/search", params={"q": q}).status_code == 400
+        mock_repo_manager.grep.assert_not_called()
+
+    def test_search_unknown_repo_and_ref_without_repo(self, client):
+        assert client.get("/api/search", params={"q": "ab", "repo": "nope"}).status_code == 404
+        assert client.get("/api/search", params={"q": "ab", "ref": "feat"}).status_code == 400
+
+    def test_search_passes_non_default_ref_only(self, client, mock_repo_manager):
+        from synctx_common.git_manager import GrepResult
+        mock_repo_manager.grep.return_value = GrepResult("ok", [], False)
+        client.get("/api/search", params={"q": "ab", "repo": "test-repo", "ref": "main"})
+        assert mock_repo_manager.grep.call_args.args[1] is None
+        client.get("/api/search", params={"q": "ab", "repo": "test-repo", "ref": "feat/x"})
+        assert mock_repo_manager.grep.call_args.args[1] == "feat/x"
+
+    def test_search_failure_hides_exception_text(self, client, mock_repo_manager):
+        mock_repo_manager.grep.side_effect = RuntimeError("Authorization: Basic SECRET")
+        resp = client.get("/api/search", params={"q": "ab"})
+        assert resp.status_code == 200 and resp.json()["repos"][0]["status"] == "failed"
+        assert "SECRET" not in resp.text
+
+    def test_search_with_no_repositories(self, client, monkeypatch):
+        import app as viewer_app
+        monkeypatch.setattr(viewer_app.config, "repositories", [])
+        resp = client.get("/api/search", params={"q": "ab"})
+        assert resp.status_code == 200 and resp.json() == {"query": "ab", "repos": []}
+
+    def test_search_requires_viewer_role(self, client, monkeypatch):
+        import app as viewer_app
+        monkeypatch.setattr(viewer_app.config.authz, "enabled", True)
+        monkeypatch.setattr(viewer_app.config.authz.role_mappings, "viewer", ["synctx-viewer"])
+        assert client.get("/api/search", params={"q": "ab"}).status_code == 403
+        ok = {"X-Forwarded-Groups": "synctx-viewer"}
+        assert client.get("/api/search", params={"q": "a"}, headers=ok).status_code == 400
+
+
 class TestErrorPages:
     def test_unknown_repo_page_is_html(self, client):
         resp = client.get("/nope")

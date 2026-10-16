@@ -24,6 +24,7 @@ from renderer import NO_TITLE_FALLBACK, render_markdown, rewrite_links, THEME_CS
 
 import embed_view
 import meeting as meeting_mode
+import search as search_mod
 import viewer_ui as ui
 
 __version__ = "0.1.0"
@@ -70,6 +71,10 @@ def _check_service_dependencies(cfg) -> None:
             f"CDN 서비스가 꺼져 있는데 viewer.cdn_base_url이 상대 경로입니다({cdn_url}). "
             "내부 CDN의 절대 주소를 지정하거나 CDN을 켜세요."
         )
+    for repo in cfg.repositories:
+        if repo.id in RESERVED_PATHS:
+            logger.warning("repository_id_reserved repo_id=%s: 예약된 경로와 같아 /view/%s 주소로 열 수 없습니다",
+                           repo.id, repo.id)
 
 
 @asynccontextmanager
@@ -576,9 +581,48 @@ def _tree_level_html(manager, repo_id, path, ref, link_ref, current):
     return html
 
 
+# ── Search ──
+
+SEARCH_PATHSPECS = search_mod.viewable_pathspecs(MARKDOWN_EXTENSIONS, CODE_LANGUAGE_MAP, CODE_FILENAME_MAP)
+SEARCH_QUERY_ERROR = "검색어는 두 글자 이상, 100글자 이하로 한 줄만 입력하세요"
+
+
+def _searchable_path(path: str) -> bool:
+    # 문서 주소 규칙이 제어 문자를 받지 않고, 파일 트리가 숨기는 점 경로는 검색에서도 뺀다
+    if any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return False
+    if any(part.startswith(".") for part in path.split("/")):
+        return False
+    return is_viewable(path)
+
+
+async def _run_search(query: str, repo_id: str | None, ref: str | None) -> list[dict]:
+    if repo_id is None:
+        repos = list(config.repositories)
+    else:
+        repos = [repo for repo in config.repositories if repo.id == repo_id]
+    managers = [(repo.id, repo.name, get_repo_manager(repo.id)) for repo in repos]
+    effective_ref = None
+    if repo_id is not None and managers and ref and ref != managers[0][2].profile.default_ref:
+        effective_ref = ref
+    return await search_mod.search_repositories(managers, query, effective_ref, SEARCH_PATHSPECS, _searchable_path)
+
+
+@app.get("/api/search", dependencies=[Depends(verify_viewer_access)])
+async def search_documents(q: str | None = None, repo: str | None = None, ref: str | None = None):
+    query = search_mod.normalize_query(q)
+    if query is None:
+        raise HTTPException(status_code=400, detail=SEARCH_QUERY_ERROR)
+    if ref and not repo:
+        raise HTTPException(status_code=400, detail="ref는 저장소를 지정할 때만 쓸 수 있습니다")
+    if repo and not _repo_known(repo):
+        raise HTTPException(status_code=404, detail=f"Repository not found: {repo}")
+    return {"query": query, "repos": await _run_search(query, repo, ref)}
+
+
 # ── View Routes ──
 
-RESERVED_PATHS = {"api", "raw", "static", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
+RESERVED_PATHS = {"api", "raw", "static", "search", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
 
 
 def _repo_known(repo_id: str) -> bool:
