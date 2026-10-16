@@ -1,5 +1,6 @@
 import os
 import asyncio
+import difflib
 import functools
 import json
 import html as html_lib
@@ -566,6 +567,53 @@ def _tree_level_html(manager, repo_id, path, ref, link_ref, current):
 RESERVED_PATHS = {"api", "raw", "static", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
 
 
+def _repo_known(repo_id: str) -> bool:
+    return any(r.id == repo_id for r in config.repositories)
+
+
+def _html_error(status_code: int, kind: str, *, repo_id=None, path=None, ref=None,
+                suggestions=(), download_href=None, theme="github-light") -> HTMLResponse:
+    repo = repo_id if repo_id and _repo_known(repo_id) else None
+    try:
+        branches = _lookup_branches(get_repo_manager(repo), repo) if repo else None
+        header = _shell_header(repo, ref if repo else None, theme, branches)
+        controls = _nav_controls(repo, ref if repo else None, theme, branches)
+    except Exception:
+        logger.warning("오류 화면 머리를 만들지 못했습니다", exc_info=True)
+        repo = None
+        header = _shell_header(None, None, theme)
+        controls = _nav_controls(None, None, theme)
+    body = ui.render_mobile_nav(controls=controls) + ui.error_body(
+        kind, view_prefix=VIEW_PREFIX, repo_id=repo, path=path, ref=ref,
+        suggestions=suggestions, download_href=download_href)
+    html = ui.page(view_prefix=VIEW_PREFIX, title=ui.ERROR_COPY[kind][0], theme=theme, header=header,
+                   body=body, repo_id=repo or "", ref=(ref or "") if repo else "", page_class="page-error")
+    return HTMLResponse(content=html, status_code=status_code)
+
+
+def _file_error_page(repo_id: str, path: str, ref: str | None, status_code: int, theme: str) -> HTMLResponse:
+    query = f"?path={quote(path)}" + (f"&ref={quote(ref, safe='')}" if ref else "")
+    download = f"{VIEW_PREFIX}/api/repos/{quote(repo_id, safe='')}/download{query}"
+    if status_code == 413:
+        return _html_error(413, "too_large", repo_id=repo_id, path=path, ref=ref, download_href=download, theme=theme)
+    if status_code == 415:
+        return _html_error(415, "unsupported", repo_id=repo_id, path=path, ref=ref, download_href=download, theme=theme)
+    manager = get_repo_manager(repo_id)
+    effective_ref = ref if ref and ref != manager.profile.default_ref else None
+    try:
+        paths = set(manager.file_paths(ref=effective_ref))
+    except Exception:
+        # 목록 조회 실패는 저장소 장애다. 파일이 없다고 안내하지 않는다
+        logger.warning("파일 목록을 읽지 못했습니다: %s", repo_id, exc_info=True)
+        return _html_error(502, "failed", repo_id=repo_id, path=path, ref=ref, theme=theme)
+    if path not in paths:
+        candidates = sorted(p for p in paths if is_viewable(p))
+        suggestions = difflib.get_close_matches(path, candidates, n=5, cutoff=0.4)
+        return _html_error(404, "file_missing", repo_id=repo_id, path=path, ref=ref, suggestions=suggestions, theme=theme)
+    logger.error("문서를 그리지 못했습니다: %s/%s (status %s)", repo_id, path, status_code)
+    return _html_error(500, "failed", repo_id=repo_id, path=path, ref=ref, theme=theme)
+
+
 @app.get("/", dependencies=[Depends(verify_viewer_access)])
 def view_index():
     repos = config.repositories
@@ -595,6 +643,8 @@ def view_index():
 def view_repo(repo_id: str, ref: str | None = None, path: str | None = None):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
+    if not _repo_known(repo_id):
+        return _html_error(404, "repo_missing", repo_id=repo_id)
     manager = get_repo_manager(repo_id)
     repo = manager.profile
     effective_ref = ref if ref and ref != repo.default_ref else None
@@ -992,4 +1042,9 @@ def render_board(repo_id: str, version: str):
 def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
-    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
+    if not _repo_known(repo_id):
+        return _html_error(404, "repo_missing", repo_id=repo_id, theme=theme)
+    try:
+        return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
+    except HTTPException as exc:
+        return _file_error_page(repo_id, path, ref, exc.status_code, theme)

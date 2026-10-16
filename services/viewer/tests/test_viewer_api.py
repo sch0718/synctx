@@ -142,7 +142,8 @@ class TestMaxRenderSize:
         mock_repo_manager.file_size.return_value = 2000
         resp = client.get("/test-repo/docs/large.md")
         assert resp.status_code == 413
-        assert "too large" in resp.json()["detail"].lower()
+        assert "text/html" in resp.headers["content-type"]
+        assert "화면에 보이기에 너무 큰 파일입니다" in resp.text
 
 
 class TestHTMLSanitization:
@@ -712,6 +713,70 @@ class TestAPIRoutes:
     def test_repo_not_found(self, client):
         resp = client.get("/nonexistent/docs/test.md")
         assert resp.status_code == 404
+
+
+class TestErrorPages:
+    def test_unknown_repo_page_is_html(self, client):
+        resp = client.get("/nope")
+        assert resp.status_code == 404
+        assert "text/html" in resp.headers["content-type"]
+        assert "이 저장소를 찾을 수 없습니다" in resp.text
+        assert 'href="/view/">저장소 목록</a>' in resp.text
+        assert 'class="shell-nav shell-nav-mobile-only"' in resp.text and 'data-action="toggle-nav"' in resp.text
+
+    def test_missing_file_suggests_similar_names(self, client, mock_repo_manager):
+        mock_repo_manager.file_size.side_effect = RuntimeError("Authorization: Basic SECRET")
+        mock_repo_manager.read_file_text.side_effect = RuntimeError("Authorization: Basic SECRET")
+        mock_repo_manager.file_paths.return_value = {"docs/readme.md", "docs/guide.md"}
+        resp = client.get("/test-repo/docs/readm.md")
+        assert resp.status_code == 404
+        assert "이 파일을 찾을 수 없습니다" in resp.text
+        assert 'href="/view/test-repo/docs/readme.md"' in resp.text
+        assert "SECRET" not in resp.text and "Authorization" not in resp.text
+
+    def test_existing_file_failure_is_generic(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.side_effect = RuntimeError("boom SECRET")
+        mock_repo_manager.file_paths.return_value = {"docs/a.md"}
+        resp = client.get("/test-repo/docs/a.md")
+        assert resp.status_code == 500
+        assert "문서를 불러오지 못했습니다" in resp.text and "SECRET" not in resp.text
+
+    def test_lookup_failure_is_not_reported_as_missing(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.side_effect = RuntimeError("boom")
+        mock_repo_manager.file_paths.side_effect = RuntimeError("Authorization: Basic SECRET")
+        resp = client.get("/test-repo/docs/a.md")
+        assert resp.status_code == 502
+        assert "문서를 불러오지 못했습니다" in resp.text
+        assert "이 파일을 찾을 수 없습니다" not in resp.text and "SECRET" not in resp.text
+
+    def test_binary_file_page_is_unsupported(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.side_effect = UnicodeDecodeError("utf-8", b"\x89", 0, 1, "invalid start byte")
+        resp = client.get("/test-repo/img/logo.png")
+        assert resp.status_code == 415
+        assert "화면에서 볼 수 없는 형식입니다" in resp.text
+
+    def test_too_large_offers_download(self, client, mock_repo_manager):
+        mock_repo_manager.file_size.return_value = 10_000
+        resp = client.get("/test-repo/docs/big.md")
+        assert resp.status_code == 413
+        assert 'href="/view/api/repos/test-repo/download?path=docs/big.md">원본 내려받기</a>' in resp.text
+
+    def test_unsupported_type_offers_download(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "x"
+        resp = client.get("/test-repo/files/a.bin")
+        assert resp.status_code == 415
+        assert "화면에서 볼 수 없는 형식입니다" in resp.text
+
+    def test_error_page_escapes_path(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.side_effect = RuntimeError("x")
+        mock_repo_manager.file_paths.return_value = set()
+        resp = client.get('/test-repo/%22%3E%3Cscript%3Ealert(1)%3C%2Fscript%3E.md')
+        assert "<script>alert(1)" not in resp.text
+
+    def test_api_errors_stay_json(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.side_effect = RuntimeError("x")
+        resp = client.get("/api/repos/test-repo/render", params={"path": "docs/a.md"})
+        assert "application/json" in resp.headers["content-type"]
 
 
 class TestDownloadFilename:
