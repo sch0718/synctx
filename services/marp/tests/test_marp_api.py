@@ -117,8 +117,32 @@ class TestPublish:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
-        assert "my-deck" in data["url"]
+        assert data["url"] == "/slides/my-deck.html"
+        assert data["path"].endswith("/my-deck.html")
+        assert mock_manager.commit_and_push.call_args.kwargs["message"] == "docs(slides): publish my-deck.html"
         mock_manager.commit_and_push.assert_called_once()
+
+    def test_publish_keeps_html_suffix(self, client, tmp_path, monkeypatch):
+        monkeypatch.setenv("MARP_WORK_DIR", str(tmp_path))
+        monkeypatch.setattr("app.config.marp.publish_repo", "https://git.internal/slides.git")
+        monkeypatch.setattr("app.config.marp.worktree_path", str(tmp_path / "worktree"))
+
+        def fake_run(cmd, **kwargs):
+            out_idx = cmd.index("-o") + 1
+            Path(cmd[out_idx]).write_text("<html>Published</html>")
+            return MagicMock(returncode=0)
+
+        mock_manager = MagicMock()
+        mock_manager.ensure = AsyncMock()
+        mock_manager.commit_and_push = MagicMock()
+
+        with patch("app.subprocess.run", side_effect=fake_run), \
+             patch("app.get_publish_manager", return_value=mock_manager):
+            resp = client.post("/api/marp/publish", json={"markdown": "# Slide", "filename": "my-deck.html"})
+
+        assert resp.status_code == 200
+        assert resp.json()["url"] == "/slides/my-deck.html"
+        assert resp.json()["path"].endswith("/my-deck.html")
 
     def test_publish_no_repo_configured(self, client, monkeypatch):
         monkeypatch.setattr("app.config.marp.publish_repo", "")

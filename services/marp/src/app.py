@@ -306,14 +306,13 @@ async def publish_html(req: PublishRequest):
     with publish_lock():
         manager = get_publish_manager()
         await manager.ensure()
-        target_path = f"{config.marp.publish_base_path.strip('/')}/{req.filename}"
-        if not target_path.endswith(".html"):
-            target_path += ".html"
+        name = req.filename if req.filename.endswith(".html") else f"{req.filename}.html"
+        target_path = f"{config.marp.publish_base_path.strip('/')}/{name}"
         try:
             manager.commit_and_push(
                 file_path=target_path,
                 content=html_content,
-                message=f"docs(slides): publish {req.filename}",
+                message=f"docs(slides): publish {name}",
                 author_name=req.author_name,
                 author_email=req.author_email
             )
@@ -324,7 +323,7 @@ async def publish_html(req: PublishRequest):
     return {
         "status": "success",
         "path": target_path,
-        "url": f"/slides/{req.filename}"
+        "url": f"/slides/{name}"
     }
 
 MARP_BUILTIN_THEMES = [
