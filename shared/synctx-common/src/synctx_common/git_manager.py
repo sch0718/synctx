@@ -320,11 +320,12 @@ class GitRepoManager:
         result = self._run_git("cat-file", "-s", f"{resolved}:{target}")
         return int(result.stdout.decode("utf-8").strip())
 
-    def last_commit(self, path: str) -> CommitInfo:
-        target = self.validate_path(path)
-        result = self._run_git(
-            "log", "-1", "--format=%H%x1f%an%x1f%aI", self._default_remote_ref(), "--", target
-        )
+    def last_commit(self, path: str = "", ref: str | None = None) -> CommitInfo:
+        revision = self._resolve_ref(ref) if ref else self._default_remote_ref()
+        args = ["log", "-1", "--format=%H%x1f%an%x1f%aI", revision]
+        if path:
+            args += ["--", self.validate_path(path)]
+        result = self._run_git(*args)
         sha, author, authored_at = result.stdout.decode("utf-8").strip().split("\x1f")
         return CommitInfo(sha=sha, author=author, authored_at=authored_at)
 

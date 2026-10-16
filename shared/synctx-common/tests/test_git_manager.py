@@ -220,3 +220,23 @@ async def test_concurrent_ensure_from_separate_managers_of_same_repo_is_serializ
     await asyncio.gather(*(m.ensure() for m in managers))
     assert [m.status for m in managers] == ["ready", "ready"]
     assert {m.head_sha() for m in managers} == {_git(bare, "rev-parse", "main")}
+
+
+@pytest.mark.asyncio
+async def test_last_commit_for_repo_and_branch(tmp_path, remote):
+    bare, work, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    head = _git(bare, "rev-parse", "main")
+    assert manager.last_commit("").sha == head
+    assert manager.last_commit("docs/a.md").sha == _git(work, "log", "-1", "--format=%H", "--", "docs/a.md")
+
+    # _commit 헬퍼는 main으로 push하므로 feature 커밋은 직접 만든다
+    _git(work, "checkout", "-q", "-b", "feature")
+    (work / "docs/a.md").write_text("feature\n")
+    _git(work, "commit", "-qam", "feature edit")
+    _git(work, "push", "-q", "origin", "feature")
+    feature_sha = _git(work, "rev-parse", "HEAD")
+    assert manager.last_commit("docs/a.md", ref="feature").sha == feature_sha
+    assert manager.last_commit("", ref="feature").sha == feature_sha
+    assert manager.last_commit("docs/a.md").sha != feature_sha
