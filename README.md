@@ -117,6 +117,42 @@ flowchart TB
 | **Slides Server** | 출판된 프레젠테이션 HTML 정적 서빙 | Nginx | Deployment + PVC |
 | **Outbound Feedback Exporter** | OpenProject 제한 필드 변경 → 서명된 메일 이벤트 반출 (선택) | Python CLI + SMTP | CronJob 또는 Deployment |
 
+### 배포 방식
+
+서비스마다 켜고 끌 수 있다. 필요한 서비스만 배포하는 것이 기본 사용법이다(예: Viewer·Marp·Slides만, 여기에 Draw.io 추가).
+
+| 서비스 | K8s (Helm) | Docker Compose | 옵션 이름 |
+|--------|-----------|----------------|-----------|
+| Viewer | 지원 | 지원 (1단계) | `viewer` |
+| CDN | 지원 | 지원 (1단계) | `cdn` |
+| Marp | 지원 | 지원 (1단계) | `marp` |
+| Slides Server | 지원 | 지원 (1단계) | `slides` |
+| Draw.io | 지원 | 지원 (1단계) | `drawio` |
+| Sync Engine | 지원 | 2단계 | `sync` |
+| Outbound Feedback | 지원 (기본 끔) | 2단계 | `feedback` |
+
+- **K8s (Helm)**: `<서비스>.enabled`로 켜고 끈다. 예: `--set drawio.enabled=false`. 꺼진 서비스는 Deployment·Service·Ingress 경로를 만들지 않는다.
+- **Docker Compose**: 옵션 파일 `deploy/docker/synctx.env`의 `SYNCTX_SERVICES=viewer,cdn,marp,slides`처럼 켤 서비스를 쉼표로 적는다. 외부 포트는 `gateway`(nginx) 하나만 연다.
+- 서비스 사이 의존성(CDN 없이 Viewer를 쓰는 경우 등)과 알려진 한계는 [아키텍처 설계](docs/architecture.md)의 "서비스 옵션과 의존성"을 참조한다.
+
+### Docker Compose 빠른 시작
+
+폐쇄망 레지스트리(`registry.local:5000`)에 synctx 이미지가 올라가 있어야 한다. Docker Compose v2.17 이상이 필요하다.
+
+```bash
+cp deploy/docker/synctx.env.example deploy/docker/synctx.env
+cp deploy/docker/secrets.env.example deploy/docker/secrets.env
+# synctx.env: SYNCTX_SERVICES, SYNCTX_IMAGE_TAG(0.1.0-<git-sha>), SYNCTX_SLIDES_REPO_URL 수정
+# secrets.env: GIT_READ_TOKEN, GIT_PUBLISH_TOKEN 입력
+# SYNCTX_CONFIG_FILE이 가리키는 .synctx.yaml 준비 (인증 프록시가 없으면 authz.enabled: false)
+
+scripts/docker/deploy.sh --check   # 옵션 검사와 게이트웨이 설정 미리 보기(배포하지 않음)
+scripts/docker/deploy.sh           # 배포
+scripts/docker/down.sh             # 중지 (볼륨 유지)
+```
+
+운영 명령은 `scripts/docker/compose.sh -- ps`처럼 실행한다. 절차 전체는 [운영 서비스 설계](docs/production-service-design.md)의 Docker 배포 Runbook을 참조한다.
+
 ## Viewer Service (마크다운 뷰어)
 
 기존 `markdown_converter`(md-preview)의 발전형. Git 저장소의 마크다운 문서를 웹에서 열람한다.
@@ -379,6 +415,8 @@ synctx/
 │       │   └── sync-sidecar.sh        # Slides sync sidecar 스크립트
 │       └── templates/
 │           ├── _helpers.tpl
+│           ├── validate.yaml          # 서비스 옵션 의존성 검사 (synctx.validate)
+│           ├── NOTES.txt              # 켜진 서비스 요약과 의존성 경고
 │           ├── services.yaml          # 전 서비스 Service 리소스
 │           ├── configmap.yaml         # .synctx.yaml ConfigMap
 │           ├── secret.yaml            # Feedback HMAC/salt/SMTP
@@ -399,12 +437,25 @@ synctx/
 │           ├── servicemonitor.yaml
 │           └── prometheusrule.yaml
 │
+├── deploy/
+│   └── docker/                        # Docker Compose 배포
+│       ├── compose.yaml               # 서비스 정의 (서비스마다 profile)
+│       ├── compose.tls.yaml           # TLS일 때 덧붙이는 443 포트·인증서 마운트
+│       ├── synctx.env.example         # 옵션·이미지·포트 예시 (복사해서 synctx.env로 사용)
+│       ├── secrets.env.example        # 토큰 예시 (복사해서 secrets.env로 사용)
+│       └── .gitignore                 # synctx.env, secrets.env, .generated/, tls/ 제외
+│
 ├── cdn-data/                          # CDN 초기 벤더 파일
 │   ├── mermaid/10.9.1/
 │   ├── highlight.js/
 │   └── ...
 │
 └── scripts/
+    ├── docker/                        # Docker Compose 배포 스크립트
+    │   ├── deploy.sh                  # 검사 → 게이트웨이 설정 생성 → up → 꺼진 서비스 정리 → CDN 채우기
+    │   ├── down.sh                    # 중지 (--volumes일 때만 볼륨 삭제)
+    │   ├── compose.sh                 # 배포와 같은 인자로 docker compose 명령 실행
+    │   └── seed_cdn.py                # cdn 컨테이너 안에서 vendor 파일 채우기
     ├── download-cdn-vendor.sh         # CDN 벤더 파일 다운로드
     ├── generate-manifest.sh           # SHA-256 artifact manifest 생성
     ├── backup-restore.sh              # PVC 백업/복구

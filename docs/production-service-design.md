@@ -141,6 +141,58 @@ sequenceDiagram
 
 Ingress 우회 접근은 NetworkPolicy로 차단한다.
 
+#### 3.1.1 Docker 게이트웨이의 인증 경계
+
+Docker Compose 배포에서는 `gateway`(nginx)가 Ingress 역할을 한다. 외부 포트는 게이트웨이만 열고, 나머지 컨테이너는 compose 네트워크 안에서만 닿는다.
+
+- 권한 헤더(`X-Forwarded-User`, `X-Forwarded-Email`, `X-Forwarded-Groups`)는 기본적으로 빈 값으로 덮어 지운다. 게이트웨이에 직접 닿는 사용자가 관리자 그룹을 주장하지 못하게 하기 위해서다.
+- 앞단 인증 프록시가 이 헤더를 넣어 줄 때만 `SYNCTX_TRUSTED_AUTH_PROXY=true`로 둔다. 신뢰 모드는 헤더를 넘기는 대신 `SYNCTX_TRUSTED_PROXY_CIDRS`에 든 출발지만 받고(nginx `allow`/`deny all`) 나머지는 403이다.
+  - `SYNCTX_TRUSTED_PROXY_CIDRS`가 비어 있거나 `0.0.0.0/0`처럼 접두사 길이 0인 값이면 배포를 멈춘다. 형식이 잘못된 값(IPv4 옥텟·접두사 범위 초과)도 멈춘다.
+  - `SYNCTX_BIND_ADDRESS`가 `0.0.0.0`(또는 `::`)이면 배포를 멈춘다. 게이트웨이 포트는 인증 프록시만 닿아야 한다(프록시 전용 인터페이스에 바인딩하고 그 밖의 접근은 방화벽으로 막는다).
+  - **게이트웨이 접근 로그의 출발지가 Docker 브리지 게이트웨이(예: `172.18.0.1`)로 보이면 그 주소를 허용 목록에 넣지 않는다.** 그 주소는 같은 호스트의 모든 프로세스와 포트 공개 경로(루프백 바인딩, userland-proxy, Docker Desktop)가 함께 쓰므로 허용 목록으로 프록시와 직접 접속을 구분할 수 없다. 그래서 루프백(`127.0.0.1`)에 바인딩하고 호스트의 프록시를 허용하는 구성은 쓸 수 없다.
+  - 동작하는 구성은 아래 둘이다.
+
+  **구성 1. 인증 프록시가 다른 호스트에 있을 때.** 공개 포트의 DNAT는 원래 출발지를 유지하므로 프록시 IP를 그대로 허용한다.
+
+  ```bash
+  # synctx.env (Docker 서버의 프록시 쪽 인터페이스 10.0.0.5, 인증 프록시 10.0.1.20)
+  SYNCTX_BIND_ADDRESS=10.0.0.5
+  SYNCTX_TRUSTED_AUTH_PROXY=true
+  SYNCTX_TRUSTED_PROXY_CIDRS=10.0.1.20
+  ```
+
+  방화벽에서 게이트웨이 포트(80/443 또는 `SYNCTX_HTTP_PORT`·`SYNCTX_HTTPS_PORT`)를 인증 프록시 출발지만 받게 한다. Docker가 공개한 포트는 호스트 INPUT 규칙을 거치지 않으므로 `DOCKER-USER` 체인이나 앞단 네트워크 방화벽에서 막는다.
+
+  **구성 2. 인증 프록시를 compose 네트워크 안의 컨테이너로 띄울 때.** `SYNCTX_EXTRA_COMPOSE_FILES`로 넘기는 오버라이드 파일에서 네트워크 대역과 프록시 주소를 고정하고 그 주소만 허용한다.
+
+  ```yaml
+  # auth-proxy.override.yaml
+  networks:
+    default:
+      ipam:
+        config:
+          - subnet: 172.30.0.0/24
+  services:
+    auth-proxy:
+      image: registry.local:5000/<사내 인증 프록시 이미지>
+      ports:
+        - "443:8443"
+      networks:
+        default:
+          ipv4_address: 172.30.0.10
+  ```
+
+  ```bash
+  # synctx.env
+  SYNCTX_EXTRA_COMPOSE_FILES=./auth-proxy.override.yaml
+  SYNCTX_BIND_ADDRESS=127.0.0.1
+  SYNCTX_TRUSTED_AUTH_PROXY=true
+  SYNCTX_TRUSTED_PROXY_CIDRS=172.30.0.10
+  ```
+
+  사용자는 프록시 포트로만 들어온다. 프록시는 `http://gateway`로 넘긴다. 게이트웨이 공개 포트는 쓰지 않으므로 루프백에 묶어 두며, 이 포트로 들어온 요청은 출발지가 브리지 게이트웨이(`172.30.0.1`)로 보여 403이다.
+- 인증 프록시가 없으면 `.synctx.yaml`에 `authz.enabled: false`를 둔다(기본값 `true`라 모든 요청이 403).
+
 ### 3.2 역할
 
 | 역할 | 권한 |
@@ -884,6 +936,7 @@ Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전
 | synctx/sync | SemVer + git sha |
 | jgraph/drawio | 검증 완료한 명시 버전 |
 | nginx | 검증 완료한 명시 버전 |
+| alpine/git | 검증 완료한 명시 버전 (Docker Compose Slides sidecar) |
 
 `npm install -g @marp-team/marp-cli`는 빌드 시 버전을 고정한다.
 외부에서 다운로드한 모든 JS/CSS/font/image tarball은 SHA-256 manifest에 기록한다.
@@ -943,6 +996,111 @@ resources:
 - **PVC 마운트 및 권한**: `repo-cache`, `sync-state` 등 PVC가 정상적으로 프로비저닝되고 각 Pod에 올바른 권한(RWO/RWX)으로 마운트되는지 검증. (기본 Minikube storage provisioner는 RWX를 완벽히 지원하지 않으므로, 운영 환경 수준의 RWX/NFS 동작 검증을 위해서는 NFS/CSI addon 또는 별도의 dev StorageClass 구성이 필요함)
 - **Webhook & CronJob 동작**: 가상의 GitLab Push Event를 `curl`로 Ingress에 전송하여 Webhook Receiver가 정상적으로 일회성 Sync Job을 생성하는지, 그리고 CronJob 스케줄과 겹칠 때 Lease 기반 잠금이 의도대로 작동하는지 확인.
 - **서비스 간 내부 통신**: Viewer가 CDN의 정적 자산을 정상적으로 로드하는지, Marp Service가 내부 API를 통해 PDF 변환을 수행하는지 점검.
+
+### 8.5 서비스 옵션
+
+서비스마다 켜고 끌 수 있다. 서비스 이름과 순서는 `viewer, cdn, marp, slides, drawio, sync, feedback`이고, 의존성 규칙 D1~D7과 알려진 한계는 `docs/architecture.md`의 "서비스 옵션과 의존성"을 따른다.
+
+K8s(Helm)는 `<서비스>.enabled`로 설정한다(`feedback`만 기본 끔).
+
+```yaml
+# values 예: Draw.io를 끈 배포
+drawio:
+  enabled: false
+```
+
+```bash
+helm upgrade synctx ./helm/synctx --namespace synctx -f values-production.yaml --set drawio.enabled=false
+```
+
+Docker Compose는 옵션 파일 `deploy/docker/synctx.env`의 `SYNCTX_SERVICES`(쉼표 구분)로 설정한다. 1단계는 `viewer, cdn, marp, slides, drawio`만 받고, `sync`·`feedback`은 "2단계" 오류로 중단한다.
+
+```bash
+# Viewer·Marp·Slides만 (Viewer가 쓰는 CDN 포함)
+SYNCTX_SERVICES=viewer,cdn,marp,slides
+# Draw.io 추가
+SYNCTX_SERVICES=viewer,cdn,marp,slides,drawio
+```
+
+- 두 방식 모두 Viewer에 `SYNCTX_ENABLED_SERVICES`를 넘긴다. Marp가 꺼지면 Viewer가 Marp 버튼을 숨기고 `format=pdf`에 503을 돌려주며, Draw.io가 꺼지면 Draw.io 버튼을 숨긴다.
+- CDN을 끄고 사내 CDN을 쓰려면 `.synctx.yaml`의 `viewer.cdn_base_url`을 그 CDN 절대 주소로 지정한다. 상대 경로로 두면 Helm 렌더(차트가 설정을 만들 때)나 Viewer 시작이 오류로 멈춘다.
+- K8s에서 서비스를 꺼도 PVC(`cdn-data`, `slides-worktree`, `sync-state`)는 남는다(데이터 보호). 삭제 절차는 Runbook 12.8.
+
+### 8.6 Docker Compose 배포
+
+K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성과 게이트웨이 동작은 `docs/architecture.md` 10.6, 인증 경계는 3.1.1을 따른다.
+
+#### 서버 요구사항
+
+- Docker Compose v2.17 이상(`up --wait --wait-timeout` 사용), amd64
+- 운영 서버는 폐쇄망 레지스트리(`registry.local:5000`)에서 이미지를 받는다. 반입 절차는 기존 `pull-and-save-images.sh` 흐름(외부에서 pull → tar 저장 → 폐쇄망 반입 → registry push)을 따른다.
+- 서버에는 저장소 체크아웃(또는 아래 디렉터리 묶음)이 같은 상대 위치로 있어야 한다. `compose.yaml`이 `../../helm/synctx/files`(Slides nginx 설정·스크립트)와 `../../cdn-data`(CDN vendor 파일)를 마운트하고, 배포는 `scripts/docker/*.sh`로 한다. 폐쇄망에는 이미지와 함께 `deploy/docker`, `scripts/docker`, `helm/synctx/files`, `cdn-data`를 저장소와 같은 구조로 묶어(예: `git archive HEAD deploy/docker scripts/docker helm/synctx/files cdn-data`) 반입한다. 이미지 태그의 `<git-sha>`와 같은 커밋에서 묶는다.
+- 레지스트리에 있어야 하는 이미지(켠 서비스만 필요하다. synctx 이미지 태그는 `0.1.0-<git-sha>`)
+
+| 이미지 | 용도 |
+|--------|------|
+| `synctx/viewer` | viewer |
+| `synctx/cdn` | cdn |
+| `synctx/marp` | marp |
+| `nginx:1.25.4-alpine` | gateway, slides |
+| `alpine/git:2.43.0` | slides-git |
+| `jgraph/drawio:24.2.5` | drawio |
+
+`synctx/sync`·`synctx/feedback`은 2단계에서 쓴다.
+
+#### 옵션 파일
+
+| 파일 | 내용 |
+|------|------|
+| `deploy/docker/synctx.env` | 서비스 선택, 이미지, 포트, TLS, 신뢰 프록시 옵션 (`synctx.env.example`을 복사) |
+| `deploy/docker/secrets.env` | `GIT_READ_TOKEN`, `GIT_PUBLISH_TOKEN` (`secrets.env.example`을 복사, 권한 600 권장) |
+| `.synctx.yaml` | `SYNCTX_CONFIG_FILE`이 가리키는 설정 파일 |
+
+두 env 파일과 `.synctx.yaml`, `.generated/`, `tls/`는 `deploy/docker/.gitignore`로 git에서 뺀다. 옵션 파일 안의 상대 경로는 `deploy/docker` 기준이고, `--env-file`·`--secrets-file`로 준 상대 경로는 현재 디렉터리 기준이다. 옵션 파일은 `deploy.sh`가 bash로 읽고 docker compose도 읽으므로 공백이 든 값은 큰따옴표로 감싼다(예: `SYNCTX_EXTRA_COMPOSE_FILES="a.yaml b.yaml"`).
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `SYNCTX_SERVICES` | `viewer,cdn,marp,slides` | 켤 서비스(필수) |
+| `SYNCTX_IMAGE_PREFIX` | `registry.local:5000/` | 이미지 접두사. 로컬에서는 빈 값 |
+| `SYNCTX_IMAGE_TAG` | 없음(필수) | `0.1.0-<git-sha>`. `latest`는 거부 |
+| `SYNCTX_CONFIG_FILE` | `./synctx.yaml` | 모든 서비스가 읽는 `.synctx.yaml` |
+| `SYNCTX_SLIDES_REPO_URL` | 없음 | Slides 게시 저장소(slides를 켜면 필수) |
+| `SYNCTX_SLIDES_BRANCH` / `SYNCTX_SLIDES_POLL_SECONDS` | `main` / `60` | 게시 브랜치, 폴링 간격 |
+| `SYNCTX_BIND_ADDRESS` | `0.0.0.0` | 게이트웨이 바인딩 주소 |
+| `SYNCTX_HTTP_PORT` / `SYNCTX_HTTPS_PORT` | `80` / `443` | 게이트웨이 포트 |
+| `SYNCTX_TLS_DIR` / `SYNCTX_TLS_CERT` / `SYNCTX_TLS_KEY` | `./tls` / 없음 / 없음 | `SYNCTX_TLS_DIR` 아래 파일 이름. CERT·KEY는 둘 다 주거나 둘 다 비운다 |
+| `SYNCTX_TRUSTED_AUTH_PROXY` / `SYNCTX_TRUSTED_PROXY_CIDRS` | `false` / 없음 | 신뢰 프록시 모드(3.1.1) |
+| `SYNCTX_MARP_PROXY_TIMEOUT` | `180` | Marp 경로의 게이트웨이 응답 대기(초). 1 이상의 정수만 받는다 |
+| `SYNCTX_PROJECT_NAME` | `synctx` | compose 프로젝트 이름(컨테이너·볼륨 이름 접두사) |
+| `SYNCTX_EXTRA_COMPOSE_FILES` | 없음 | 사내 사정에 맞춘 compose 오버라이드 파일(공백 구분, 여러 개면 큰따옴표) |
+| `SYNCTX_WAIT_TIMEOUT` | `180` | `up --wait` 대기(초) |
+
+- TLS: CERT·KEY를 주면 443 server 블록을 만들고 80은 443으로 돌린다. `compose.tls.yaml`이 443 포트 매핑과 인증서 마운트를 더한다. 하나만 주면 중단한다.
+- 토큰은 `secrets.env`에 두고 필요한 컨테이너(viewer·marp·slides-git)에만 `environment:`로 넘긴다.
+
+#### 배포 흐름 (`scripts/docker/deploy.sh`)
+
+```
+scripts/docker/deploy.sh [--env-file 경로] [--secrets-file 경로] [--check]
+```
+
+1. 옵션 파일을 읽고 검사한다: `SYNCTX_IMAGE_TAG` 필수·`latest` 거부, `SYNCTX_SERVICES` 이름 확인(D1·D6), Slides 게시 저장소 주소(D7)와 Marp 경고(D3), `SYNCTX_CONFIG_FILE` 존재, TLS 짝, 신뢰 모드 조건, `SYNCTX_MARP_PROXY_TIMEOUT` 정수.
+2. `.synctx.yaml`의 sha256을 `SYNCTX_CONFIG_HASH`로 내보낸다. viewer·cdn·marp는 이 값을 라벨 `synctx.config-hash`로 받는다.
+3. 게이트웨이 설정 후보 `.generated/gateway.candidate.conf`를 만든다. `--check`이면 운영 중인 `gateway.conf`는 건드리지 않고 `.generated/gateway.check.conf`에 미리 보기를 만든 뒤 끝낸다(docker를 쓰지 않는다).
+4. gateway와 같은 이미지(`<SYNCTX_IMAGE_PREFIX>nginx:1.25.4-alpine`, 없으면 pull)의 일회용 컨테이너로 후보를 `nginx -t` 검사한다(TLS면 인증서 디렉터리도 마운트). 실패하면 nginx 출력을 보여 주고 운영 중인 `gateway.conf`는 그대로 둔 채 컨테이너를 건드리지 않고 종료 코드 1이다. 통과하면 후보를 `gateway.conf`에 덮어쓴다(bind mount가 끊기지 않게 inode 유지).
+5. `docker compose --profile <켜진 서비스>... up -d --wait`로 시작하고 healthy를 기다린다. 실패하면 컨테이너 로그 끝부분을 보여 주고 종료 코드 1이다.
+6. 꺼진 서비스 컨테이너가 남아 있으면 지운다(볼륨은 유지).
+7. gateway에서 `nginx -t` 후 `nginx -s reload`.
+8. CDN이 켜져 있으면 cdn 컨테이너 안에서 `seed_cdn.py`로 vendor 파일을 채운다(`/seed`가 없거나 비어 있으면 실패).
+
+`seed_cdn.py`는 `/seed` 아래 일반 파일만 대상으로 하고(심볼릭 링크 제외), sha256이 같으면 건너뛰며 다르면 `force=true`로 올린다. `authz.enabled`와 `cdn.upload_auth.enabled`가 켜져 있으면 `role_mappings.cdn_admin`(없으면 `platform_admin`)의 첫 그룹을 보내므로 컨테이너 안에서 직접 부르는 이 경로는 게이트웨이의 헤더 제거와 무관하다.
+
+#### 알려진 한계
+
+- Docker 배포는 1단계(Viewer·CDN·Marp·Slides·Draw.io)만 구현됐다. Sync·Feedback은 2단계다.
+- `.drawio` 파일은 Viewer에서 415라 Draw.io 버튼이 실제로 표시되는 경로가 없다.
+- D2 검사는 상대 경로만 잡는다. 절대 주소가 꺼진 자기 자신의 `/cdn`을 가리키는 경우는 알 수 없다.
+- K8s Ingress와 Viewer→Marp PDF 경로는 60초 제한이 남아 있다(기존 문제). Docker 게이트웨이만 Marp 경로를 180초로 둔다.
 
 ## 9. 관측성과 운영
 
@@ -1226,6 +1384,19 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - 묶음 파일만 바꾸거나 신뢰 설정을 바꿔도 다음 동기화에서 XWiki 페이지가 갱신된다.
 - 비신뢰 저장소와 합본 실패는 안내 문구로 보이고 페이지의 나머지는 정상이다.
 
+### 배포 옵션 (Phase 번호와 별개): Docker 배포 체크리스트
+
+서비스 옵션과 Docker Compose 배포는 새 Phase가 아니다. Phase 번호 체계(1-9)는 그대로다.
+
+- [ ] 옵션 검사: `scripts/docker/deploy.sh --check`가 통과하고 켜진 서비스가 의도와 같다
+- [ ] 이미지 반입: 켠 서비스의 이미지가 `registry.local:5000`에 있고 `SYNCTX_IMAGE_TAG`가 `0.1.0-<git-sha>` 형식이다(`latest` 아님)
+- [ ] `.synctx.yaml` 준비: 인증 프록시가 없으면 `authz.enabled: false`, CDN을 끄면 `viewer.cdn_base_url`이 절대 주소다
+- [ ] TLS: 인증서를 `tls/`에 두고 HTTPS 200, HTTP 301을 확인한다
+- [ ] 헤더 제거 확인: 위조한 `X-Forwarded-Groups`로 직접 요청해도 권한이 올라가지 않는다(신뢰 모드면 허용 목록 밖 출발지는 403)
+- [ ] 신뢰 모드: 3.1.1의 두 구성 중 하나를 따른다(다른 호스트의 프록시는 프록시 쪽 인터페이스 바인딩 + 방화벽, 컨테이너 프록시는 고정 주소). 허용 목록에 Docker 브리지 게이트웨이 주소가 없고, 접근 로그에서 프록시 요청의 출발지가 허용한 주소인지 확인한다
+- [ ] 외부 포트: 게이트웨이 외 컨테이너가 호스트 포트를 열지 않는다(`compose.sh -- ps`)
+- [ ] 볼륨 백업 절차를 한 번 시험했다(Runbook 12.7)
+
 ## 12. Runbook 초안
 
 ### 12.1 Sync 실패
@@ -1277,6 +1448,30 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 5. XWiki 페이지에 스크립트가 글자로 보이거나 iframe이 사라지면, 신뢰 저장소 전용 계정(`html_embed.xwiki_credential_env`)의 공간 스크립트 권한을 확인한다. 공간 `WebPreferences`에 `XWiki.XWikiGlobalRights`(`users=전용 계정`, `levels=script`, `allow=1`)가 있어야 한다. 기본 동기화 계정에는 스크립트 권한을 주지 않는다.
 6. Helm에서 `existingSecret`을 쓰면 `feedback.secrets.xwikiHtmlCredentialEnabled: true`로 `XWIKI_HTML_CREDENTIAL`을 그 Secret의 `xwiki-html-credential` 키에 연결한다. 평문 값(`xwikiHtmlCredential`)은 Chart가 Secret을 만들 때만 쓴다.
 7. 신뢰를 해제하거나 전용 계정을 바꾸면 다음 동기화가 다른 계정으로 게시된 문서를 모두 새 계정으로 다시 게시한다(상태 `synced_files[].publisher` 기준). 본문이 같으면 임시 버전을 한 번 거쳐 작성자를 바꾼다. 실패한 문서는 기록이 바뀌지 않아 다음 실행에서 다시 시도한다. 완료 후 페이지 기록의 작성자가 바뀌었는지 확인한다. md에서 더 이상 게시하지 않는 남은 페이지(md 삭제 후 `on_delete: mark`·`ignore`, 대상을 `openproject`로 변경)는 상태의 `xwiki_orphan: true` 기록으로 추적해 기본 계정으로 다시 저장한다. Sync 로그에서 `XWiki author of orphan page`가 들어간 줄로 성공·실패를 확인한다. 처리에 실패한 문서는 `validation_error`를 빼고 매 실행 다시 시도한다. 원본이 사라진 실패 문서는 삭제로 처리된다.
+
+### 12.7 Docker Compose 배포·운영
+
+1. 배포: `deploy/docker/synctx.env`, `secrets.env`, `.synctx.yaml`을 준비한 뒤 `scripts/docker/deploy.sh --check`로 옵션을 검사하고, 문제가 없으면 `scripts/docker/deploy.sh`를 실행한다. `--check`는 `.generated/gateway.check.conf`만 만들어 운영 중인 게이트웨이 설정을 건드리지 않는다.
+2. 옵션 변경: `SYNCTX_SERVICES`를 고친 뒤 `deploy.sh`를 다시 실행한다. 꺼진 서비스의 컨테이너는 자동으로 지워지고 볼륨은 남는다. 게이트웨이 경로도 함께 갱신된다.
+3. 설정 변경: `.synctx.yaml`만 고쳐도 `deploy.sh`를 다시 실행하면 설정 해시가 바뀐 viewer·cdn·marp만 다시 만든다(앱은 시작할 때만 설정을 읽는다).
+4. 운영 명령: `scripts/docker/compose.sh -- ps`, `-- logs -f viewer`, `-- restart marp`, `-- exec cdn sh`처럼 실행한다. 직접 `docker compose up`은 쓰지 않는다(게이트웨이 설정과 설정 해시를 `deploy.sh`가 만든다).
+5. 중지: `scripts/docker/down.sh`. 볼륨은 유지하며 `--volumes`를 줄 때만 지운다(CDN 업로드 파일, Viewer 저장소 캐시, Slides worktree가 사라진다).
+6. 볼륨 백업: 볼륨 이름은 `<SYNCTX_PROJECT_NAME>_<볼륨>`(기본 `synctx_cdn-data`)이다.
+   ```bash
+   docker run --rm -v synctx_cdn-data:/data:ro -v "$PWD":/backup \
+     --entrypoint tar registry.local:5000/nginx:1.25.4-alpine czf /backup/cdn-data.tgz -C /data .
+   ```
+   복구는 같은 방식으로 새 볼륨에 `tar xzf`한다. 볼륨 목록은 `docker volume ls`로 확인한다.
+7. Viewer가 시작하자마자 종료하고 로그에 CDN 의존성 오류가 있으면(CDN이 꺼졌는데 `viewer.cdn_base_url`이 상대 경로): `SYNCTX_SERVICES`에 `cdn`을 다시 넣거나 `.synctx.yaml`의 `viewer.cdn_base_url`을 사내 CDN 절대 주소로 바꾼 뒤 `deploy.sh`를 다시 실행한다.
+8. 모든 요청이 403이면 `.synctx.yaml`의 `authz.enabled`를 확인한다. 인증 프록시가 없으면 `false`, 있으면 프록시가 헤더를 넣는지와 신뢰 모드 설정(`SYNCTX_TRUSTED_PROXY_CIDRS`)을 확인한다. 신뢰 모드에서 정상 프록시가 403이면 `compose.sh -- logs gateway`로 출발지를 본다. 출발지가 Docker 브리지 게이트웨이(예: `172.18.0.1`)이면 허용하지 말고 3.1.1의 두 구성 중 하나로 바꾼다(그 주소를 허용하면 호스트의 모든 프로세스가 권한 헤더를 위조할 수 있다).
+9. Marp PDF·출판이 시간 초과로 끊기면 `SYNCTX_MARP_PROXY_TIMEOUT`(기본 180초)을 확인한다. 변환 제한(기본 120초)보다 길어야 한다.
+
+### 12.8 K8s에서 서비스를 끈 뒤 데이터 정리
+
+1. `helm upgrade ... --set <서비스>.enabled=false`로 서비스를 끄면 Deployment·Service·Ingress 경로는 사라지지만 PVC(`cdn-data`, `slides-worktree`, `sync-state`)는 남는다(데이터 보호). 서비스를 다시 켜면 남은 PVC를 그대로 쓴다.
+2. 데이터를 정말 지울 때만 운영자가 PVC를 직접 삭제한다: `kubectl -n synctx delete pvc <PVC 이름>`. 삭제 전에 백업(`scripts/backup-restore.sh`)과 StorageClass의 `reclaimPolicy`를 확인한다.
+3. 켜진 서비스가 없거나(D1) CDN이 꺼졌는데 `viewer.cdn_base_url`이 상대 경로이면(D2) `helm upgrade`가 렌더 단계에서 실패한다. 메시지를 보고 옵션이나 `.synctx.yaml`을 고친다.
+4. 업그레이드는 `helm upgrade ... -f values-production.yaml`처럼 values 파일을 넘겨 실행하고 `--reuse-values`는 쓰지 않는다. `--reuse-values`는 이전 릴리스 값을 그대로 써서 차트에 새로 생긴 기본값이 빠진다. `viewer`·`cdn`·`marp`·`slides`·`drawio`·`sync`는 `enabled` 키가 없으면 켜진 것으로 보므로 서비스 옵션이 없던 릴리스를 올려도 서비스가 사라지지는 않는다(`feedback`은 키가 없으면 꺼짐).
 
 ## 13. 남은 외부 검증 항목
 

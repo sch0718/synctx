@@ -1,3 +1,4 @@
+{{- if include "synctx.isEnabled" .Values.sync }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -27,3 +28,4 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "synctx.fullname" . }}-sync
     namespace: {{ .Release.Namespace }}
+{{- end }}

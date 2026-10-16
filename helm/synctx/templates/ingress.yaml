@@ -1,4 +1,20 @@
 {{- if .Values.ingress.enabled }}
+{{- $hosts := list }}
+{{- range .Values.ingress.hosts }}
+{{- $paths := list }}
+{{- range .paths }}
+{{- if not (has .backend (list "viewer" "cdn" "marp" "slides" "drawio")) }}
+{{- fail (printf "ingress 경로 %s의 backend %q는 지원하지 않는 서비스입니다(viewer·cdn·marp·slides·drawio 중 하나)" .path .backend) }}
+{{- end }}
+{{- if include "synctx.isEnabled" (index $.Values .backend) }}
+{{- $paths = append $paths . }}
+{{- end }}
+{{- end }}
+{{- if $paths }}
+{{- $hosts = append $hosts (dict "host" .host "paths" $paths) }}
+{{- end }}
+{{- end }}
+{{- if $hosts }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -17,7 +33,7 @@ spec:
     {{- toYaml .Values.ingress.tls | nindent 4 }}
   {{- end }}
   rules:
-    {{- range .Values.ingress.hosts }}
+    {{- range $hosts }}
     - host: {{ .host }}
       http:
         paths:
@@ -31,4 +47,5 @@ spec:
                   name: http
           {{- end }}
     {{- end }}
+{{- end }}
 {{- end }}

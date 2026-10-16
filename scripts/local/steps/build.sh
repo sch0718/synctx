@@ -7,6 +7,8 @@ source "${SCRIPT_DIR}/../_common.sh"
 
 ONLY_TARGETS=""
 SKIP_TARGETS=""
+IMAGE_TAG="latest"
+LOAD_TO_MINIKUBE=true
 
 usage() {
     cat <<EOF
@@ -17,6 +19,8 @@ synctx Docker 이미지 빌드 + minikube 로드
 옵션:
   --only <targets>   빌드할 대상만 지정 (쉼표 구분)
   --skip <targets>   빌드에서 제외할 대상 (쉼표 구분)
+  --tag <tag>        이미지 태그 (기본 latest. Docker 배포 확인에는 0.1.0-<git-sha>)
+  --no-load          minikube에 올리지 않고 호스트 Docker에만 빌드
   -h, --help         도움말
 
 대상: ${SERVICES[*]}
@@ -33,10 +37,14 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --only)  ONLY_TARGETS="$2"; shift 2 ;;
         --skip)  SKIP_TARGETS="$2"; shift 2 ;;
+        --tag)     IMAGE_TAG="$2"; shift 2 ;;
+        --no-load) LOAD_TO_MINIKUBE=false; shift ;;
         -h|--help) usage ;;
         *) print_error "알 수 없는 옵션: $1"; usage ;;
     esac
 done
+
+export IMAGE_TAG LOAD_TO_MINIKUBE
 
 should_build() {
     local target="$1"
@@ -52,11 +60,13 @@ should_build() {
 # 사전 조건 확인
 print_header "사전 조건 확인"
 
-if ! minikube status &>/dev/null; then
-    print_error "Minikube가 실행되지 않았습니다"
-    exit 1
+if [ "$LOAD_TO_MINIKUBE" = true ]; then
+    if ! minikube status &>/dev/null; then
+        print_error "Minikube가 실행되지 않았습니다"
+        exit 1
+    fi
+    print_success "Minikube 실행 확인"
 fi
-print_success "Minikube 실행 확인"
 
 if ! docker info &>/dev/null; then
     print_error "Docker가 실행되지 않았습니다"
@@ -81,13 +91,20 @@ if [ $BUILD_FAILURES -gt 0 ]; then
     exit 1
 fi
 
-# 3rd-party 이미지 로드
-print_header "3rd-party 이미지 로드"
-for img in "${THIRD_PARTY_IMAGES[@]}"; do
-    load_image "$img"
-done
+if [ "$LOAD_TO_MINIKUBE" = true ]; then
+    # 3rd-party 이미지 로드
+    print_header "3rd-party 이미지 로드"
+    for img in "${THIRD_PARTY_IMAGES[@]}"; do
+        load_image "$img"
+    done
+fi
 
 # 완료
 print_header "빌드 완료"
-print_info "Minikube 이미지 목록:"
-minikube image ls 2>/dev/null | grep -E "${DOCKER_REGISTRY}/|drawio|mailpit" || true
+if [ "$LOAD_TO_MINIKUBE" = true ]; then
+    print_info "Minikube 이미지 목록:"
+    minikube image ls 2>/dev/null | grep -E "${DOCKER_REGISTRY}/|drawio|mailpit" || true
+else
+    print_info "호스트 Docker 이미지 목록:"
+    docker images "${DOCKER_REGISTRY}/*" --format '{{.Repository}}:{{.Tag}} {{.CreatedSince}}' | grep ":${IMAGE_TAG} " || true
+fi

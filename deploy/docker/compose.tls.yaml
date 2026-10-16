@@ -1,0 +1,7 @@
+# TLS를 쓸 때 deploy.sh가 compose.yaml에 덧붙인다.
+services:
+  gateway:
+    ports:
+      - "${SYNCTX_BIND_ADDRESS:-0.0.0.0}:${SYNCTX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ${SYNCTX_TLS_DIR:-./tls}:/etc/nginx/tls:ro

@@ -1,5 +1,6 @@
 #!/bin/bash
 # deploy-synctx.sh - synctx 메인 서비스 Helm 배포
+# 추가 인자는 helm upgrade에 그대로 넘긴다 (예: --set drawio.enabled=false)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,6 +32,7 @@ fi
 helm upgrade --install synctx "${PROJECT_ROOT}/helm/synctx" \
     -n "${NAMESPACE}" \
     "${VALUES_ARGS[@]}" \
+    "$@" \
     --wait --timeout 180s
 
 print_success "synctx Helm 배포 완료"
@@ -94,7 +96,11 @@ seed_cdn_data() {
 }
 
 print_header "CDN vendor 파일 시딩"
-seed_cdn_data
+if kubectl get svc -n "${NAMESPACE}" synctx-cdn >/dev/null 2>&1; then
+    seed_cdn_data
+else
+    print_info "CDN이 꺼져 있어 시딩을 건너뜁니다"
+fi
 
 # 상태 확인
 print_header "배포 상태"

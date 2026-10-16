@@ -1,0 +1,5 @@
+synctx {{ .Chart.Version }} 배포: 켜진 서비스 {{ include "synctx.enabledServices" . }}
+{{- if and (include "synctx.isEnabled" .Values.slides) (not (include "synctx.isEnabled" .Values.marp)) }}
+
+⚠ Slides는 켜져 있지만 Marp가 꺼져 있습니다. 게시 저장소({{ .Values.slides.publishRepoUrl }})를 직접 채우지 않으면 보여 줄 슬라이드가 없습니다.
+{{- end }}

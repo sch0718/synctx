@@ -244,6 +244,55 @@ reports/harness/
 - **버전 디렉토리 구조**: `/{library}/{version}/{file}`
 - **공유 CDN**: Viewer, Marp, XWiki, 기타 내부 서비스가 동일한 CDN을 사용
 
+### 2.7 서비스 옵션과 의존성
+
+서비스마다 켜고 끌 수 있어 필요한 것만 배포한다(예: Viewer·Marp·Slides만, 여기에 Draw.io 추가). K8s(Helm)와 Docker Compose가 같은 서비스 이름과 순서(`viewer, cdn, marp, slides, drawio, sync, feedback`)를 쓴다.
+
+#### 옵션 모델
+
+| 옵션 | 기본값 | Helm | Docker Compose |
+|------|--------|------|----------------|
+| `viewer` | 켬 | `viewer.enabled` | `SYNCTX_SERVICES`에 포함 |
+| `cdn` | 켬 | `cdn.enabled` | 위와 같음 |
+| `marp` | 켬 | `marp.enabled` | 위와 같음 |
+| `slides` | 켬 | `slides.enabled` | 위와 같음 |
+| `drawio` | 켬 | `drawio.enabled` | 위와 같음 |
+| `sync` | 켬 | `sync.enabled` | 2단계 |
+| `feedback` | 끔 | `feedback.enabled` | 2단계 |
+
+- 배포 도구는 켜진 서비스를 위 순서대로 쉼표로 이은 값(예: `viewer,marp,slides,drawio`)을 Viewer 환경변수 `SYNCTX_ENABLED_SERVICES`로 넘긴다. Viewer는 값이 없거나 공백이면 모든 서비스가 켜진 것으로 보므로 기존 배포는 동작이 바뀌지 않는다.
+- Docker Compose 1단계는 `viewer, cdn, marp, slides, drawio`만 받는다. `sync`·`feedback`을 `SYNCTX_SERVICES`에 적으면 "2단계" 오류로 중단한다.
+
+#### 의존성 규칙
+
+| # | 상황 | 처리 | 검사 위치 |
+|---|------|------|-----------|
+| D1 | 켜진 서비스가 없음 | 중단 | Helm `fail`, `deploy.sh` |
+| D2 | Viewer 켜짐, CDN 꺼짐, `viewer.cdn_base_url`이 상대 경로(`/`로 시작하고 `//`가 아님) | 중단 | Helm `fail`(설정을 차트가 만들 때), Viewer 시작 검사(항상) |
+| D3 | Slides 켜짐, Marp 꺼짐 | 경고. 게시 저장소를 직접 채우면 쓸 수 있다 | Helm NOTES, `deploy.sh` |
+| D4 | Marp 꺼짐 | Viewer에서 Marp 버튼 3개(PDF·미리보기·출판)를 숨기고 `format=pdf`는 503 | Viewer |
+| D5 | Draw.io 꺼짐 | Viewer에서 Draw.io 버튼을 숨김 | Viewer |
+| D6 | Docker에서 `sync`·`feedback` 지정 | 중단(2단계 전) | `deploy.sh` |
+| D7 | Slides 켜짐, 게시 저장소 주소 없음 | 중단 | `deploy.sh` (Helm은 기본값이 있어 그대로) |
+
+- D2를 Viewer 시작 검사로도 두는 이유: 외부 ConfigMap(`synctxConfig.create: false`)이나 Docker는 배포 도구가 `.synctx.yaml`을 읽지 않는다. Viewer가 시작할 때 오류 메시지를 남기고 종료하면 어느 배포 방식이든 잡힌다.
+- D4에서 Marp가 꺼진 Marp 문서에는 버튼이 하나도 남지 않으므로 다운로드 버튼이 나온다.
+
+#### 내부망 CDN을 쓸 때 조건
+
+CDN을 끄고 사내에 이미 있는 CDN을 쓰려면 `viewer.cdn_base_url`을 그 CDN의 절대 주소로 지정한다(코드가 절대 주소와 CSP 허용을 이미 지원한다).
+
+- 파일 경로와 버전이 같아야 한다: `mermaid/10.9.1/mermaid.min.js`, `highlight.js/11.9.0/highlight.min.js`, `highlight.js/11.9.0/styles/*.css`
+- 사용자 PC에서 접속할 수 있어야 하고, Viewer가 https이면 CDN도 https여야 한다.
+- `synctx-html` 블록이 그 CDN을 쓰면 `html_embed.allowed_origins`에도 넣는다.
+
+#### 알려진 한계
+
+- `.drawio` 파일은 Viewer 보기 대상 확장자(`CODE_LANGUAGE_MAP`)에 없어 415가 난다. 그래서 지금도 Draw.io 버튼이 실제로 표시되는 경로가 없다. 버튼 표시 조건만 옵션에 맞추고 보기 지원은 다루지 않는다.
+- D2 검사는 상대 경로만 잡는다. 절대 주소가 꺼진 자기 자신의 `/cdn`을 가리키는 경우는 알 수 없다. Helm D2 검사는 `synctxConfig.create: false`이면 건너뛰며(차트가 설정을 읽지 않음), 이때는 Viewer 시작 검사가 잡는다.
+- 알림 규칙(PrometheusRule)은 서비스를 꺼도 그대로 둔다. 대상 메트릭이 없으면 발생하지 않는다.
+- K8s Ingress에는 시간 제한 주석이 없어 ingress-nginx 기본 60초를 쓴다. Viewer가 Marp를 부르는 PDF 다운로드도 httpx 제한이 60초다. 둘 다 Marp 변환 제한 120초보다 짧은 기존 문제이며 이번 범위 밖이다. Docker 게이트웨이만 Marp 경로를 180초로 둔다.
+
 ## 3. Viewer Service 설계
 
 ### 3.1 렌더링 파이프라인
@@ -805,7 +854,9 @@ helm/synctx/
 │   ├── nginx.conf                  # Slides Nginx 설정
 │   └── sync-sidecar.sh             # Slides sync sidecar 스크립트
 └── templates/
-    ├── _helpers.tpl
+    ├── _helpers.tpl                # 서비스 옵션 검사(synctx.validate) 포함
+    ├── validate.yaml               # D1·D2 의존성 검사 (fail)
+    ├── NOTES.txt                   # 켜진 서비스 요약, D3 경고
     ├── configmap.yaml              # .synctx.yaml → ConfigMap
     ├── secret.yaml                 # Feedback HMAC/salt/SMTP Secret
     ├── services.yaml               # 전 서비스 Service 리소스 (통합)
@@ -844,6 +895,7 @@ global:
     - name: registry-secret
 
 viewer:
+  enabled: true
   replicaCount: 2
   image:
     repository: synctx/viewer
@@ -853,6 +905,7 @@ viewer:
     limits: { cpu: 500m, memory: 512Mi }
 
 cdn:
+  enabled: true
   replicaCount: 1
   image:
     repository: synctx/cdn
@@ -865,6 +918,7 @@ cdn:
     requests: { cpu: 50m, memory: 128Mi }
 
 marp:
+  enabled: true
   replicaCount: 1
   image:
     repository: synctx/marp
@@ -874,6 +928,7 @@ marp:
     limits: { cpu: 1000m, memory: 1Gi }  # Chromium 사용으로 리소스 다소 필요
 
 sync:
+  enabled: true
   schedule: "*/5 * * * *"
   image:
     repository: synctx/sync
@@ -882,6 +937,7 @@ sync:
     requests: { cpu: 50m, memory: 128Mi }
 
 drawio:
+  enabled: true
   replicaCount: 1
   image:
     repository: jgraph/drawio
@@ -893,6 +949,7 @@ drawio:
     limits: { cpu: 500m, memory: 512Mi }
 
 slides:
+  enabled: true
   replicaCount: 1
   image:
     repository: nginx
@@ -909,15 +966,15 @@ ingress:
     - host: synctx.internal
       paths:
         - path: /view
-          service: viewer
+          backend: viewer
         - path: /cdn
-          service: cdn
+          backend: cdn
         - path: /marp
-          service: marp
+          backend: marp
         - path: /drawio
-          service: drawio
+          backend: drawio
         - path: /slides
-          service: slides
+          backend: slides
   tls: []
 
 config:
@@ -972,6 +1029,8 @@ spec:
                 port: { number: 80 }
 ```
 
+서비스를 끄면 그 서비스를 가리키는 경로는 Ingress에서 빠지고, 경로가 하나도 남지 않으면 Ingress를 만들지 않는다. `ingress.hosts[].paths[].backend`가 values에 없는 서비스이면 `fail`로 알린다.
+
 ### 10.4 PVC (Persistent Volume Claim)
 
 CDN 파일과 출판된 HTML은 PVC로 영속화한다:
@@ -1018,8 +1077,78 @@ helm upgrade synctx ./helm/synctx \
 
 # 개별 서비스만 이미지 업데이트
 helm upgrade synctx ./helm/synctx \
+  --namespace synctx \
+  -f values-production.yaml \
   --set marp.image.tag=v1.2.0
+
+# 서비스 끄기 (예: Draw.io 제외)
+helm upgrade synctx ./helm/synctx \
+  --namespace synctx \
+  -f values-production.yaml \
+  --set drawio.enabled=false
 ```
+
+업그레이드는 항상 values 파일(`-f values-production.yaml`)을 넘긴다. `--reuse-values`는 이전 릴리스 값을 그대로 쓰므로 차트에 새로 생긴 기본값이 반영되지 않는다.
+
+#### 서비스 옵션 동작
+
+- `viewer`·`cdn`·`marp`·`slides`·`drawio`·`sync`는 `enabled`(기본 `true`), `feedback`은 `enabled`(기본 `false`)로 켜고 끈다.
+- `viewer`·`cdn`·`marp`·`slides`·`drawio`·`sync`는 `enabled` 키가 없거나 `null`이면 켜진 것으로 본다(`synctx.isEnabled`). `enabled` 키가 없던 이전 릴리스를 `--reuse-values`로 업그레이드해도 서비스가 사라지지 않게 하기 위해서다. `feedback`은 키가 없으면 꺼진 것으로 본다.
+- 꺼진 서비스는 아래 리소스를 만들지 않는다.
+
+| 서비스 | 만들지 않는 리소스 |
+|--------|-------------------|
+| viewer · cdn · marp · drawio | Deployment, Service |
+| slides | Deployment, Service, ConfigMap 2개 |
+| sync | CronJob, ServiceAccount·Role·RoleBinding, NetworkPolicy |
+| feedback | CronJob |
+
+- **PVC(`cdn-data`, `slides-worktree`, `sync-state`)는 서비스를 꺼도 남긴다(데이터 보호).** 렌더 결과에서 빠지면 Helm upgrade가 PVC를 지우고, 동적 프로비저닝 기본값 `reclaimPolicy: Delete`에서는 데이터도 사라진다. 서비스를 다시 켜면 남은 PVC를 그대로 쓴다. 데이터를 지우려면 운영자가 PVC를 직접 삭제한다(production-service-design.md Runbook 참조).
+- Viewer Deployment는 항상 `SYNCTX_ENABLED_SERVICES`를 받는다. 기본값으로 렌더한 결과는 이 환경변수 하나를 빼면 이전과 같다.
+- `templates/validate.yaml`이 `synctx.validate`(`_helpers.tpl`)를 불러 D1(켜진 서비스 없음)과 D2(Viewer 켜짐·CDN 꺼짐인데 `viewer.cdn_base_url`이 상대 경로)를 `fail`로 중단한다. D2는 `synctxConfig.create`일 때만 `synctxConfig.data`를 읽어 검사한다.
+- Ingress 경로의 `backend`는 `viewer`·`cdn`·`marp`·`slides`·`drawio` 중 하나여야 한다. 다른 값이면 렌더가 실패한다.
+- `templates/NOTES.txt`는 켜진 서비스 목록과 D3(Slides 켜짐·Marp 꺼짐) 경고를 출력한다.
+- `scripts/local/steps/deploy-synctx.sh`는 추가 인자를 `helm upgrade`에 넘기고(예: `--set drawio.enabled=false`), CDN Service가 없으면 CDN 채우기를 건너뛴다.
+
+### 10.6 Docker Compose 배포
+
+K8s가 아닌 Docker 서버를 위한 배포 방식이다. Docker Compose만 제공하며 `docker run` 단독 배포는 제공하지 않는다. 서비스 선택은 Compose profile과 옵션 파일(`SYNCTX_SERVICES`)로 한다. 1단계는 Viewer·CDN·Marp·Slides·Draw.io를 지원하고, Sync·Feedback은 2단계에서 다룬다.
+
+```mermaid
+flowchart LR
+    Browser[브라우저] --> Gateway[gateway nginx]
+    Gateway --> Viewer[viewer]
+    Gateway --> CDN[cdn]
+    Gateway --> Marp[marp]
+    Gateway --> Slides[slides]
+    Gateway --> Drawio[drawio]
+    SlidesGit[slides-git] --> Worktree[(slides-worktree)]
+    Slides --> Worktree
+    Marp --> PublishRepo[(게시 저장소)]
+    SlidesGit --> PublishRepo
+```
+
+| 컨테이너 | profile | 이미지 | 볼륨 |
+|----------|---------|--------|------|
+| gateway | 없음(항상) | `nginx:1.25.4-alpine` | `.generated/gateway.conf`, TLS일 때 인증서 |
+| viewer | `viewer` | `synctx/viewer` | `.synctx.yaml`, `viewer-repos` |
+| cdn | `cdn` | `synctx/cdn` | `.synctx.yaml`, `cdn-data`, `cdn-data/`→`/seed`(읽기 전용) |
+| marp | `marp` | `synctx/marp` | `.synctx.yaml`, `marp-work` |
+| slides | `slides` | `nginx:1.25.4-alpine` | `slides-worktree`, `helm/synctx/files/nginx.conf` |
+| slides-git | `slides` | `alpine/git:2.43.0` | `slides-worktree`, `helm/synctx/files/`→`/scripts` |
+| drawio | `drawio` | `jgraph/drawio:24.2.5` | 없음 |
+
+- **게이트웨이만 외부 포트를 연다.** 다른 컨테이너는 compose 네트워크 안에서만 닿으며, K8s의 "Ingress 우회 차단"에 해당한다.
+- `deploy.sh`가 `SYNCTX_SERVICES`에 든 서비스의 경로만으로 `.generated/gateway.conf`를 만든다. 꺼진 서비스 경로는 404다. 경로 규칙(`/view`, `/cdn`, `/marp`, `/slides`, `/drawio`)은 ingress-nginx의 rewrite와 같다. 새 설정은 후보 파일로 만들어 같은 nginx 이미지의 일회용 컨테이너로 `nginx -t`를 통과한 뒤에만 `gateway.conf`에 반영한다. 깨진 설정(인증서·키 불일치 등)이 운영 중인 게이트웨이에 들어가 재시작 때 계속 죽는 일을 막기 위해서다.
+- `resolver 127.0.0.11`과 변수 `proxy_pass`로 Docker DNS를 다시 조회한다. 컨테이너가 재시작해 IP가 바뀌어도 이어지고, 시작할 때 대상 컨테이너가 없어도 nginx가 실패하지 않는다.
+- Marp 경로의 게이트웨이 응답 대기는 `SYNCTX_MARP_PROXY_TIMEOUT`(기본 180초)이다. Marp 변환 제한(기본 120초)보다 짧은 nginx 기본값 60초로는 정상 변환이 끊긴다.
+- 권한 헤더(`X-Forwarded-User`·`X-Forwarded-Email`·`X-Forwarded-Groups`)는 기본적으로 지운다. 신뢰 프록시 모드와 TLS는 production-service-design.md의 3.1과 8.6을 따른다.
+- marp 컨테이너는 네트워크 별칭 `synctx-marp`를 가져, Viewer 기본 설정 `viewer.marp_service_url`(`http://synctx-marp:8000`)을 바꾸지 않아도 PDF 변환이 이어진다.
+- `.synctx.yaml`의 sha256을 라벨 `synctx.config-hash`로 viewer·cdn·marp에 넣는다. 앱은 시작할 때만 설정을 읽으므로, 파일 내용만 바꾸고 `deploy.sh`를 다시 실행해도 해당 컨테이너가 다시 만들어진다.
+- Slides의 nginx 설정과 sidecar 스크립트는 Helm 차트의 `helm/synctx/files/`를 그대로 마운트해 원본을 하나로 둔다.
+- 이미지 주소는 `${SYNCTX_IMAGE_PREFIX}<이름>:<태그>`(접두사 기본값 `registry.local:5000/`)이고, `SYNCTX_IMAGE_TAG`는 필수이며 `latest`는 거부한다.
+- 인증 프록시가 없으면 `.synctx.yaml`에 `authz.enabled: false`를 둔다(기본값 `true`라 모든 요청이 403).
+- 사용법은 `scripts/docker/deploy.sh [--env-file] [--secrets-file] [--check]`, `down.sh [--volumes]`, `compose.sh -- <compose 인자>`다. 절차와 Runbook은 production-service-design.md 8.6과 12.7을 참조한다.
 
 ## 11. 제약 사항과 고려 사항
 
@@ -1113,3 +1242,13 @@ helm upgrade synctx ./helm/synctx \
 5. 메트릭·Alert, 운영 문서
 
 설계: `docs/html-embed-design.md`. Viewer(Phase 1)와 XWiki Sync(Phase 3)에 의존한다.
+
+### 배포 옵션 (Phase 번호와 별개)
+
+서비스별 옵션(Helm `<서비스>.enabled`)과 Docker Compose 배포는 새 Phase가 아니라 Phase 1-9 어디에서든 쓰는 배포 방식이다. Phase 번호 체계(1-9)는 바꾸지 않는다.
+
+- **Docker Compose 배포 1단계**: Viewer·CDN·Marp·Slides·Draw.io (구현됨)
+- **Docker Compose 배포 2단계**: Sync·Feedback (미구현)
+  - Compose에 `sync`·`feedback` profile 추가. 주기 실행은 서비스 안 반복 실행(`--interval`) 또는 호스트 cron의 `docker compose run --rm` 중 2단계 설계에서 고른다.
+  - `lease.py`의 파일 잠금 경로를 설정 가능하게 하고 공유 볼륨에 둔다(현재 `/tmp`).
+  - 시작 시 대상 시스템 접속을 확인한다(Sync: XWiki·OpenProject 중 하나 이상, Feedback: OpenProject·SMTP).

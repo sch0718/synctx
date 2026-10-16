@@ -10,7 +10,9 @@ synctxConfig:
   create: false
   data: ""
 
+# 서비스별 배포 여부. 꺼진 서비스는 리소스와 Ingress 경로를 만들지 않는다.
 viewer:
+  enabled: true
   image:
     repository: synctx/viewer
     tag: "0.1.0"
@@ -25,6 +27,7 @@ viewer:
       memory: 1Gi
 
 cdn:
+  enabled: true
   image:
     repository: synctx/cdn
     tag: "0.1.0"
@@ -44,6 +47,7 @@ cdn:
       memory: 1Gi
 
 sync:
+  enabled: true
   image:
     repository: synctx/sync
     tag: "0.1.0"
@@ -116,6 +120,7 @@ ingress:
           backend: drawio
 
 marp:
+  enabled: true
   image:
     repository: synctx/marp
     tag: "0.1.0"
@@ -130,6 +135,7 @@ marp:
       memory: 2Gi
 
 slides:
+  enabled: true
   image:
     repository: nginx
     tag: "1.25.4-alpine"
@@ -156,6 +162,7 @@ slides:
       memory: 256Mi
 
 drawio:
+  enabled: true
   image:
     repository: jgraph/drawio
     tag: "24.2.5"

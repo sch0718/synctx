@@ -48,10 +48,32 @@ def _startup_sync_finished() -> bool:
     return _startup_sync is None or _startup_sync.done()
 
 
+def _enabled_services() -> frozenset[str] | None:
+    """배포 도구가 넘긴 켜진 서비스 목록. 값이 없으면 None이고 모두 켜진 것으로 본다."""
+    raw = os.getenv("SYNCTX_ENABLED_SERVICES", "")
+    names = {name.strip().lower() for name in raw.split(",") if name.strip()}
+    return frozenset(names) if names else None
+
+
+def _service_enabled(name: str) -> bool:
+    enabled = _enabled_services()
+    return enabled is None or name in enabled
+
+
+def _check_service_dependencies(cfg) -> None:
+    cdn_url = cfg.viewer.cdn_base_url
+    if not _service_enabled("cdn") and cdn_url.startswith("/") and not cdn_url.startswith("//"):
+        raise RuntimeError(
+            f"CDN 서비스가 꺼져 있는데 viewer.cdn_base_url이 상대 경로입니다({cdn_url}). "
+            "내부 CDN의 절대 주소를 지정하거나 CDN을 켜세요."
+        )
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     # 저장소를 다 받을 때까지 기다리면 startup probe 시간을 넘기므로 백그라운드로 돌린다
     global _startup_sync
+    _check_service_dependencies(config)
     _startup_sync = asyncio.create_task(_sync_repos_on_startup())
     try:
         yield
@@ -211,6 +233,9 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
                 media_type="application/octet-stream",
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'},
             )
+
+        if format == "pdf" and not _service_enabled("marp"):
+            raise HTTPException(status_code=503, detail="Marp 서비스가 꺼져 있어 PDF로 변환할 수 없습니다")
 
         if format in ("html", "pdf"):
             try:
@@ -1162,6 +1187,20 @@ def _sanitize_html(html_str: str) -> str:
     return html_str
 
 
+def _build_toolbar(repo_id: str, path: str, is_md: bool, front_matter: dict, ref_param: str) -> str:
+    toolbar_buttons = ""
+    if is_md and bool(front_matter.get("marp", False)) and _service_enabled("marp"):
+        toolbar_buttons += '<button class="btn" onclick="convertMarpPdf()">PDF (Marp)</button>'
+        toolbar_buttons += '<button class="btn btn-secondary" onclick="previewMarpSlide()">미리보기 (Marp)</button>'
+        toolbar_buttons += '<button class="btn btn-secondary" onclick="publishMarpSlide()">출판 (Marp)</button>'
+    if path.endswith(".drawio") and _service_enabled("drawio"):
+        toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
+    if not toolbar_buttons:
+        download_href = f"{VIEW_PREFIX}/api/repos/{repo_id}/download?path={quote(path)}{ref_param}"
+        toolbar_buttons += f'<a class="btn" href="{html_lib.escape(download_href)}">다운로드</a>'
+    return toolbar_buttons
+
+
 def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     manager = get_repo_manager(repo_id)
     effective_ref = ref if ref and ref != manager.profile.default_ref else None
@@ -1226,18 +1265,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         else:
             mermaid_scripts = ""
 
-        toolbar_buttons = ""
-        if is_md:
-            is_marp = bool(front_matter.get("marp", False))
-            if is_marp:
-                toolbar_buttons += '<button class="btn" onclick="convertMarpPdf()">PDF (Marp)</button>'
-                toolbar_buttons += '<button class="btn btn-secondary" onclick="previewMarpSlide()">미리보기 (Marp)</button>'
-                toolbar_buttons += '<button class="btn btn-secondary" onclick="publishMarpSlide()">출판 (Marp)</button>'
-        if path.endswith(".drawio"):
-            toolbar_buttons += '<a class="btn btn-secondary" href="/drawio/" target="_blank">Draw.io</a>'
-        if not toolbar_buttons:
-            download_href = f"{VIEW_PREFIX}/api/repos/{repo_id}/download?path={quote(path)}{ref_param}"
-            toolbar_buttons += f'<a class="btn" href="{html_lib.escape(download_href)}">다운로드</a>'
+        toolbar_buttons = _build_toolbar(repo_id, path, is_md, front_matter, ref_param)
         if is_md:
             meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
         else:

@@ -1,3 +1,4 @@
+{{- if include "synctx.isEnabled" .Values.slides }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -77,3 +78,4 @@ spec:
           configMap:
             name: {{ include "synctx.fullname" . }}-slides-scripts
             defaultMode: 0755
+{{- end }}

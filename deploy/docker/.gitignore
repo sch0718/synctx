@@ -1,0 +1,5 @@
+synctx.env
+secrets.env
+synctx.yaml
+.generated/
+tls/

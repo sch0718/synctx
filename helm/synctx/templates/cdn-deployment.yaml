@@ -1,3 +1,4 @@
+{{- if include "synctx.isEnabled" .Values.cdn }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -72,3 +73,4 @@ spec:
           configMap:
             name: {{ include "synctx.fullname" . }}-config
         {{- end }}
+{{- end }}

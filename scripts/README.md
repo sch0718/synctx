@@ -13,7 +13,16 @@ scripts/
 ├── smoke-test.sh              # 배포 후 smoke test
 ├── external_importer.py       # 외부 피드백 메일 수신 → PR 생성
 ├── tests/                     # 스크립트 테스트
-│   └── test_external_importer.py
+│   ├── test_external_importer.py
+│   ├── test_helm_options.py   # Helm 서비스 옵션 렌더
+│   ├── test_docker_deploy.py  # Docker 배포 검사·게이트웨이 설정
+│   └── test_seed_cdn.py       # CDN 채우기
+├── docker/                    # Docker Compose 배포 (K8s 없는 서버)
+│   ├── deploy.sh              # 검사 → 게이트웨이 설정 → compose up → CDN 채우기
+│   ├── down.sh                # 중지 (--volumes일 때만 볼륨 삭제)
+│   ├── compose.sh             # 같은 compose 인자로 docker compose 명령 실행
+│   ├── seed_cdn.py            # cdn 컨테이너 안에서 vendor 파일 업로드
+│   └── _common.sh             # 공통 함수
 └── local/                     # 로컬 minikube 개발 환경
     ├── setup.sh               # 전체 설치 (one-shot)
     ├── verify.sh              # 환경 검증
@@ -118,6 +127,43 @@ cat email_body.json | python scripts/external_importer.py
 | `OUTBOUND_FEEDBACK_REPLAY_WINDOW_MINUTES` | `1440` | Replay 방지 윈도우 (분) |
 | `OUTBOUND_FEEDBACK_PROCESSED_EVENTS_FILE` | `.synctx-feedback/processed_events.json` | 처리된 이벤트 저장 파일 |
 
+## Docker Compose 배포 (docker/)
+
+K8s 클러스터가 없는 Docker 서버에 synctx를 배포한다. 옵션 파일 `deploy/docker/synctx.env`(`synctx.env.example`을 복사)의 `SYNCTX_SERVICES`로 켤 서비스(`viewer, cdn, marp, slides, drawio`)를 고른다. 옵션과 절차는 `docs/production-service-design.md` 8.6, Runbook은 12.7을 따른다.
+
+### deploy.sh — 배포
+
+옵션을 검사하고 켜진 서비스 경로로 게이트웨이 설정을 만든 뒤, 같은 nginx 이미지로 `nginx -t`를 통과할 때만 운영 설정에 반영하고 `docker compose up --wait`, 꺼진 서비스 정리, 게이트웨이 reload, CDN 채우기 순으로 진행한다.
+
+```bash
+./scripts/docker/deploy.sh                       # deploy/docker/synctx.env, secrets.env 사용
+./scripts/docker/deploy.sh --check               # 검사와 .generated/gateway.check.conf 생성만 (docker 불필요)
+./scripts/docker/deploy.sh --env-file ./prod.env --secrets-file ./prod-secrets.env
+```
+
+`--env-file`·`--secrets-file`의 상대 경로는 현재 디렉터리 기준이다. 옵션 파일 안의 상대 경로는 `deploy/docker` 기준이다.
+
+### down.sh — 중지
+
+```bash
+./scripts/docker/down.sh                         # 컨테이너·네트워크 제거 (볼륨 유지)
+./scripts/docker/down.sh --volumes               # 볼륨도 삭제 (CDN 파일, 저장소 캐시, Slides worktree)
+```
+
+### compose.sh — compose 명령 실행
+
+`deploy.sh`와 같은 compose 파일·옵션 파일·profile로 `docker compose` 명령을 실행한다.
+
+```bash
+./scripts/docker/compose.sh -- ps
+./scripts/docker/compose.sh -- logs -f gateway
+./scripts/docker/compose.sh --env-file ./prod.env -- restart viewer
+```
+
+### seed_cdn.py — CDN 채우기
+
+`deploy.sh`가 cdn 컨테이너 안에서 `python -I -`로 실행한다. `/seed`(저장소의 `cdn-data`) 아래 파일 중 sha256이 다른 것만 CDN에 올린다. 직접 실행할 일은 없다.
+
 ## 로컬 개발 환경 (local/)
 
 minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.local`을 사용한다.
@@ -155,6 +201,8 @@ minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.loc
 ./scripts/local/steps/build.sh                        # 전체 빌드
 ./scripts/local/steps/build.sh --only viewer,cdn,marp # 특정 서비스만
 ./scripts/local/steps/build.sh --skip feedback        # 특정 서비스 제외
+./scripts/local/steps/build.sh --tag 0.1.0-$(git rev-parse --short HEAD)  # 태그 지정 (기본 latest)
+./scripts/local/steps/build.sh --no-load --tag 0.1.0-$(git rev-parse --short HEAD)  # minikube에 올리지 않고 호스트 Docker에만 (Docker 배포 확인용)
 
 # 의존성 배포만 (XWiki, OpenProject, Mailpit)
 ./scripts/local/steps/deploy-deps.sh
@@ -165,7 +213,10 @@ minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.loc
 
 # synctx 배포만 (Helm)
 ./scripts/local/steps/deploy-synctx.sh
+./scripts/local/steps/deploy-synctx.sh --set drawio.enabled=false   # 추가 인자는 helm upgrade에 그대로 전달
 ```
+
+`deploy-synctx.sh`는 CDN Service가 없으면(`cdn.enabled=false`) CDN vendor 파일 시딩을 건너뛴다.
 
 ### verify.sh — 환경 검증
 
@@ -202,4 +253,7 @@ synctx 서비스(Pod/CronJob), Certificate, 의존성 서비스, Monitoring, Ing
 ```bash
 # external_importer 테스트
 uv run pytest scripts/tests/test_external_importer.py -v
+
+# 스크립트 테스트 전체 (helm이나 docker가 없으면 해당 테스트는 건너뜀)
+uv run --frozen --all-packages pytest scripts/tests -q
 ```

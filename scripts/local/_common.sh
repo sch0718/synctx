@@ -380,7 +380,7 @@ load_image() {
 build_and_load_service() {
     local svc="$1"
     local dockerfile="services/${svc}/Dockerfile"
-    local image_tag="${DOCKER_REGISTRY}/${svc}:latest"
+    local image_tag="${DOCKER_REGISTRY}/${svc}:${IMAGE_TAG:-latest}"
 
     if [ ! -f "${PROJECT_ROOT}/${dockerfile}" ]; then
         print_warning "${svc} Dockerfile 없음 — 건너뜁니다"
@@ -395,6 +395,10 @@ build_and_load_service() {
         return 1
     fi
     print_success "${svc} 빌드 완료"
+
+    if [ "${LOAD_TO_MINIKUBE:-true}" != true ]; then
+        return 0
+    fi
 
     eval $(minikube docker-env)
     docker rmi -f "$image_tag" 2>/dev/null || true

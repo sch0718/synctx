@@ -1,3 +1,4 @@
+{{- if include "synctx.isEnabled" .Values.sync }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -88,3 +89,4 @@ spec:
                 claimName: {{ include "synctx.fullname" . }}-sync-state
             {{- end }}
           {{- end }}
+{{- end }}
