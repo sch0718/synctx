@@ -75,11 +75,21 @@
     };
   }
 
+  function branchChoices(data, active) {
+    var list = data && Array.isArray(data.branches) ? data.branches.filter(function (b) { return typeof b === 'string' && b; }) : [];
+    if (!list.length) return null;
+    if (active && list.indexOf(active) === -1) list.unshift(active);
+    return list.map(function (b) {
+      return { value: b, label: b === data.default ? b + ' (기본)' : b, selected: b === active };
+    });
+  }
+
   root.SynctxViewerCore = {
     RECENT_LIMIT: RECENT_LIMIT,
     matchFiles: matchFiles,
     addRecent: addRecent,
     parseRecent: parseRecent,
     createFileLoader: createFileLoader,
+    branchChoices: branchChoices,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

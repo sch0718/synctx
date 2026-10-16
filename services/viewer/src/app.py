@@ -452,35 +452,30 @@ def _build_path_trail(repo_id, path, ref, separator):
     return separator.join(items)
 
 
-def _lookup_branches(manager, repo_id: str) -> list[str]:
-    try:
-        return manager.list_branches()
-    except Exception:
-        logger.warning("브랜치 목록을 읽지 못했습니다: %s", repo_id, exc_info=True)
-        return [manager.profile.default_ref]
+def _active_branches(manager, ref: str | None) -> list[str]:
+    """화면을 그릴 때는 원격을 조회하지 않고 현재 브랜치만 담는다. 전체 목록은 화면이 뜬 뒤 viewer.js가 채운다."""
+    return [ref or manager.profile.default_ref]
 
 
-def _shell_header(repo_id: str | None, ref: str | None, theme: str, branches: list[str] | None = None) -> str:
-    default_ref = status = None
+def _shell_header(repo_id: str | None, ref: str | None, theme: str) -> str:
+    default_ref = status = branches = None
     if repo_id:
         manager = get_repo_manager(repo_id)
         default_ref = manager.profile.default_ref
         status = manager.status
-        if branches is None:
-            branches = _lookup_branches(manager, repo_id)
+        branches = _active_branches(manager, ref)
     return ui.render_header(
         view_prefix=VIEW_PREFIX, repos=config.repositories, theme=theme, active_repo=repo_id,
         branches=branches, active_ref=ref, default_ref=default_ref, repo_status=status,
     )
 
 
-def _nav_controls(repo_id: str | None, ref: str | None, theme: str, branches: list[str] | None = None) -> str:
-    default_ref = None
+def _nav_controls(repo_id: str | None, ref: str | None, theme: str) -> str:
+    default_ref = branches = None
     if repo_id:
         manager = get_repo_manager(repo_id)
         default_ref = manager.profile.default_ref
-        if branches is None:
-            branches = _lookup_branches(manager, repo_id)
+        branches = _active_branches(manager, ref)
     return ui.render_nav_controls(
         repos=config.repositories, theme=theme, active_repo=repo_id, branches=branches,
         active_ref=ref, default_ref=default_ref,
@@ -575,9 +570,8 @@ def _html_error(status_code: int, kind: str, *, repo_id=None, path=None, ref=Non
                 suggestions=(), download_href=None, theme="github-light") -> HTMLResponse:
     repo = repo_id if repo_id and _repo_known(repo_id) else None
     try:
-        branches = _lookup_branches(get_repo_manager(repo), repo) if repo else None
-        header = _shell_header(repo, ref if repo else None, theme, branches)
-        controls = _nav_controls(repo, ref if repo else None, theme, branches)
+        header = _shell_header(repo, ref if repo else None, theme)
+        controls = _nav_controls(repo, ref if repo else None, theme)
     except Exception:
         logger.warning("오류 화면 머리를 만들지 못했습니다", exc_info=True)
         repo = None
@@ -666,11 +660,10 @@ def view_repo(repo_id: str, ref: str | None = None, path: str | None = None):
     commit = _commit_line(manager, "", effective_ref)
     expand_attr = f' data-expand-path="{ui.esc(path)}"' if path else ""
     tree_html = _build_tree_html(repo_id, "", ref=effective_ref, link_ref=ref)
-    branches = _lookup_branches(manager, repo_id)
     body = f'''<div class="layout layout-repo">
   <nav id="shell-nav" class="shell-nav" aria-label="파일">
     {ui.NAV_CLOSE}
-    {_nav_controls(repo_id, ref, "github-light", branches)}
+    {_nav_controls(repo_id, ref, "github-light")}
     {TREE_FILTER}
     <div class="tree" id="file-tree"{expand_attr}>{tree_html}</div>
     {RECENT_SECTION}
@@ -691,7 +684,7 @@ def view_repo(repo_id: str, ref: str | None = None, path: str | None = None):
   </main>
 </div>'''
     html = ui.page(view_prefix=VIEW_PREFIX, title=str(repo.name), theme="github-light",
-                   header=_shell_header(repo_id, ref, "github-light", branches), body=body,
+                   header=_shell_header(repo_id, ref, "github-light"), body=body,
                    repo_id=repo_id, ref=ref or "", page_class="page-repo")
     return HTMLResponse(content=html)
 
@@ -852,7 +845,6 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             "publishName": PurePosixPath(path).stem,
             "downloadHtml": download_base + "&format=html" if is_md else "",
         }
-        branches = _lookup_branches(manager, repo_id)
         sep = '<span aria-hidden="true">/</span>'
         breadcrumb = (f'<a href="{VIEW_PREFIX}/">저장소</a>{sep}'
                       f'<a href="{VIEW_PREFIX}/{repo_id}{html_lib.escape(ref_param_first)}">{html_lib.escape(str(manager.profile.name))}</a>'
@@ -860,7 +852,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         body = f'''<div class="layout layout-doc">
   <nav id="shell-nav" class="shell-nav" aria-label="파일과 목차">
     {ui.NAV_CLOSE}
-    {_nav_controls(repo_id, ref, theme, branches)}
+    {_nav_controls(repo_id, ref, theme)}
     <div class="nav-tabs" role="tablist" aria-label="서랍 보기">
       <button type="button" role="tab" aria-selected="true" data-nav-tab="files">파일</button>
       <button type="button" role="tab" aria-selected="false" data-nav-tab="toc">이 문서</button>
@@ -900,7 +892,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
                       f"{mermaid_scripts}\n{meeting_body}")
         html = ui.page(
             view_prefix=VIEW_PREFIX, title=title, theme=theme,
-            header=_shell_header(repo_id, ref, theme, branches), body=body,
+            header=_shell_header(repo_id, ref, theme), body=body,
             repo_id=repo_id, ref=ui_ref, page_class="page-doc", theme_via_query=True, doc_config=doc_config,
             head_extra=head_extra, body_extra=body_extra,
         )

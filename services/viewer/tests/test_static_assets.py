@@ -95,3 +95,17 @@ def test_drawer_toc_link_closes_after_default_navigation():
     js = (STATIC / "viewer.js").read_text(encoding="utf-8")
     block = js.split("if (anchor && navOpen() && anchor.closest('#shell-nav')) {")[1].split("return;")[0]
     assert "window.setTimeout(" in block and "setNav(false)" in block
+
+
+def _rule(css, selector):
+    import re
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    assert match is not None, selector
+    return match.group(1)
+
+
+def test_branch_list_is_filled_after_load_not_while_rendering():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert "'/branches'" in js and "core.branchChoices(" in js
+    assert 'select[data-action="branch"]' in js
+    assert "option.textContent = " in js

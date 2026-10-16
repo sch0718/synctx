@@ -91,3 +91,23 @@ test('동시에 불러도 요청은 한 번만 보낸다', async () => {
   await Promise.all([loader.load(), loader.load()]);
   assert.equal(calls, 1);
 });
+
+test('브랜치 목록은 기본 브랜치에 (기본)을 붙이고 현재 브랜치를 고른다', () => {
+  const choices = core.branchChoices({ branches: ['main', 'feat/x'], default: 'main' }, 'feat/x');
+  assert.deepEqual(choices, [
+    { value: 'main', label: 'main (기본)', selected: false },
+    { value: 'feat/x', label: 'feat/x', selected: true },
+  ]);
+});
+
+test('목록에 없는 현재 브랜치도 잃지 않는다', () => {
+  const choices = core.branchChoices({ branches: ['main'], default: 'main' }, 'old');
+  assert.deepEqual(choices.map((c) => c.value), ['old', 'main']);
+  assert.equal(choices[0].selected, true);
+});
+
+test('형식이 맞지 않는 브랜치 응답은 무시한다', () => {
+  assert.equal(core.branchChoices(null, 'main'), null);
+  assert.equal(core.branchChoices({ branches: 'main' }, 'main'), null);
+  assert.equal(core.branchChoices({ branches: [] , default: 'main'}, 'main'), null);
+});

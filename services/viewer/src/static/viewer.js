@@ -105,6 +105,29 @@
     $all('[data-nav-tab]').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.navTab === name)); });
     $all('[data-nav-panel]').forEach(function (p) { p.hidden = p.dataset.navPanel !== name; });
     var panel = $('[data-nav-panel="toc"]');
+  // 서버는 현재 브랜치만 그려 두므로, 화면이 뜬 뒤 전체 목록으로 바꾼다. 실패하면 현재 브랜치만 남긴다
+  async function loadBranches() {
+    var selects = $all('select[data-action="branch"]');
+    if (!selects.length || !ACTIVE_REPO) return;
+    try {
+      var res = await fetch(VIEW_PREFIX + '/api/repos/' + encodeURIComponent(ACTIVE_REPO) + '/branches');
+      if (!res.ok) return;
+      var data = await res.json();
+      selects.forEach(function (select) {
+        var choices = core.branchChoices(data, select.value);
+        if (!choices) return;
+        select.textContent = '';
+        choices.forEach(function (c) {
+          var option = document.createElement('option');
+          option.value = c.value;
+          option.textContent = c.label;
+          option.selected = c.selected;
+          select.appendChild(option);
+        });
+      });
+    } catch (e) { return; }
+  }
+
     var source = $('.shell-toc .toc');
     if (name === 'toc' && panel && source && !panel.firstElementChild) panel.appendChild(source.cloneNode(true));
   }
@@ -512,3 +535,4 @@
   initTocSpy();
   initRecent();
 })();
+  loadBranches();

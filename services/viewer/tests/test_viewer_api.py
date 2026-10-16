@@ -683,23 +683,34 @@ class TestDocumentPage:
         mock_repo_manager.read_file_text.return_value = "# Hello"
         assert 'var ACTIVE_REF = "feat/x";' in client.get("/test-repo/docs/a.md", params={"ref": "feat/x"}).text
 
-    def test_branches_are_listed_once_per_render(self, client, mock_repo_manager):
-        mock_repo_manager.read_file_text.return_value = "# Hello"
-        mock_repo_manager.list_branches.return_value = ["main", "dev"]
-        assert client.get("/test-repo/docs/a.md").status_code == 200
-        assert mock_repo_manager.list_branches.call_count == 1
-
-    def test_branch_lookup_failure_falls_back_to_default(self, client, mock_repo_manager):
+    def test_document_render_does_not_look_up_remote_branches(self, client, mock_repo_manager):
         mock_repo_manager.read_file_text.return_value = "# Hello"
         mock_repo_manager.list_branches.side_effect = RuntimeError("offline")
         assert client.get("/test-repo/docs/a.md").status_code == 200
-        assert mock_repo_manager.list_branches.call_count == 1
+        mock_repo_manager.list_branches.assert_not_called()
 
-    def test_repo_page_lists_branches_once(self, client, mock_repo_manager):
+    def test_document_branch_select_has_only_active_branch(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        text = client.get("/test-repo/docs/a.md").text
+        assert text.count('<option value="main" selected>main (기본)</option>') == 2
+        text = client.get("/test-repo/docs/a.md", params={"ref": "feat/x"}).text
+        assert text.count('<option value="feat/x" selected>feat/x</option>') == 2
+        assert '<option value="main"' not in text
+
+    def test_repo_page_does_not_look_up_remote_branches(self, client, mock_repo_manager):
         mock_repo_manager.list_tree.return_value = []
-        mock_repo_manager.list_branches.return_value = ["main"]
-        assert client.get("/test-repo").status_code == 200
-        assert mock_repo_manager.list_branches.call_count == 1
+        mock_repo_manager.list_branches.side_effect = RuntimeError("offline")
+        text = client.get("/test-repo").text
+        mock_repo_manager.list_branches.assert_not_called()
+        assert text.count('<option value="main" selected>main (기본)</option>') == 2
+
+    def test_error_page_does_not_look_up_remote_branches(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.side_effect = RuntimeError("boom")
+        mock_repo_manager.file_paths.return_value = {"docs/a.md"}
+        resp = client.get("/test-repo/docs/a.md", params={"ref": "feat/x"})
+        assert resp.status_code == 500
+        mock_repo_manager.list_branches.assert_not_called()
+        assert resp.text.count('<option value="feat/x" selected>feat/x</option>') == 2
 
 
 class TestAPIRoutes:
