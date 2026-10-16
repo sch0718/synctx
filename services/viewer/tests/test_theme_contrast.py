@@ -99,8 +99,16 @@ def test_nav_tab_labels_meet_aa_on_their_backgrounds():
     assert not failures, failures
 
 
+MARK_SELECTOR = ".search-page mark, .finder-results mark"
+
+
+def test_mark_rule_is_scoped_to_search_results():
+    assert not re.search(r"(?m)^mark\s*\{", _css_source())
+    assert _css_rule(MARK_SELECTOR)
+
+
 def test_mark_text_meets_aa_on_its_background():
-    rule = _css_rule("mark")
+    rule = _css_rule(MARK_SELECTOR)
     color, background = _decl(rule, "color"), _decl(rule, "background")
     failures = []
     for theme in _themes():
@@ -112,5 +120,5 @@ def test_mark_text_meets_aa_on_its_background():
 
 
 def test_mark_is_visible_without_relying_on_background_alone():
-    rule = _css_rule("mark")
+    rule = _css_rule(MARK_SELECTOR)
     assert _decl(rule, "font-weight") and "var(--primary)" in (_decl(rule, "box-shadow") or "")

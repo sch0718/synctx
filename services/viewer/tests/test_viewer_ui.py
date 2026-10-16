@@ -164,3 +164,18 @@ def test_search_page_keeps_ref_only_for_its_repo():
     assert 'href="/view/r1/a.md?ref=feat%2Fx"' in html
     assert '<input type="hidden" name="ref" value="feat/x">' in html
     assert '<input type="hidden" name="ref_repo" value="r1">' in html
+
+
+def test_search_page_drops_ref_for_other_repositories():
+    rs = [{"id": rid, "name": rid, "status": "ok", "truncated": False,
+           "matches": [{"path": "a.md", "line": 1, "before": "", "match": "ab", "after": ""}]} for rid in ("r1", "r2")]
+    html = ui.render_search_page(view_prefix="/view", query="ab", raw_query="ab", repos=REPOS,
+                                 active_repo="r1", ref="feat/x", results=rs)
+    assert 'href="/view/r1/a.md?ref=feat%2Fx"' in html
+    assert 'href="/view/r2/a.md"' in html
+
+
+def test_search_page_has_no_ref_inputs_without_active_repo():
+    html = ui.render_search_page(view_prefix="/view", query="ab", raw_query="ab", repos=REPOS,
+                                 active_repo=None, ref=None, results=[])
+    assert 'name="ref"' not in html and 'name="ref_repo"' not in html
