@@ -414,6 +414,25 @@ async def test_grep_kills_git_when_deadline_passes_mid_read(tmp_path, remote, mo
 
 
 @pytest.mark.asyncio
+async def test_grep_runs_git_with_a_single_thread(tmp_path, remote, monkeypatch):
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    captured: list[list[str]] = []
+    real_popen = subprocess.Popen
+
+    def spy(args, *a, **k):
+        captured.append(list(args))
+        return real_popen(args, *a, **k)
+
+    monkeypatch.setattr(subprocess, "Popen", spy)
+    manager.grep("v1")
+    assert len(captured) == 1
+    assert "--threads=1" in captured[0]
+    assert captured[0].index("--threads=1") < captured[0].index("-e")
+
+
+@pytest.mark.asyncio
 async def test_grep_searches_non_default_branch(tmp_path, remote):
     bare, work, _ = remote
     manager = _manager(tmp_path, bare)

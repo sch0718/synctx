@@ -315,6 +315,7 @@ class GitRepoManager:
         args = [
             "git", *self._git_config_args(), "grep",
             "-n", "-I", "-F", "-i", "-z", "--no-color", "--no-column", "--max-count=5",
+            "--threads=1",
             "-e", query, resolved, "--", *pathspecs,
         ]
         proc = subprocess.Popen(
