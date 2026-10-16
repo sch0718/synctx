@@ -56,3 +56,16 @@ def test_css_uses_text_disabled_only_for_icons():
     lines = [l.strip() for l in (STATIC / "viewer.css").read_text(encoding="utf-8").splitlines()
              if re.search(r"(?<![-\w])color:\s*var\(--text-disabled\)", l)]
     assert all(re.match(r"\.(icon-|\S+ svg)", l) for l in lines), lines
+
+
+def test_drawer_closes_on_toc_link_and_recent_title_falls_back():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert "e.target.closest('a[href^=\"#\"]')" in js and "anchor.closest('#shell-nav')" in js
+    assert "escapeHtml(x.title || x.path)" in js
+
+
+def test_mobile_header_keeps_only_menu_logo_and_finder():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    mobile = css.split("@media (max-width: 767px)")[1]
+    for needle in (".shell-header .shell-spacer", ".shell-header .shell-status", '.shell-header [data-action="shortcuts"]'):
+        assert needle in mobile

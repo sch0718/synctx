@@ -80,3 +80,23 @@ def test_text_disabled_is_only_used_for_icons():
              if re.search(r"(?<![-\w])color:\s*var\(--text-disabled\)", line)]
     assert lines
     assert all(re.match(r"\.(icon-|\S+ svg)", line) for line in lines), lines
+
+
+def _static_rule(selector):
+    css = (Path(__file__).resolve().parents[1] / "src" / "static" / "viewer.css").read_text(encoding="utf-8")
+    return re.search(rf"^{re.escape(selector)} \{{([^}}]*)\}}", css, re.M).group(1)
+
+
+def test_nav_tab_labels_meet_aa_on_their_backgrounds():
+    track = _decl(_static_rule(".nav-tabs"), "background")
+    unselected = _decl(_static_rule('.nav-tabs [role="tab"]'), "color")
+    selected_rule = _static_rule('.nav-tabs [role="tab"][aria-selected="true"]')
+    cases = [("unselected", unselected, track), ("selected", _decl(selected_rule, "color"), _decl(selected_rule, "background"))]
+    failures = []
+    for theme in _themes():
+        values = theme_vars(theme)
+        for label, color, background in cases:
+            ratio = contrast(rgb(_resolve(color, values))[0], rgb(_resolve(background, values))[0])
+            if ratio < 4.5:
+                failures.append(f"{theme} {label}: {ratio:.2f}")
+    assert not failures, failures

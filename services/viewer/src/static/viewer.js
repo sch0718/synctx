@@ -376,7 +376,7 @@
     $all('[data-recent]').forEach(function (ul) {
       ul.innerHTML = shown.length ? shown.map(function (x) {
         var href = VIEW_PREFIX + '/' + encodeURIComponent(x.repo) + '/' + encodePath(x.path) + (x.ref ? '?ref=' + encodeURIComponent(x.ref) : '');
-        return '<li><a href="' + escapeHtml(href) + '" title="' + escapeHtml(x.path) + '">' + escapeHtml(x.title) + '</a></li>';
+        return '<li><a href="' + escapeHtml(href) + '" title="' + escapeHtml(x.path) + '">' + escapeHtml(x.title || x.path) + '</a></li>';
       }).join('') : '<li class="recent-empty">아직 본 문서가 없습니다.</li>';
     });
   }
@@ -457,6 +457,13 @@
       if (dir) { toggleDir(dir); return; }
       var tab = e.target.closest('[data-nav-tab]');
       if (tab) { showNavTab(tab.dataset.navTab); return; }
+      var anchor = e.target.closest('a[href^="#"]');
+      if (anchor && navOpen() && anchor.closest('#shell-nav')) {
+        setNav(false);
+        var heading = document.getElementById(decodeURIComponent(anchor.getAttribute('href').slice(1)));
+        if (heading) { heading.setAttribute('tabindex', '-1'); heading.focus({ preventScroll: true }); }
+        return;
+      }
       var el = e.target.closest('[data-action]');
       var action = el && el.getAttribute('data-action');
       if (action === 'toggle-nav') setNav(!navOpen());
