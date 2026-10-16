@@ -23,6 +23,7 @@ from renderer import render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEM
 
 import embed_view
 import meeting as meeting_mode
+import viewer_ui as ui
 
 __version__ = "0.1.0"
 configure_logging(service_name="viewer")
@@ -218,6 +219,18 @@ def get_tree(repo_id: str, path: str = "", ref: str | None = None):
         return {"path": path, "entries": result}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/repos/{repo_id}/files", dependencies=[Depends(verify_viewer_access)])
+def list_files(repo_id: str, ref: str | None = None):
+    manager = get_repo_manager(repo_id)
+    effective_ref = ref if ref and ref != manager.profile.default_ref else None
+    try:
+        paths = manager.file_paths(ref=effective_ref)
+    except Exception:
+        logger.warning("파일 목록을 읽지 못했습니다: %s", repo_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="파일 목록을 불러오지 못했습니다")
+    return {"files": sorted(p for p in paths if is_viewable(p))}
 
 
 def _attachment_disposition(filename: str) -> str:
@@ -431,14 +444,6 @@ def _build_theme_options(current="github-light"):
     return html
 
 
-def _build_repo_options(repos, active_id=None):
-    html = '<option value="">-- Select Repository --</option>'
-    for r in repos:
-        sel = " selected" if r.id == active_id else ""
-        html += f'<option value="{r.id}"{sel}>{r.name}</option>'
-    return html
-
-
 # ── Shared tree assets ──
 
 # 저장소 화면과 문서 화면의 파일 트리가 함께 쓴다. 템플릿 format 인자로 넣으므로 중괄호를 두 번 쓰지 않는다.
@@ -448,6 +453,7 @@ TREE_CSS = """
             display: flex; align-items: center; gap: 8px; padding: 6px 8px;
             border-radius: 6px; cursor: pointer; transition: background .12s; white-space: nowrap;
         }
+        button.tree-entry { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
         .tree-entry:hover { background: var(--border-color); }
         .tree-entry svg { width: 18px; height: 18px; flex-shrink: 0; }
         .tree-entry .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
@@ -494,11 +500,17 @@ TREE_SCRIPT = """
             if (children) {
                 children.classList.toggle('collapsed');
                 icon.classList.toggle('open');
+                el.setAttribute('aria-expanded', String(!children.classList.contains('collapsed')));
                 if (!children.classList.contains('collapsed') && children.dataset.path && !children.dataset.loaded) {
                     loadSubtree(children, children.dataset.path);
                 }
             }
         }
+
+        document.addEventListener('click', function(e) {
+            var dir = e.target.closest('.tree-dir');
+            if (dir) toggleDir(dir);
+        });
 
         async function loadSubtree(container, path) {
             container.dataset.loaded = '1';
@@ -512,10 +524,10 @@ TREE_SCRIPT = """
                 var files = data.entries.filter(function(e) { return e.type === 'file'; }).sort(function(a,b) { return a.name.localeCompare(b.name); });
                 for (var i = 0; i < dirs.length; i++) {
                     var d = dirs[i];
-                    html += '<div class="tree-entry" onclick="toggleDir(this)">' +
+                    html += '<button type="button" class="tree-entry tree-dir" aria-expanded="false">' +
                         '<svg class="tree-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>' +
                         ICON_DIR +
-                        '<span class="name">' + escapeHtml(d.name) + '/</span></div>' +
+                        '<span class="name">' + escapeHtml(d.name) + '/</span></button>' +
                         '<div class="tree-children collapsed" data-path="' + escapeHtml(d.path) + '"></div>';
                 }
                 for (var j = 0; j < files.length; j++) {
@@ -561,6 +573,7 @@ TREE_SCRIPT = """
                 var entry = container.previousElementSibling;
                 container.classList.remove('collapsed');
                 entry.querySelector('.tree-toggle').classList.add('open');
+                entry.setAttribute('aria-expanded', 'true');
                 if (!container.dataset.loaded) await loadSubtree(container, current);
                 target = entry;
             }
@@ -778,192 +791,6 @@ VIEWER_TEMPLATE = """<!DOCTYPE html>
 </html>"""
 
 
-# ── INDEX_TEMPLATE ──
-
-INDEX_TEMPLATE = """<!DOCTYPE html>
-<html lang="ko" data-theme="{active_theme}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>synctx Viewer</title>
-    <script>
-        (function() {{
-            var saved = localStorage.getItem('synctx-theme');
-            if (saved) document.documentElement.setAttribute('data-theme', saved);
-        }})();
-    </script>
-    <style>{theme_vars_css}</style>
-    <style>
-        :root {{
-            --radius-sm: 8px;
-            --radius-md: 12px;
-            --radius-lg: 16px;
-            --font-primary: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            --font-mono: 'D2Coding', ui-monospace, monospace;
-            --header-height: 64px;
-            --sidebar-width: 320px;
-        }}
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: var(--font-primary); background: var(--bg-default); color: var(--text-primary); }}
-
-        .header {{
-            height: var(--header-height); display: flex; align-items: center;
-            padding: 0 24px; background: var(--bg-card); border-bottom: 1px solid var(--border-color);
-            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-        }}
-        .header-logo {{ font-size: 18px; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }}
-        .header-logo svg {{ width: 28px; height: 28px; }}
-        .header-actions {{ margin-left: auto; display: flex; gap: 8px; align-items: center; }}
-        .theme-select {{
-            padding: 6px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-sm);
-            background: var(--bg-card); color: var(--text-primary); font-size: 13px;
-            font-family: var(--font-primary); cursor: pointer;
-        }}
-        .theme-select:focus {{ outline: 2px solid var(--primary); outline-offset: -2px; }}
-
-        .layout {{ display: flex; margin-top: var(--header-height); min-height: calc(100vh - var(--header-height)); }}
-
-        .sidebar {{
-            width: var(--sidebar-width); min-width: var(--sidebar-width); background: var(--bg-neutral);
-            border-right: 1px solid var(--border-color); padding: 24px 16px; overflow-y: auto;
-            position: fixed; top: var(--header-height); bottom: 0; left: 0;
-        }}
-        .sidebar-title {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-secondary); margin-bottom: 12px; padding: 0 8px; }}
-
-        .repo-select, .branch-select {{
-            width: 100%; padding: 10px 12px; border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm); background: var(--bg-card); color: var(--text-primary);
-            font-size: 14px; font-weight: 600; font-family: var(--font-primary);
-            cursor: pointer; margin-bottom: 16px; appearance: auto;
-        }}
-        .branch-select {{ font-size: 13px; font-weight: 400; margin-bottom: 12px; }}
-        .repo-select:focus, .branch-select:focus {{ outline: 2px solid var(--primary); outline-offset: -2px; }}
-
-        .main {{ margin-left: var(--sidebar-width); flex: 1; padding: 32px; }}
-
-        .breadcrumb {{ font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; }}
-        .breadcrumb a {{ color: var(--text-secondary); text-decoration: none; }}
-        .breadcrumb a:hover {{ color: var(--primary); }}
-        .breadcrumb .sep {{ margin: 0 8px; }}
-
-        .card {{
-            background: var(--bg-card); border-radius: var(--radius-lg);
-            box-shadow: var(--shadow-card); padding: 24px; margin-bottom: 24px;
-        }}
-        .card-header {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }}
-        .card-title {{ font-size: 18px; font-weight: 700; }}
-        .stat {{ font-size: 13px; color: var(--text-secondary); }}
-
-        .repo-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }}
-        .repo-card {{
-            background: var(--bg-card); border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
-            padding: 24px; cursor: pointer; transition: transform .15s, box-shadow .15s; text-decoration: none; color: var(--text-primary);
-        }}
-        .repo-card:hover {{ transform: translateY(-2px); box-shadow: 0 0 2px 0 rgba(145,158,171,0.2), 0 20px 40px -4px rgba(145,158,171,0.16); }}
-        .repo-card-name {{ font-size: 18px; font-weight: 700; margin-bottom: 8px; }}
-        .repo-card-url {{ font-size: 13px; color: var(--text-secondary); word-break: break-all; }}
-
-        {tree_css}
-
-        .loading {{ text-align: center; padding: 40px; color: var(--text-secondary); }}
-
-        .search-box {{
-            display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            border-radius: var(--radius-sm); margin-bottom: 12px;
-        }}
-        .search-box input {{
-            border: none; background: transparent; outline: none;
-            font-size: 13px; color: var(--text-primary); width: 100%; font-family: var(--font-primary);
-        }}
-        .search-box svg {{ color: var(--text-disabled); flex-shrink: 0; }}
-
-        .empty-state {{ text-align: center; padding: 60px 20px; color: var(--text-secondary); }}
-        .empty-state svg {{ width: 64px; height: 64px; color: var(--text-disabled); margin-bottom: 16px; }}
-        .empty-state p {{ font-size: 14px; }}
-
-        .sidebar-hint {{ padding: 20px 8px; font-size: 13px; color: var(--text-secondary); text-align: center; }}
-
-        @media (max-width: 768px) {{
-            .sidebar {{ display: none; }}
-            .main {{ margin-left: 0; }}
-            .repo-grid {{ grid-template-columns: 1fr; }}
-        }}
-    </style>
-</head>
-<body>
-    <header class="header">
-        <div class="header-logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4m-3.5-6.5L17 7m-10 10-1.5 1.5M20.5 17.5 19 17M5 7 3.5 5.5"/></svg>
-            synctx
-        </div>
-        <div class="header-actions">
-            <select id="index-theme-select" class="theme-select" onchange="changeTheme(this.value)">{theme_options}</select>
-        </div>
-    </header>
-
-    <div class="layout">
-        <aside class="sidebar">
-            <div class="sidebar-title">Repositories</div>
-            <select id="repo-select" class="repo-select" onchange="onRepoChange(this.value)">
-                {repo_options}
-            </select>
-            <div id="branch-select-wrapper" style="display:{branch_select_display}">
-                <select id="branch-select" class="branch-select" onchange="onBranchChange(this.value)">
-                    {branch_options}
-                </select>
-            </div>
-            <div id="sidebar-tree">{sidebar_tree_html}</div>
-        </aside>
-        <main class="main">
-            {main_content}
-        </main>
-    </div>
-
-    <script>
-        var VIEW_PREFIX = '{view_prefix}';
-        var ACTIVE_REPO = {active_repo_id_js};
-        var ACTIVE_REF = {active_ref_js};
-
-        function changeTheme(theme) {{
-            document.documentElement.setAttribute('data-theme', theme);
-            localStorage.setItem('synctx-theme', theme);
-        }}
-        (function() {{
-            var saved = localStorage.getItem('synctx-theme');
-            if (saved) {{
-                document.documentElement.setAttribute('data-theme', saved);
-                var sel = document.getElementById('index-theme-select');
-                if (sel) sel.value = saved;
-            }}
-        }})();
-
-        function onRepoChange(repoId) {{
-            if (repoId) {{
-                window.location.href = VIEW_PREFIX + '/' + repoId;
-            }} else {{
-                window.location.href = VIEW_PREFIX;
-            }}
-        }}
-
-        function onBranchChange(ref) {{
-            if (!ACTIVE_REPO) return;
-            var url = VIEW_PREFIX + '/' + ACTIVE_REPO;
-            if (ref) url += '?ref=' + encodeURIComponent(ref);
-            window.location.href = url;
-        }}
-
-        {tree_script}
-
-        (function() {{
-            var initialPath = new URLSearchParams(window.location.search).get('path');
-            if (initialPath && document.getElementById('file-tree')) expandToPath(initialPath);
-        }})();
-    </script>
-</body>
-</html>"""
-
-
 # ── View Helpers ──
 
 def generate_toc_html(toc_tokens):
@@ -979,17 +806,6 @@ def generate_toc_html(toc_tokens):
 DIR_ICON_SVG = '<svg class="icon-dir" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V8a2 2 0 00-2-2h-8l-2-2z"/></svg>'
 
 
-def _build_branch_options(branches, active_ref, default_ref):
-    html = ""
-    for b in branches:
-        label = b
-        if b == default_ref:
-            label += " (default)"
-        sel = " selected" if b == active_ref else ""
-        html += f'<option value="{html_lib.escape(b)}"{sel}>{html_lib.escape(label)}</option>'
-    return html
-
-
 def _build_path_trail(repo_id, path, ref, separator):
     ref_param = f"&ref={quote(ref, safe='')}" if ref else ""
     parts = [p for p in path.split("/") if p]
@@ -1003,6 +819,56 @@ def _build_path_trail(repo_id, path, ref, separator):
     return separator.join(items)
 
 
+def _shell_header(repo_id: str | None, ref: str | None, theme: str) -> str:
+    branches = default_ref = status = None
+    if repo_id:
+        manager = get_repo_manager(repo_id)
+        default_ref = manager.profile.default_ref
+        status = manager.status
+        try:
+            branches = manager.list_branches()
+        except Exception:
+            logger.warning("브랜치 목록을 읽지 못했습니다: %s", repo_id, exc_info=True)
+            branches = [default_ref]
+    return ui.render_header(
+        view_prefix=VIEW_PREFIX, repos=config.repositories, theme=theme, active_repo=repo_id,
+        branches=branches, active_ref=ref, default_ref=default_ref, repo_status=status,
+    )
+
+
+def _nav_controls(repo_id: str | None, ref: str | None, theme: str) -> str:
+    branches = default_ref = None
+    if repo_id:
+        manager = get_repo_manager(repo_id)
+        default_ref = manager.profile.default_ref
+        try:
+            branches = manager.list_branches()
+        except Exception:
+            branches = [default_ref]
+    return ui.render_nav_controls(
+        repos=config.repositories, theme=theme, active_repo=repo_id, branches=branches,
+        active_ref=ref, default_ref=default_ref,
+    )
+
+
+def _commit_line(manager, path: str, ref: str | None) -> str:
+    try:
+        commit = manager.last_commit(path, ref=ref)
+    except Exception:
+        logger.warning("마지막 커밋을 읽지 못했습니다: %s", path or "(저장소)", exc_info=True)
+        return ""
+    when = ui.relative_time_ko(commit.authored_at)
+    return (f'<span>마지막 커밋 {ui.esc(commit.author)}</span>'
+            f'<time datetime="{ui.esc(commit.authored_at)}" title="{ui.esc(commit.authored_at)}">{ui.esc(when)}</time>'
+            f'<code class="sha">{ui.esc(str(commit.sha)[:7])}</code>')
+
+
+RECENT_SECTION = ('<section class="recent" aria-label="최근 본 문서"><h2 class="nav-title">최근 본 문서</h2>'
+                  '<ul class="recent-list" data-recent></ul></section>')
+TREE_FILTER = ('<label class="tree-filter"><span class="visually-hidden">파일 이름으로 좁히기</span>'
+               '<input type="search" data-tree-filter placeholder="파일 이름으로 좁히기" aria-label="파일 이름으로 좁히기"></label>')
+
+
 def _build_tree_html(repo_id, path, ref=None, link_ref=None, current=None):
     """path 폴더의 트리. current 파일이 주어지면 그 파일까지 경로상의 폴더를 펼치고 파일을 선택 상태로 둔다.
 
@@ -1012,10 +878,9 @@ def _build_tree_html(repo_id, path, ref=None, link_ref=None, current=None):
         manager = get_repo_manager(repo_id)
         html = _tree_level_html(manager, repo_id, path, ref, link_ref if link_ref is not None else ref, current)
     except Exception:
-        return '<div class="empty-state"><p>Failed to load file tree.</p></div>'
-    if not html:
-        html = '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty repository</div>'
-    return html
+        logger.warning("파일 트리를 읽지 못했습니다: %s", repo_id, exc_info=True)
+        return '<div class="empty-state"><p>파일 트리를 불러오지 못했습니다.</p></div>'
+    return html or '<div class="tree-note">빈 저장소</div>'
 
 
 def _tree_level_html(manager, repo_id, path, ref, link_ref, current):
@@ -1030,15 +895,16 @@ def _tree_level_html(manager, repo_id, path, ref, link_ref, current):
         data_path = html_lib.escape(e.path)
         if current and current.startswith(e.path + "/"):
             children = _tree_level_html(manager, repo_id, e.path, ref, link_ref, current)
-            children = children or '<div style="padding:8px;color:var(--text-secondary);font-size:13px;">Empty</div>'
+            children = children or '<div class="tree-note">비어 있음</div>'
             toggle_class, children_html = "tree-toggle open", f'<div class="tree-children" data-path="{data_path}" data-loaded="1">{children}</div>'
         else:
             toggle_class, children_html = "tree-toggle", f'<div class="tree-children collapsed" data-path="{data_path}"></div>'
-        html += f'''<div class="tree-entry" onclick="toggleDir(this)">
-            <svg class="{toggle_class}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        expanded = "true" if toggle_class.endswith("open") else "false"
+        html += f'''<button type="button" class="tree-entry tree-dir" aria-expanded="{expanded}">
+            <svg class="{toggle_class}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
             {DIR_ICON_SVG}
             <span class="name">{name}/</span>
-        </div>
+        </button>
         {children_html}'''
     for e in files:
         icon = _file_icon_svg(e.path)
@@ -1068,119 +934,79 @@ RESERVED_PATHS = {"api", "raw", "static", "healthz", "readyz", "version", "metri
 @app.get("/", dependencies=[Depends(verify_viewer_access)])
 def view_index():
     repos = config.repositories
-    repo_options = _build_repo_options(repos)
-
     if repos:
-        cards = ""
+        cards = []
         for r in repos:
-            cards += f'''<a class="repo-card" href="{_view_url(r.id)}">
-                <div class="repo-card-name">{r.name}</div>
-                <div class="repo-card-url">{r.url}</div>
-            </a>'''
-        main_content = f'''
-            <div class="breadcrumb">Repositories</div>
-            <div class="repo-grid">{cards}</div>'''
+            label = ui.STATUS_LABELS.get(get_repo_manager(r.id).status, "")
+            status = f'<span class="repo-card-meta">{label}</span>' if label else ""
+            cards.append(
+                f'<li><a class="repo-card" href="{ui.esc(_view_url(quote(r.id, safe="")))}">'
+                f'<span class="repo-card-name">{ui.esc(r.name)}</span>'
+                f'<span class="repo-card-meta">기본 브랜치 {ui.esc(r.default_ref)}</span>{status}</a></li>'
+            )
+        listing = f'<ul class="repo-grid">{"".join(cards)}</ul>'
     else:
-        main_content = '''
-            <div class="empty-state">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <path d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-                </svg>
-                <p>등록된 저장소가 없습니다.</p>
-            </div>'''
-
-    sidebar_tree_html = '<div class="sidebar-hint">저장소를 선택하면 파일 트리가 표시됩니다.</div>'
-
-    html = INDEX_TEMPLATE.format(
-        repo_options=repo_options,
-        sidebar_tree_html=sidebar_tree_html,
-        main_content=main_content,
-        view_prefix=VIEW_PREFIX,
-        active_repo_id_js=_encode_for_script(""),
-        theme_vars_css=THEME_VARS_CSS,
-        active_theme="github-light",
-        theme_options=_build_theme_options(),
-        branch_options="",
-        branch_select_display="none",
-        active_ref_js=_encode_for_script(""),
-        tree_css=TREE_CSS,
-        tree_script=TREE_SCRIPT,
-    )
+        listing = ('<div class="empty-state"><p>등록된 저장소가 없습니다. '
+                   '.synctx.yaml의 repositories에 저장소를 추가하세요.</p></div>')
+    body = (ui.render_mobile_nav(controls=_nav_controls(None, None, "github-light"))
+            + f'<div class="layout layout-home"><main id="main" class="home" tabindex="-1">'
+            f'<h1 class="page-title">저장소</h1>{listing}{RECENT_SECTION}</main></div>')
+    html = ui.page(view_prefix=VIEW_PREFIX, title="저장소", theme="github-light",
+                   header=_shell_header(None, None, "github-light"), body=body, page_class="page-home")
     return HTMLResponse(content=html)
 
 
 @app.get("/{repo_id}", dependencies=[Depends(verify_viewer_access)])
-def view_repo(repo_id: str, ref: str | None = None):
+def view_repo(repo_id: str, ref: str | None = None, path: str | None = None):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
-
     manager = get_repo_manager(repo_id)
-    repos = config.repositories
-    repo_options = _build_repo_options(repos, active_id=repo_id)
     repo = manager.profile
-
     effective_ref = ref if ref and ref != repo.default_ref else None
-
-    try:
-        branches = manager.list_branches()
-    except Exception:
-        branches = [repo.default_ref]
-    branch_options = _build_branch_options(branches, ref or repo.default_ref, repo.default_ref)
-
     try:
         entries = manager.list_tree("", ref=effective_ref)
-        dir_count = sum(1 for e in entries if e.type == "dir")
-        file_count = sum(1 for e in entries if e.type == "file")
     except Exception:
-        dir_count = 0
-        file_count = 0
-
-    tree_html = _build_tree_html(repo_id, "", ref=effective_ref)
-
-    sidebar_tree_html = f'''
-        <div class="search-box">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input type="text" placeholder="Filter files..." oninput="filterTree(this.value)">
-        </div>
-        <div class="tree" id="file-tree">{tree_html}</div>'''
-
-    ref_display = f" ({html_lib.escape(ref)})" if ref and ref != repo.default_ref else ""
-    main_content = f'''
-        <div class="breadcrumb">
-            <a href="{VIEW_PREFIX}">Repositories</a><span class="sep">&rsaquo;</span>{repo.name}{ref_display}
-        </div>
-        <div class="card">
-            <div class="card-header">
-                <div class="card-title">{repo.name}</div>
-                <div class="stat">{dir_count} folders &middot; {file_count} files</div>
-            </div>
-            <div style="font-size:13px;color:var(--text-secondary);word-break:break-all;">{repo.url}</div>
-        </div>
-        <div class="empty-state" style="padding:40px;">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;">
-                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="16" y1="13" x2="8" y2="13"/>
-                <line x1="16" y1="17" x2="8" y2="17"/>
-            </svg>
-            <p>왼쪽 트리에서 파일을 선택하면 문서가 표시됩니다.</p>
-        </div>'''
-
-    html = INDEX_TEMPLATE.format(
-        repo_options=repo_options,
-        sidebar_tree_html=sidebar_tree_html,
-        main_content=main_content,
-        view_prefix=VIEW_PREFIX,
-        active_repo_id_js=_encode_for_script(repo_id),
-        theme_vars_css=THEME_VARS_CSS,
-        active_theme="github-light",
-        theme_options=_build_theme_options(),
-        branch_options=branch_options,
-        branch_select_display="block",
-        active_ref_js=_encode_for_script(ref or ""),
-        tree_css=TREE_CSS,
-        tree_script=TREE_SCRIPT,
-    )
+        logger.warning("저장소 루트를 읽지 못했습니다: %s", repo_id, exc_info=True)
+        entries = []
+    dir_count = sum(1 for e in entries if e.type == "dir")
+    file_count = sum(1 for e in entries if e.type == "file")
+    readme = next((e for e in entries if e.type == "file" and e.name.lower() == "readme.md"), None)
+    ref_first = f"?ref={quote(ref, safe='')}" if ref else ""
+    readme_btn = ""
+    if readme:
+        readme_href = _view_url(f"{quote(repo_id, safe='')}/{quote(readme.path)}") + ref_first
+        readme_btn = f'<a class="btn btn-primary" href="{ui.esc(readme_href)}">README 열기</a>'
+    branch_label = ui.esc(ref or repo.default_ref) + (" (기본)" if (ref or repo.default_ref) == repo.default_ref else "")
+    ref_display = f" ({ui.esc(ref)})" if ref and ref != repo.default_ref else ""
+    commit = _commit_line(manager, "", effective_ref)
+    expand_attr = f' data-expand-path="{ui.esc(path)}"' if path else ""
+    tree_html = _build_tree_html(repo_id, "", ref=effective_ref, link_ref=ref)
+    body = f'''<div class="layout layout-repo">
+  <nav id="shell-nav" class="shell-nav" aria-label="파일">
+    {ui.NAV_CLOSE}
+    {_nav_controls(repo_id, ref, "github-light")}
+    {TREE_FILTER}
+    <div class="tree" id="file-tree"{expand_attr}>{tree_html}</div>
+    {RECENT_SECTION}
+  </nav>
+  <div class="nav-backdrop" data-action="close-nav" hidden></div>
+  <main id="main" class="viewer-content" tabindex="-1">
+    <div class="breadcrumb"><a href="{VIEW_PREFIX}/">저장소</a><span aria-hidden="true">/</span><span class="current">{ui.esc(repo.name)}{ref_display}</span></div>
+    <section class="info-card" aria-label="저장소 정보">
+      <h1>{ui.esc(repo.name)}</h1>
+      <dl>
+        <dt>브랜치</dt><dd>{branch_label}</dd>
+        <dt>구성</dt><dd>폴더 {dir_count}개 · 파일 {file_count}개</dd>
+        <dt>최근</dt><dd class="doc-meta">{commit or "정보 없음"}</dd>
+      </dl>
+      {readme_btn}
+    </section>
+    <p class="hint">왼쪽 파일 트리에서 문서를 고르거나 위의 파일 찾기를 쓰세요.</p>
+  </main>
+</div>'''
+    html = ui.page(view_prefix=VIEW_PREFIX, title=str(repo.name), theme="github-light",
+                   header=_shell_header(repo_id, ref, "github-light"), body=body,
+                   repo_id=repo_id, ref=ref or "", page_class="page-repo")
     return HTMLResponse(content=html)
 
 

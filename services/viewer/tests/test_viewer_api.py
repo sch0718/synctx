@@ -268,7 +268,7 @@ class TestPathBreadcrumb:
         mock_repo_manager.list_branches.return_value = ["main"]
         resp = client.get("/test-repo?path=docs/sub")
         assert resp.status_code == 200
-        assert "expandToPath(" in resp.text
+        assert 'data-expand-path="docs/sub"' in resp.text
 
 
 class TestDocumentSidebarTree:
@@ -338,6 +338,12 @@ class TestDocumentSidebarTree:
         assert "function toggleDir(" in text
         assert 'var ACTIVE_REPO = "test-repo";' in text
 
+    def test_folders_are_buttons_toggled_by_script(self, client, tree_manager):
+        text = client.get("/test-repo/docs/sub/readme.md").text
+        assert '<button type="button" class="tree-entry tree-dir" aria-expanded="true">' in text
+        assert '<button type="button" class="tree-entry tree-dir" aria-expanded="false">' in text
+        assert "closest('.tree-dir')" in text and "onclick=" not in text
+
     def test_ref_is_encoded_in_script(self, client, tree_manager):
         import re
         text = client.get("/test-repo/docs/sub/readme.md", params={"ref": "x';alert(1)//</script>"}).text
@@ -351,7 +357,7 @@ class TestDocumentSidebarTree:
         resp = client.get("/test-repo/docs/readme.md")
         assert resp.status_code == 200
         assert "<h1" in resp.text
-        assert "Failed to load file tree." in resp.text
+        assert "파일 트리를 불러오지 못했습니다." in resp.text
 
 
 class TestRewriteLinks:
@@ -566,20 +572,66 @@ class TestPathEscaping:
         assert 'data-path="docs"' in text
         assert '<a href="/view/test-repo/docs/readme.md">readme.md</a>' in text
 
-    def test_subtree_script_escapes_entries(self, client, mock_repo_manager):
-        text = self._repo_page(client, mock_repo_manager, [])
-        assert "escapeHtml(d.name)" in text
-        assert "escapeHtml(d.path)" in text
-        assert "encodePath(f.path)" in text
-        assert "escapeHtml(f.name)" in text
-        assert "+ f.name +" not in text
-        assert "+ d.name +" not in text
+    def test_subtree_script_escapes_entries(self):
+        js = (Path(__file__).resolve().parents[1] / "src" / "static" / "viewer.js").read_text(encoding="utf-8")
+        assert "escapeHtml(d.name)" in js and "escapeHtml(d.path)" in js
+        assert "encodePath(f.path)" in js and "escapeHtml(f.name)" in js
+        assert "+ f.name +" not in js and "+ d.name +" not in js
 
     def test_download_link_encodes_path(self, client, mock_repo_manager):
         mock_repo_manager.read_file_text.return_value = "print(1)"
         resp = client.get('/test-repo/src/a%26b%23c%22%3E.py')
         assert resp.status_code == 200
         assert 'href="/view/api/repos/test-repo/download?path=src/a%26b%23c%22%3E.py"' in resp.text
+
+
+class TestShellPages:
+    def test_index_uses_shell_and_korean_copy(self, client):
+        text = client.get("/").text
+        assert 'class="skip-link" href="#main"' in text
+        assert '<h1 class="page-title">저장소</h1>' in text
+        assert "기본 브랜치 main" in text
+        assert "https://git.test/repo.git" not in text
+        assert "Select Repository" not in text and "Repositories" not in text
+        assert '<script src="/view/static/viewer.js"></script>' in text
+        assert 'class="shell-nav shell-nav-mobile-only"' in text and 'data-action="repo"' in text
+
+    def test_repo_page_uses_shell_and_korean_copy(self, client, mock_repo_manager):
+        from synctx_common.git_manager import CommitInfo
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.list_branches.return_value = ["main"]
+        mock_repo_manager.profile.name = "Test Repo"
+        mock_repo_manager.last_commit.return_value = CommitInfo(sha="abcdef1234567", author="kim", authored_at="2026-10-16T00:00:00+00:00")
+        text = client.get("/test-repo").text
+        assert 'id="shell-nav"' in text and 'data-tree-filter' in text
+        assert "폴더 0개 · 파일 0개" in text
+        assert "abcdef1" in text and "kim" in text
+        assert "Filter files" not in text and "folders" not in text
+        assert '<option value="main" selected>main (기본)</option>' in text
+
+    def test_repo_page_offers_readme(self, client, mock_repo_manager):
+        from types import SimpleNamespace
+        mock_repo_manager.list_tree.return_value = [SimpleNamespace(type="file", name="README.md", path="README.md")]
+        mock_repo_manager.list_branches.return_value = ["main"]
+        assert 'href="/view/test-repo/README.md">README 열기</a>' in client.get("/test-repo").text
+
+    def test_dirs_are_buttons_with_expanded_state(self, client, mock_repo_manager):
+        from types import SimpleNamespace
+        mock_repo_manager.list_tree.return_value = [SimpleNamespace(type="dir", name="docs", path="docs")]
+        mock_repo_manager.list_branches.return_value = ["main"]
+        assert '<button type="button" class="tree-entry tree-dir" aria-expanded="false">' in client.get("/test-repo").text
+
+    def test_files_api_lists_viewable_paths(self, client, mock_repo_manager):
+        mock_repo_manager.file_paths.return_value = {"b.md", "a.py", "img.png", "docs/c.md"}
+        resp = client.get("/api/repos/test-repo/files")
+        assert resp.status_code == 200
+        assert resp.json() == {"files": ["a.py", "b.md", "docs/c.md"]}
+
+    def test_files_api_hides_internal_errors(self, client, mock_repo_manager):
+        mock_repo_manager.file_paths.side_effect = RuntimeError("Authorization: Basic SECRET")
+        resp = client.get("/api/repos/test-repo/files")
+        assert resp.status_code == 502
+        assert "SECRET" not in resp.text
 
 
 class TestAPIRoutes:
