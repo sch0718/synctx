@@ -425,3 +425,29 @@ async def test_grep_searches_non_default_branch(tmp_path, remote):
     on_feature = manager.grep("only on feature", ref="feature")
     assert [(m.path, m.line, m.text) for m in on_feature.matches] == [("docs/a.md", 1, "only on feature")]
     assert manager.grep("only on feature").matches == []
+
+
+@pytest.mark.asyncio
+async def test_grep_ignores_user_grep_column_config(tmp_path, remote, monkeypatch):
+    bare, work, _ = remote
+    _commit(work, "docs/a.md", "ab Hit\n", "col")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+    monkeypatch.setenv("GIT_CONFIG_KEY_1", "grep.column")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_1", "true")
+    result = manager.grep("hit")
+    assert [(m.path, m.line, m.text) for m in result.matches] == [("docs/a.md", 1, "ab Hit")]
+
+
+@pytest.mark.asyncio
+async def test_grep_strips_carriage_return_from_crlf_lines(tmp_path, remote):
+    bare, work, _ = remote
+    (work / "docs").mkdir(exist_ok=True)
+    (work / "docs/crlf.md").write_bytes(b"Hello Search\r\nnext\r\n")
+    _git(work, "add", "docs/crlf.md")
+    _git(work, "commit", "-qm", "crlf")
+    _git(work, "push", "-q", "origin", "main")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    assert [(m.line, m.text) for m in manager.grep("hello").matches] == [(1, "Hello Search")]

@@ -314,7 +314,7 @@ class GitRepoManager:
 
         args = [
             "git", *self._git_config_args(), "grep",
-            "-n", "-I", "-F", "-i", "-z", "--no-color", "--max-count=5",
+            "-n", "-I", "-F", "-i", "-z", "--no-color", "--no-column", "--max-count=5",
             "-e", query, resolved, "--", *pathspecs,
         ]
         proc = subprocess.Popen(
@@ -374,7 +374,7 @@ class GitRepoManager:
                         truncated = True
                         break
                     matches.append(
-                        GrepMatch(path=path, line=int(raw_line), text=raw_text.decode("utf-8", errors="replace"))
+                        GrepMatch(path=path, line=int(raw_line), text=raw_text.decode("utf-8", errors="replace").removesuffix("\r"))
                     )
                 del buf[:pos]
                 if truncated:
