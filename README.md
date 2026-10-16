@@ -328,9 +328,10 @@ synctx/
 │   │       ├── app.py                 # FastAPI 서버 (라우트 통합, lifespan, 칸반)
 │   │       ├── renderer.py            # Markdown → HTML 렌더링
 │   │       ├── meeting.py             # 회의 모드 판단·설정 JSON·메모 포함 HTML 조립
-│   │       ├── viewer_ui.py           # 공통 화면 틀(상단 바·서랍·오류 화면) 마크업
+│   │       ├── viewer_ui.py           # 공통 화면 틀(상단 바·서랍·오류 화면)·검색 결과 페이지 마크업
+│   │       ├── search.py              # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
 │   │       ├── static/viewer.css      # 화면 틀·3단 배치·반응형
-│   │       ├── static/viewer-core.js  # 파일 찾기 일치·파일 목록 로더·최근 본 문서 로직
+│   │       ├── static/viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서 로직
 │   │       ├── static/viewer.js       # 상단 바·서랍·목차 추적·알림·확인 창 동작
 │   │       ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·CSS
 │   │       └── static/style.css       # 사용하지 않는 이전 스타일시트

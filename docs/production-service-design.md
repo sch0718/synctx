@@ -765,6 +765,8 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | GET | `/api/repos` | viewer | 접근 가능한 repo 목록 |
 | GET | `/api/repos/{repo_id}/tree?ref=&path=` | viewer | Git tree 조회 |
 | GET | `/api/repos/{repo_id}/files?ref=` | viewer | 볼 수 있는 파일 경로 목록(`{"files": [...]}`, 파일 찾기용). 조회 실패 502 |
+| GET | `/api/search?q=&repo=&ref=` | viewer | 본문 검색(`{"query", "repos": [{"id", "name", "status", "truncated", "matches": [{"path", "line", "before", "match", "after"}]}]}`). `repo`가 없으면 모든 저장소. 검색어 2~100글자·줄바꿈 없음, `ref`는 `repo`와 함께만 쓰며 어기면 400, 모르는 저장소 404 |
+| GET | `/search?q=&repo=&ref=&ref_repo=` | viewer | 본문 검색 결과 HTML 페이지(`search`는 예약 경로) |
 | GET | `/api/repos/{repo_id}/render?ref=&path=` | viewer | Markdown HTML 렌더링 |
 | GET | `/api/repos/{repo_id}/raw?ref=&path=` | viewer | 원본 파일 다운로드 |
 | GET | `/api/repos/{repo_id}/download?format=html|pdf` | viewer | 변환 다운로드 |
@@ -775,7 +777,8 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 
 - `path`는 repo root 밖으로 벗어날 수 없다.
 - 렌더링 최대 파일 크기를 넘으면 413을 반환한다.
-- 화면 경로(`/`, `/{repo_id}`, `/{repo_id}/{path}`)의 오류(404·413·415·502·500)는 HTML 안내 화면으로, `/api/...`·`/raw/...` 경로는 JSON으로 돌려준다. HTML 안내 화면과 파일 목록 API의 502 응답에는 예외 메시지를 넣지 않는다. 그 밖의 JSON API 응답의 `detail`에 예외 메시지를 넣는 부분은 별도 보안 작업에서 다룬다.
+- 본문 검색은 저장소마다 최대 50건·git 출력 2 MiB·기한 3초(ref 확인과 실행 대기 포함)이고, 서비스 전체에서 동시에 도는 검색은 4개까지다. 부분 복제(`blobless`·`treeless`) 저장소는 모든 파일 내용을 원격에서 받아 오게 되므로 검색하지 않고 `unsupported`로 돌려준다. 결과는 볼 수 있는 파일만, 제어 문자나 점으로 시작하는 경로 조각이 없는 것만 싣는다.
+- 화면 경로(`/`, `/{repo_id}`, `/{repo_id}/{path}`)의 오류(404·413·415·502·500)는 HTML 안내 화면으로, `/api/...`·`/raw/...` 경로는 JSON으로 돌려준다. HTML 안내 화면, 파일 목록 API의 502 응답, 검색 응답(`status`만 돌려줌)과 검색 로그(예외 종류만 남김)에는 예외 문구와 인증 정보를 넣지 않는다. 그 밖의 JSON API 응답의 `detail`에 예외 메시지를 넣는 부분은 별도 보안 작업에서 다룬다.
 - HTML은 sanitization 또는 신뢰 저장소 정책 중 하나를 명시한다. 운영 기본값은 신뢰 저장소 + CSP다.
 - `synctx-html` 블록은 sanitizer를 거친 뒤 자리표시를 sandbox iframe으로 채운다. 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지운다. CSP는 `font-src`에 `data:`, 각 지시어에 최상위 `html_embed.allowed_origins`를 더한다.
 - 회의 메모는 서버로 보내지 않는다. 브라우저 localStorage에만 저장하고, `<script>` 안 JSON은 `<`·`>`·`&`·U+2028·U+2029를 유니코드 이스케이프로 인코딩한다.

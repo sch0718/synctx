@@ -330,6 +330,7 @@ flowchart TD
 GET /api/repos                      저장소 목록
 GET /api/repos/{id}/tree            트리 탐색
 GET /api/repos/{id}/files           볼 수 있는 파일 경로 목록(파일 찾기용)
+GET /api/search                     본문 검색(q·repo·ref). repo가 없으면 모든 저장소
 GET /api/repos/{id}/render          마크다운 렌더링
 GET /api/repos/{id}/download        HTML/PDF 다운로드
 GET /api/repos/{id}/meeting-export  회의 메모 포함 HTML 틀(오프라인, 메모 없음)
@@ -372,11 +373,13 @@ Viewer에서 마크다운 파일을 열람할 때, `marp: true` front matter가 
 
 모든 화면(첫 화면 `/`, 저장소 `/{repo}`, 문서 `/{repo}/{path}`, 오류 화면)은 `viewer_ui.py`가 만드는 공통 틀을 쓴다.
 
-- **공통 상단 바**: 저장소·브랜치 선택, 파일 찾기(`⌘K`·`/`), 저장소 상태, 테마 선택, 단축키 안내(`?`). 첫 포커스는 "본문으로 건너뛰기" 링크다.
+- **공통 상단 바**: 저장소·브랜치 선택, 문서 검색(`⌘K`·`/`), 저장소 상태, 테마 선택, 단축키 안내(`?`). 첫 포커스는 "본문으로 건너뛰기" 링크다.
 - **문서 화면 3단**: 1100px 이상에서 `파일 트리 | 본문 | 이 문서(목차)`. 768-1099px에서는 목차가 왼쪽 열의 "이 문서" 탭으로 들어가고, 767px 이하에서는 본문만 두고 ☰ 서랍(파일·이 문서 탭, 저장소·브랜치·테마 선택)과 "목차" 버튼을 쓴다.
 - **오류 화면**: 화면 경로의 `HTTPException`은 같은 상단 바를 가진 HTML 안내 화면(404 저장소·파일, 413, 415, 조회 실패 502, 그리기 실패 500)으로 돌려주고, `/api/...`·`/raw/...` 경로는 JSON을 유지한다. 예약 경로(`/api`·`/static`·`/healthz` 등을 첫 경로로 쓴 요청)의 404와 접근 거부(`verify_viewer_access`의 403)도 JSON이다. 예외 메시지는 화면에 넣지 않는다.
-- **정적 자산**: `static/viewer.css`(레이아웃·반응형), `static/viewer-core.js`(DOM에 의존하지 않는 로직: 파일 찾기 일치·파일 목록 로더, 최근 본 문서), `static/viewer.js`(상단 바·서랍·목차 추적·알림·확인 창 동작). 회의 모드 자산(`static/meeting/`)과 본문 `<article class="markdown-body">`는 그대로 쓴다.
+- **정적 자산**: `static/viewer.css`(레이아웃·반응형), `static/viewer-core.js`(DOM에 의존하지 않는 로직: 문서 검색 묶음·검색 예약, 파일 목록 로더, 최근 본 문서), `static/viewer.js`(상단 바·서랍·목차 추적·알림·확인 창 동작). 회의 모드 자산(`static/meeting/`)과 본문 `<article class="markdown-body">`는 그대로 쓴다.
 - **파일 찾기 데이터**: `GET /api/repos/{repo_id}/files?ref=`가 볼 수 있는 파일 경로 목록을 한 번 돌려주고, 브라우저에서 부분 일치로 거른다. 조회가 실패하면 502다.
+- **문서 검색**: 상단 입력 "문서 검색"의 결과 상자는 "파일"(현재 저장소의 파일 이름 일치, 최대 8개)과 "본문"(본문 일치 최대 5건) 묶음, 맨 끝의 "‘검색어’ 전체 결과 보기"로 이뤄진다. 본문은 입력이 멈추고 250ms 뒤 `GET /api/search`를 부르고, 새 입력·Esc·검색어 지움이면 예약과 진행 중 요청을 취소하며 가장 최근 요청의 응답만 받는다. 저장소를 고르지 않은 첫 화면에서는 "파일" 묶음 없이 모든 저장소의 본문을 찾는다. 전체 결과는 `GET /search?q=&repo=&ref=&ref_repo=` HTML 페이지(저장소별 묶음, 일치 부분 `<mark>`, 저장소 선택)이며, `ref`는 `ref_repo`와 같은 저장소를 다시 찾을 때만 유지한다. `search`는 저장소 id로 쓸 수 없는 예약 경로이고, 설정에 그런 저장소가 있으면 시작할 때 경고를 남긴다.
+- **본문 검색 API**: `GET /api/search?q=&repo=&ref=`는 `git grep -n -I -F -i -z --max-count=5`(고정 문자열·대소문자 무시·이진 파일 제외·파일당 최대 5줄)로 해당 ref 트리를 찾는다. 검색어는 앞뒤 공백을 뺀 뒤 2~100글자이고 줄바꿈·NUL이 없어야 하며(어기면 400), `ref`는 `repo`와 함께만 쓰고(아니면 400), 모르는 저장소는 404, 접근 권한은 `verify_viewer_access`다. 결과마다 "볼 수 있는 파일" 판정을 다시 적용하고 제어 문자나 점으로 시작하는 경로 조각이 있는 파일은 뺀다. 한 저장소당 최대 50건, git 출력 2 MiB를 넘으면 끝내고 `truncated`로 표시한다. 기한은 저장소마다 3초이며 기본이 아닌 브랜치의 fetch와 실행 차례를 기다린 시간을 포함한다. 검색은 전용 실행기(동시 4개)에서 돌아 다른 저장소 작업을 막지 않는다. 저장소별 `status`는 `ok`·`timeout`·`unsupported`(부분 복제 `blobless`·`treeless`는 검색하지 않음)·`unavailable`(받는 중·동기화 실패)·`failed`이고, 결과 한 건은 `path`·`line`·`before`·`match`·`after`(세 문자열 합쳐 160자 이하)다. 검색 응답과 로그에는 예외 문구를 넣지 않고 예외 종류만 남긴다.
 
 ## 4. CDN Service 설계
 
@@ -794,11 +797,12 @@ viewer/src/
 │   ├── rewrite_links()
 │   └── extract_title()
 ├── embed_view.py       # synctx-html 자리표시·iframe 채우기·PDF 치환
-├── viewer_ui.py        # 공통 화면 틀(상단 바·서랍·오류 화면) 마크업
+├── viewer_ui.py        # 공통 화면 틀(상단 바·서랍·오류 화면)·검색 결과 페이지 마크업
+├── search.py           # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
 └── static/
     ├── style.css       # 사용하지 않는 이전 스타일시트(코드가 참조하지 않음)
     ├── viewer.css      # 화면 틀·3단 배치·반응형
-    ├── viewer-core.js  # 파일 찾기 일치·파일 목록 로더·최근 본 문서 로직
+    ├── viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서 로직
     └── viewer.js       # 상단 바·서랍·목차 추적·알림·확인 창 동작
 ```
 
