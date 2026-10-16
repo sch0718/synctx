@@ -125,7 +125,8 @@ class TestPdfDownload:
         assert "Marp 서비스가 꺼져 있어" in resp.json()["detail"]
         assert called == []
 
-    def test_pdf_calls_marp_when_enabled(self, client, monkeypatch):
+    @staticmethod
+    def _fake_marp(monkeypatch, status_code=200):
         import httpx
         import app as viewer_app
         monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)
@@ -141,15 +142,30 @@ class TestPdfDownload:
             async def __aexit__(self, *args):
                 return False
 
-            async def post(self, url, json):
-                calls.append(url)
-                return SimpleNamespace(status_code=200, content=b"%PDF-1.4")
+            async def post(self, url, json, headers=None):
+                calls.append((url, headers or {}))
+                return SimpleNamespace(status_code=status_code, content=b"%PDF-1.4")
 
         monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
         monkeypatch.setattr(viewer_app, "_prepare_pdf_markdown", lambda *args: "# A")
+        return calls
+
+    def test_pdf_calls_marp_when_enabled(self, client, monkeypatch):
+        calls = self._fake_marp(monkeypatch)
         resp = client.get("/api/repos/test-repo/download", params={"path": "docs/a.md", "format": "pdf"})
         assert resp.status_code == 200
-        assert calls and calls[0].endswith("/api/marp/convert")
+        assert calls and calls[0][0].endswith("/api/marp/convert")
+
+    def test_pdf_forwards_viewer_groups_to_marp(self, client, monkeypatch):
+        calls = self._fake_marp(monkeypatch)
+        client.get("/api/repos/test-repo/download", params={"path": "docs/a.md", "format": "pdf"},
+                   headers={"X-Forwarded-Groups": "synctx-publisher"})
+        assert calls[0][1].get("X-Forwarded-Groups") == "synctx-publisher"
+
+    def test_pdf_forbidden_by_marp_is_403(self, client, monkeypatch):
+        self._fake_marp(monkeypatch, status_code=403)
+        resp = client.get("/api/repos/test-repo/download", params={"path": "docs/a.md", "format": "pdf"})
+        assert resp.status_code == 403
 
 
 class TestStartupCheck:

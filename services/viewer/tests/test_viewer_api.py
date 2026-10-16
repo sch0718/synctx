@@ -850,7 +850,7 @@ class TestDownloadFilename:
             async def __aexit__(self, *args):
                 return False
 
-            async def post(self, url, json):
+            async def post(self, url, json, headers=None):
                 return MagicMock(status_code=200, content=b"%PDF-1.4")
 
         monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)
@@ -939,7 +939,7 @@ class TestDownloadFilename:
             async def __aexit__(self, *args):
                 return False
 
-            async def post(self, url, json):
+            async def post(self, url, json, headers=None):
                 raise httpx.ConnectError("connection refused")
 
         monkeypatch.delenv("SYNCTX_ENABLED_SERVICES", raising=False)

@@ -140,7 +140,7 @@ def test_download_pdf_replaces_block(monkeypatch):
         async def __aexit__(self, *exc):
             return False
 
-        async def post(self, url, json):
+        async def post(self, url, json, headers=None):
             sent.update(json)
             return FakeResponse()
 
@@ -169,7 +169,7 @@ def test_download_work_runs_off_event_loop(monkeypatch, fmt, helper):
         async def __aexit__(self, *exc):
             return False
 
-        async def post(self, url, json):
+        async def post(self, url, json, headers=None):
             return type("R", (), {"status_code": 200, "content": b"%PDF"})()
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)

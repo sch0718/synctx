@@ -242,7 +242,8 @@ def _attachment_disposition(filename: str) -> str:
 
 
 @app.get("/api/repos/{repo_id}/download", dependencies=[Depends(verify_viewer_access)])
-async def download_file(repo_id: str, path: str, format: str = "raw", ref: str | None = None):
+async def download_file(repo_id: str, path: str, format: str = "raw", ref: str | None = None,
+                        x_forwarded_groups: str = Header(default="")):
     manager = get_repo_manager(repo_id)
     try:
         filename_base = PurePosixPath(path).stem or "download"
@@ -290,13 +291,17 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
             marp_url = config.viewer.marp_service_url.rstrip("/")
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
+                    # 서비스 간 호출은 Ingress를 거치지 않으므로 Marp 권한 검사에 쓸 그룹 헤더를 넘긴다
                     resp = await client.post(
                         f"{marp_url}/api/marp/convert",
                         json={"markdown": text_content},
+                        headers={"X-Forwarded-Groups": x_forwarded_groups},
                     )
             except httpx.HTTPError:
                 logger.warning("marp_convert_failed repo_id=%s path=%s", repo_id, path, exc_info=True)
                 raise HTTPException(status_code=502, detail="PDF conversion failed")
+            if resp.status_code == 403:
+                raise HTTPException(status_code=403, detail="PDF conversion forbidden")
             if resp.status_code != 200:
                 raise HTTPException(status_code=502, detail="PDF conversion failed")
             return Response(
