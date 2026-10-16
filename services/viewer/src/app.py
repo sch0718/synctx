@@ -698,6 +698,26 @@ def view_index():
     return HTMLResponse(content=html)
 
 
+@app.get("/search", dependencies=[Depends(verify_viewer_access)])
+async def view_search(q: str | None = None, repo: str | None = None, ref: str | None = None,
+                      ref_repo: str | None = None):
+    repo = repo or None
+    if repo and not _repo_known(repo):
+        return _html_error(404, "repo_missing", repo_id=repo)
+    # ref는 그 브랜치가 속한 저장소를 다시 찾을 때만 쓴다. 저장소를 바꾸면 버린다
+    ref = ref if repo and ref and ref_repo == repo else None
+    query = search_mod.normalize_query(q)
+    results = await _run_search(query, repo, ref) if query is not None else None
+    theme = "github-light"
+    title = f"\u2018{query}\u2019 검색 결과" if query is not None else "문서 검색"
+    body = ui.render_mobile_nav(controls=_nav_controls(repo, ref, theme)) + ui.render_search_page(
+        view_prefix=VIEW_PREFIX, query=query or "", raw_query=q or "", repos=config.repositories,
+        active_repo=repo, ref=ref, results=results)
+    html = ui.page(view_prefix=VIEW_PREFIX, title=title, theme=theme, header=_shell_header(repo, ref, theme),
+                   body=body, repo_id=repo or "", ref=ref or "", page_class="page-search")
+    return HTMLResponse(content=html)
+
+
 @app.get("/{repo_id}", dependencies=[Depends(verify_viewer_access)])
 def view_repo(repo_id: str, ref: str | None = None, path: str | None = None):
     if repo_id in RESERVED_PATHS:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 from datetime import datetime, timezone
+from collections.abc import Sequence
 from urllib.parse import quote
 
 from meeting import encode_for_script
@@ -27,6 +28,15 @@ ERROR_COPY = {
     "too_large": ("화면에 보이기에 너무 큰 파일입니다", "원본을 내려받아 여세요."),
     "unsupported": ("화면에서 볼 수 없는 형식입니다", "원본을 내려받아 여세요."),
     "failed": ("문서를 불러오지 못했습니다", "잠시 후 다시 시도하세요. 계속되면 관리자에게 알리세요."),
+}
+SEARCH_QUERY_HINT = "두 글자 이상, 100글자 이하로 한 줄만 입력하세요"
+
+SEARCH_STATUS_COPY = {
+    "timeout": "3초 안에 찾지 못해 결과를 보여 주지 못했습니다",
+    "unsupported": "이 저장소는 부분 복제라 본문 검색을 하지 않습니다",
+    "unavailable": "저장소를 받는 중이거나 동기화에 실패해 찾지 못했습니다",
+    "failed": "이 저장소를 찾지 못했습니다",
+    "truncated": "결과가 많아 일부만 보여 줍니다",
 }
 
 _LOGO = ('<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" '
@@ -222,4 +232,62 @@ def error_body(kind, *, view_prefix, repo_id=None, path=None, ref=None, suggesti
     if kind == "failed":
         actions.append('<button type="button" class="btn" data-action="reload">다시 시도</button>')
     parts.append(f'<div class="error-actions">{"".join(actions)}</div></main>')
+    return "".join(parts)
+
+
+def _search_form(*, view_prefix, raw_query, repos, active_repo, ref) -> str:
+    options = [f'<option value=""{"" if active_repo else " selected"}>모든 저장소</option>']
+    for r in repos:
+        sel = " selected" if r.id == active_repo else ""
+        options.append(f'<option value="{esc(r.id)}"{sel}>{esc(r.name)}</option>')
+    hidden = ""
+    if ref and active_repo:
+        hidden = (f'<input type="hidden" name="ref" value="{esc(ref)}">'
+                  f'<input type="hidden" name="ref_repo" value="{esc(active_repo)}">')
+    return (f'<form class="search-form" role="search" method="get" action="{esc(view_prefix)}/search">'
+            f'<label class="search-input">{_SEARCH}<input type="search" name="q" value="{esc(raw_query)}" '
+            f'autocomplete="off" aria-label="검색어"></label>'
+            f'<label class="shell-field"><span class="shell-field-label">저장소</span>'
+            f'<select name="repo">{"".join(options)}</select></label>'
+            f'{hidden}<button type="submit" class="btn btn-primary">검색</button></form>')
+
+
+def _search_group(group, index, *, view_prefix, ref) -> str:
+    heading_id = f"search-repo-{index}"
+    notes = []
+    if group["status"] in SEARCH_STATUS_COPY and group["status"] != "truncated":
+        notes.append(f'<p class="search-note search-note-{esc(group["status"])}">{SEARCH_STATUS_COPY[group["status"]]}</p>')
+    if group["truncated"]:
+        notes.append(f'<p class="search-note search-note-truncated">{SEARCH_STATUS_COPY["truncated"]}</p>')
+    items = []
+    for m in group["matches"]:
+        href = _doc_href(view_prefix, group["id"], m["path"], ref)
+        mark = f'<mark>{esc(m["match"])}</mark>' if m["match"] else ""
+        items.append(
+            f'<li class="search-hit"><a class="search-hit-path" href="{esc(href)}">{esc(m["path"])}</a>'
+            f'<span class="search-hit-line">{esc(m["line"])}행</span>'
+            f'<code class="search-hit-text">{esc(m["before"])}{mark}{esc(m["after"])}</code></li>')
+    listing = f'<ol class="search-hits">{"".join(items)}</ol>' if items else ""
+    return (f'<section class="search-group" aria-labelledby="{heading_id}">'
+            f'<h2 id="{heading_id}">{esc(group["name"])}</h2>{"".join(notes)}{listing}</section>')
+
+
+def render_search_page(*, view_prefix: str, query: str, raw_query: str, repos: Sequence,
+                       active_repo: str | None, ref: str | None, results: list[dict] | None) -> str:
+    title = f"\u2018{esc(query)}\u2019 검색 결과" if results is not None else "문서 검색"
+    parts = ['<main id="main" class="search-page" tabindex="-1">', f"<h1>{title}</h1>",
+             _search_form(view_prefix=view_prefix, raw_query=raw_query, repos=repos, active_repo=active_repo, ref=ref)]
+    if results is None:
+        parts.append(f'<p class="search-note search-note-invalid" role="alert">{SEARCH_QUERY_HINT}</p>')
+    else:
+        total = sum(len(g["matches"]) for g in results)
+        found = sum(1 for g in results if g["matches"])
+        parts.append(f'<p class="search-summary" role="status">{found}개 저장소에서 {total}건</p>')
+        if total == 0 and not any(g["truncated"] for g in results):
+            parts.append('<p class="search-note search-note-empty">찾은 결과가 없습니다</p>')
+        for index, group in enumerate(results):
+            if group["matches"] or group["truncated"] or group["status"] != "ok":
+                parts.append(_search_group(group, index, view_prefix=view_prefix,
+                                           ref=ref if ref and group["id"] == active_repo else None))
+    parts.append("</main>")
     return "".join(parts)

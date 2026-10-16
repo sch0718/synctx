@@ -125,3 +125,42 @@ def test_error_body_download_only_for_size_and_type():
     href = "/view/api/repos/r1/download?path=a.bin"
     assert "원본 내려받기" in ui.error_body("unsupported", view_prefix="/view", repo_id="r1", path="a.bin", download_href=href)
     assert "원본 내려받기" not in ui.error_body("file_missing", view_prefix="/view", repo_id="r1", path="a.bin", download_href=href)
+
+
+def test_search_page_escapes_and_links():
+    results = [{"id": "r1", "name": "One", "status": "ok", "truncated": True,
+                "matches": [{"path": '회의 자료/a:"b".md', "line": 7, "before": "x ", "match": "<b>Hit</b>", "after": " y"}]}]
+    html = ui.render_search_page(view_prefix="/view", query="<b>hit</b>", raw_query="<b>hit</b>",
+                                 repos=REPOS, active_repo=None, ref=None, results=results)
+    assert "<b>Hit</b>" not in html and "&lt;b&gt;hit&lt;/b&gt;" in html
+    assert "x <mark>&lt;b&gt;Hit&lt;/b&gt;</mark> y" in html
+    assert 'href="/view/r1/%ED%9A%8C%EC%9D%98%20%EC%9E%90%EB%A3%8C/a%3A%22b%22.md"' in html
+    assert "7행" in html and ui.SEARCH_STATUS_COPY["truncated"] in html
+    assert "1개 저장소에서 1건" in html
+
+
+def test_search_page_statuses_empty_and_invalid():
+    rs = [{"id": s, "name": s, "status": s, "truncated": False, "matches": []}
+          for s in ("timeout", "unsupported", "unavailable", "failed", "ok")]
+    html = ui.render_search_page(view_prefix="/view", query="ab", raw_query="ab", repos=REPOS,
+                                 active_repo=None, ref=None, results=rs)
+    for key in ("timeout", "unsupported", "unavailable", "failed"):
+        assert ui.SEARCH_STATUS_COPY[key] in html
+    assert "찾은 결과가 없습니다" in html
+    cut = [{"id": "r1", "name": "One", "status": "ok", "truncated": True, "matches": []}]
+    cut_html = ui.render_search_page(view_prefix="/view", query="ab", raw_query="ab", repos=REPOS,
+                                     active_repo=None, ref=None, results=cut)
+    assert ui.SEARCH_STATUS_COPY["truncated"] in cut_html and "찾은 결과가 없습니다" not in cut_html
+    bad = ui.render_search_page(view_prefix="/view", query="", raw_query="a", repos=REPOS,
+                                active_repo=None, ref=None, results=None)
+    assert "두 글자 이상, 100글자 이하로 한 줄만 입력하세요" in bad and 'value="a"' in bad
+
+
+def test_search_page_keeps_ref_only_for_its_repo():
+    rs = [{"id": "r1", "name": "One", "status": "ok", "truncated": False,
+           "matches": [{"path": "a.md", "line": 1, "before": "", "match": "ab", "after": ""}]}]
+    html = ui.render_search_page(view_prefix="/view", query="ab", raw_query="ab", repos=REPOS,
+                                 active_repo="r1", ref="feat/x", results=rs)
+    assert 'href="/view/r1/a.md?ref=feat%2Fx"' in html
+    assert '<input type="hidden" name="ref" value="feat/x">' in html
+    assert '<input type="hidden" name="ref_repo" value="r1">' in html

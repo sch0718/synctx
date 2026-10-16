@@ -827,6 +827,43 @@ class TestSearchApi:
         assert client.get("/api/search", params={"q": "ab"}).status_code == 403
         ok = {"X-Forwarded-Groups": "synctx-viewer"}
         assert client.get("/api/search", params={"q": "a"}, headers=ok).status_code == 400
+        assert client.get("/search", params={"q": "ab"}).status_code == 403
+        assert client.get("/search", params={"q": "a"}, headers=ok).status_code == 200
+
+
+class TestSearchPage:
+    def test_search_page_renders_html(self, client, mock_repo_manager):
+        from synctx_common.git_manager import GrepMatch, GrepResult
+        mock_repo_manager.grep.return_value = GrepResult("ok", [GrepMatch("docs/a.md", 2, "Hello Search")], False)
+        resp = client.get("/search", params={"q": "search"})
+        assert resp.status_code == 200 and "text/html" in resp.headers["content-type"]
+        assert "<mark>Search</mark>" in resp.text and 'class="shell-nav shell-nav-mobile-only"' in resp.text
+
+    def test_search_page_invalid_query_does_not_search(self, client, mock_repo_manager):
+        resp = client.get("/search", params={"q": "a"})
+        assert resp.status_code == 200 and "두 글자 이상" in resp.text
+        mock_repo_manager.grep.assert_not_called()
+
+    def test_search_page_with_no_repositories(self, client, monkeypatch):
+        import app as viewer_app
+        monkeypatch.setattr(viewer_app.config, "repositories", [])
+        resp = client.get("/search", params={"q": "ab"})
+        assert resp.status_code == 200 and "찾은 결과가 없습니다" in resp.text
+
+    def test_search_page_unknown_repo_is_html_404(self, client):
+        resp = client.get("/search", params={"q": "ab", "repo": "nope"})
+        assert resp.status_code == 404 and "이 저장소를 찾을 수 없습니다" in resp.text
+
+    @pytest.mark.parametrize("params, expected_ref", [
+        ({"repo": "test-repo", "ref": "feat/x", "ref_repo": "test-repo"}, "feat/x"),
+        ({"repo": "test-repo", "ref": "feat/x", "ref_repo": "other"}, None),
+        ({"ref": "feat/x", "ref_repo": "test-repo"}, None),
+    ])
+    def test_search_page_uses_ref_only_for_its_repo(self, client, mock_repo_manager, params, expected_ref):
+        from synctx_common.git_manager import GrepResult
+        mock_repo_manager.grep.return_value = GrepResult("ok", [], False)
+        client.get("/search", params={"q": "ab", **params})
+        assert mock_repo_manager.grep.call_args.args[1] == expected_ref
 
 
 class TestErrorPages:

@@ -97,3 +97,20 @@ def test_nav_tab_labels_meet_aa_on_their_backgrounds():
             if ratio < 4.5:
                 failures.append(f"{theme} {label}: {ratio:.2f}")
     assert not failures, failures
+
+
+def test_mark_text_meets_aa_on_its_background():
+    rule = _css_rule("mark")
+    color, background = _decl(rule, "color"), _decl(rule, "background")
+    failures = []
+    for theme in _themes():
+        values = theme_vars(theme)
+        ratio = contrast(rgb(_resolve(color, values))[0], rgb(_resolve(background, values))[0])
+        if ratio < 4.5:
+            failures.append(f"{theme}: {ratio:.2f}")
+    assert not failures, failures
+
+
+def test_mark_is_visible_without_relying_on_background_alone():
+    rule = _css_rule("mark")
+    assert _decl(rule, "font-weight") and "var(--primary)" in (_decl(rule, "box-shadow") or "")
