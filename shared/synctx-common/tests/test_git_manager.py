@@ -1,9 +1,10 @@
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
-from synctx_common.git_manager import GitRepoManager
+from synctx_common.git_manager import GitRepoManager, GrepMatch, GrepResult
 from synctx_common.config import RepoProfile
 
 def test_validate_path():
@@ -240,3 +241,187 @@ async def test_last_commit_for_repo_and_branch(tmp_path, remote):
     assert manager.last_commit("docs/a.md", ref="feature").sha == feature_sha
     assert manager.last_commit("", ref="feature").sha == feature_sha
     assert manager.last_commit("docs/a.md").sha != feature_sha
+
+
+@pytest.mark.asyncio
+async def test_grep_finds_case_insensitive_matches_with_line_numbers(tmp_path, remote):
+    bare, work, _ = remote
+    _commit(work, "docs/guide.md", "intro\nHello Search\nsearch again\n", "guide")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    result = manager.grep("SEARCH")
+    assert result.status == "ok" and result.truncated is False
+    assert [(m.path, m.line, m.text) for m in result.matches] == [
+        ("docs/guide.md", 2, "Hello Search"), ("docs/guide.md", 3, "search again")]
+    assert isinstance(result.matches[0], GrepMatch)
+
+
+@pytest.mark.asyncio
+async def test_grep_is_literal_and_option_safe(tmp_path, remote):
+    bare, work, _ = remote
+    _commit(work, "docs/x.md", "a.b\naxb\n--help line\n[x]\n", "x")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    assert [m.line for m in manager.grep("a.b").matches] == [1]
+    assert [m.line for m in manager.grep("--help").matches] == [3]
+    assert [m.line for m in manager.grep("[x]").matches] == [4]
+
+
+@pytest.mark.asyncio
+async def test_grep_parses_paths_with_colon_space_and_newline(tmp_path, remote):
+    bare, work, _ = remote
+    _commit(work, "회의 자료/a:b.md", "needle\n", "colon")
+    _commit(work, "docs/a\nb.md", "needle\n", "newline")
+    _commit(work, "docs/z.md", "needle\n", "after")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    assert sorted(m.path for m in manager.grep("needle").matches) == ["docs/a\nb.md", "docs/z.md", "회의 자료/a:b.md"]
+
+
+@pytest.mark.asyncio
+async def test_grep_skips_binary_and_honours_pathspecs(tmp_path, remote):
+    bare, work, _ = remote
+    (work / "bin.dat").write_bytes(b"\x00\x01needle")
+    _git(work, "add", "bin.dat")
+    _commit(work, "code/x.py", "needle = 1\n", "py")
+    _commit(work, "notes.txt", "needle\n", "txt")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    assert {m.path for m in manager.grep("needle").matches} == {"code/x.py", "notes.txt"}
+    assert [m.path for m in manager.grep("needle", pathspecs=[":(glob,icase)**/*.py"]).matches] == ["code/x.py"]
+
+
+@pytest.mark.asyncio
+async def test_grep_applies_path_filter_before_limit(tmp_path, remote):
+    bare, work, _ = remote
+    for name in (".env", "a.env", "b.md"):
+        _commit(work, name, "hit\n", name)
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    result = manager.grep("hit", path_filter=lambda p: not p.split("/")[-1].startswith("."), limit=2)
+    assert sorted(m.path for m in result.matches) == ["a.env", "b.md"] and result.truncated is False
+
+
+@pytest.mark.asyncio
+async def test_grep_limits_and_reports_truncation(tmp_path, remote):
+    bare, work, _ = remote
+    for i in range(4):
+        _commit(work, f"docs/n{i}.md", "hit\nhit\n", f"n{i}")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    result = manager.grep("hit", limit=5)
+    assert len(result.matches) == 5 and result.truncated is True
+    small = manager.grep("hit", max_output_bytes=40)
+    assert small.truncated is True and len(small.matches) < 8
+
+
+@pytest.mark.asyncio
+async def test_grep_takes_at_most_five_lines_per_file(tmp_path, remote):
+    bare, work, _ = remote
+    _commit(work, "docs/many.md", "hit\n" * 7, "many")
+    _commit(work, "docs/one.md", "hit\n", "one")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    paths = [m.path for m in manager.grep("hit").matches]
+    assert paths.count("docs/many.md") == 5 and paths.count("docs/one.md") == 1
+
+
+@pytest.mark.asyncio
+async def test_grep_no_match_is_ok_and_empty(tmp_path, remote):
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    assert manager.grep("zzz-not-there") == GrepResult(status="ok", matches=[], truncated=False)
+
+
+@pytest.mark.asyncio
+async def test_grep_times_out_without_results(tmp_path, remote):
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    assert manager.grep("v1", timeout=0) == GrepResult(status="timeout", matches=[], truncated=False)
+
+
+@pytest.mark.asyncio
+async def test_grep_budget_covers_ref_fetch(tmp_path, remote, monkeypatch):
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    seen = {}
+
+    def fetch_timeout(*args, **kwargs):
+        if args and args[0] == "fetch":
+            seen["timeout"] = kwargs.get("timeout")
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
+        raise AssertionError("grep must not run after the fetch timed out")
+
+    monkeypatch.setattr(manager, "_run_git", fetch_timeout)
+    assert manager.grep("v1", ref="feature", timeout=0.5).status == "timeout"
+    assert 0 < seen["timeout"] <= 0.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("storage_mode", ["blobless", "treeless"])
+async def test_grep_skips_partial_clone(tmp_path, remote, monkeypatch, storage_mode):
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare, storage_mode=storage_mode)
+    await manager.ensure()
+    calls = []
+    monkeypatch.setattr(manager, "_run_git", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: calls.append(a))
+    assert manager.grep("v1").status == "unsupported" and calls == []
+
+
+@pytest.mark.asyncio
+async def test_grep_kills_git_when_deadline_passes_mid_read(tmp_path, remote, monkeypatch):
+    import time
+
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    killed = threading.Event()
+
+    class SilentStdout:
+        def read1(self, size=-1):
+            # kill()이 불릴 때까지 아무것도 주지 않는다. 상한 1초라 kill 처리가 빠진 구현도 무한 대기하지 않는다
+            killed.wait(1.0)
+            return b""
+
+        def close(self):
+            pass
+
+    class FakeProc:
+        stdout = SilentStdout()
+        returncode = None
+
+        def kill(self):
+            self.returncode = -9
+            killed.set()
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: FakeProc())
+    started = time.monotonic()
+    result = manager.grep("v1", timeout=0.05)
+    elapsed = time.monotonic() - started
+    assert result == GrepResult(status="timeout", matches=[], truncated=False)
+    assert killed.is_set()
+    assert elapsed < 0.5
+
+
+@pytest.mark.asyncio
+async def test_grep_searches_non_default_branch(tmp_path, remote):
+    bare, work, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    _git(work, "checkout", "-q", "-b", "feature")
+    (work / "docs/a.md").write_text("only on feature\n")
+    _git(work, "commit", "-qam", "feature edit")
+    _git(work, "push", "-q", "origin", "feature")
+    on_feature = manager.grep("only on feature", ref="feature")
+    assert [(m.path, m.line, m.text) for m in on_feature.matches] == [("docs/a.md", 1, "only on feature")]
+    assert manager.grep("only on feature").matches == []

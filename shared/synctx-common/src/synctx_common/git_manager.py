@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import subprocess
 import threading
+import time
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 from .config import RepoProfile
@@ -44,6 +46,20 @@ class CommitInfo:
     sha: str
     author: str
     authored_at: str
+
+
+@dataclass(frozen=True)
+class GrepMatch:
+    path: str
+    line: int
+    text: str
+
+
+@dataclass(frozen=True)
+class GrepResult:
+    status: Literal["ok", "timeout", "unsupported"]
+    matches: list[GrepMatch]
+    truncated: bool
 
 
 class GitRepoManager:
@@ -124,7 +140,13 @@ class GitRepoManager:
             return pat_args_empty
         return [*args, "-c", f"http.extraHeader={git_token_auth_header(token)}"]
 
-    def _run_git(self, *args: str, cwd: Path | None = None, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    def _run_git(
+        self,
+        *args: str,
+        cwd: Path | None = None,
+        extra_env: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess:
         try:
             return subprocess.run(
                 ["git", *self._git_config_args(), *args],
@@ -132,6 +154,7 @@ class GitRepoManager:
                 env={**self._git_env(), **(extra_env or {})},
                 check=True,
                 capture_output=True,
+                timeout=timeout,
             )
         except subprocess.CalledProcessError as exc:
             stderr = self._sanitize_git_text((exc.stderr or b"").decode("utf-8", errors="replace"))
@@ -246,19 +269,129 @@ class GitRepoManager:
         # fetch 는 refs/remotes/origin/<ref> 만 갱신하고 로컬 브랜치는 clone 시점에 머문다.
         return f"origin/{self.profile.default_ref}"
 
-    def _resolve_ref(self, ref: str | None = None) -> str:
+    def _resolve_ref(self, ref: str | None = None, *, timeout: float | None = None) -> str:
         """ref를 git 명령에 사용할 수 있는 형태로 변환한다."""
         if ref is None or ref == self.profile.default_ref:
             return self._default_remote_ref()
+        # 기존 호출처가 timeout을 모르는 _run_git 대역을 쓸 수 있어 값이 있을 때만 넘긴다
+        extra = {} if timeout is None else {"timeout": timeout}
         try:
             self._run_git(
                 "fetch", "origin",
                 f"refs/heads/{ref}:refs/remotes/origin/{ref}",
+                **extra,
             )
         except subprocess.CalledProcessError:
             logger.warning("fetch_ref_failed repo_id=%s ref=%s", self.profile.id, ref)
             raise
         return f"origin/{ref}"
+
+    def grep(
+        self,
+        query: str,
+        ref: str | None = None,
+        *,
+        pathspecs: Sequence[str] = (),
+        path_filter: Callable[[str], bool] | None = None,
+        limit: int = 50,
+        timeout: float = 3.0,
+        max_output_bytes: int = 2 * 1024 * 1024,
+    ) -> GrepResult:
+        """ref 트리의 본문을 git grep으로 찾는다. 기한은 ref 확인(fetch)부터 읽기 끝까지 전체에 적용한다."""
+        deadline = time.monotonic() + timeout
+        if timeout <= 0:
+            return GrepResult(status="timeout", matches=[], truncated=False)
+        if self.profile.storage_mode in {"blobless", "treeless"}:
+            # 검색이 모든 blob을 원격에서 받아 오게 만든다
+            return GrepResult(status="unsupported", matches=[], truncated=False)
+        try:
+            resolved = self._resolve_ref(ref, timeout=deadline - time.monotonic())
+        except subprocess.TimeoutExpired:
+            return GrepResult(status="timeout", matches=[], truncated=False)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return GrepResult(status="timeout", matches=[], truncated=False)
+
+        args = [
+            "git", *self._git_config_args(), "grep",
+            "-n", "-I", "-F", "-i", "-z", "--no-color", "--max-count=5",
+            "-e", query, resolved, "--", *pathspecs,
+        ]
+        proc = subprocess.Popen(
+            args,
+            cwd=str(self.repo_dir),
+            env=self._git_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        timed_out = threading.Event()
+
+        def expire() -> None:
+            timed_out.set()
+            proc.kill()
+
+        timer = threading.Timer(remaining, expire)
+        timer.start()
+        prefix = f"{resolved}:".encode("utf-8")
+        matches: list[GrepMatch] = []
+        truncated = False
+        eof = False
+        buf = bytearray()
+        total = 0
+        try:
+            while not truncated:
+                chunk = proc.stdout.read1(65536)
+                if not chunk:
+                    eof = True
+                    break
+                if total + len(chunk) > max_output_bytes:
+                    chunk = chunk[: max_output_bytes - total]
+                    truncated = True
+                total += len(chunk)
+                buf += chunk
+                # 경로에 줄바꿈이 올 수 있어 줄 단위로 나누지 않고 NUL·줄바꿈 순서로 읽는다
+                pos = 0
+                while True:
+                    path_end = buf.find(b"\0", pos)
+                    if path_end < 0:
+                        break
+                    line_end = buf.find(b"\0", path_end + 1)
+                    if line_end < 0:
+                        break
+                    text_end = buf.find(b"\n", line_end + 1)
+                    if text_end < 0:
+                        break
+                    raw_path = bytes(buf[pos:path_end])
+                    raw_line = bytes(buf[path_end + 1:line_end])
+                    raw_text = bytes(buf[line_end + 1:text_end])
+                    pos = text_end + 1
+                    if raw_path.startswith(prefix):
+                        raw_path = raw_path[len(prefix):]
+                    path = raw_path.decode("utf-8", errors="replace")
+                    if path_filter is not None and not path_filter(path):
+                        continue
+                    if len(matches) >= limit:
+                        truncated = True
+                        break
+                    matches.append(
+                        GrepMatch(path=path, line=int(raw_line), text=raw_text.decode("utf-8", errors="replace"))
+                    )
+                del buf[:pos]
+                if truncated:
+                    break
+        finally:
+            timer.cancel()
+            if not eof:
+                proc.kill()
+            returncode = proc.wait()
+            proc.stdout.close()
+
+        if timed_out.is_set():
+            return GrepResult(status="timeout", matches=[], truncated=False)
+        if eof and returncode not in (0, 1):
+            # args에 토큰 헤더가 들어 있어 예외 메시지에 싣지 않는다
+            raise subprocess.CalledProcessError(returncode, ["git", "grep"])
+        return GrepResult(status="ok", matches=matches, truncated=truncated)
 
     def validate_path(self, path: str) -> str:
         """경로 탐색(Path Traversal) 공격을 방어하고 정규화된 경로를 반환한다."""
