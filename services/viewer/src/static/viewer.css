@@ -57,6 +57,7 @@ body { margin: 0; background: var(--bg-default); color: var(--text-primary); fon
 .shell-nav-mobile-only { display: none; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .tree-filter { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: var(--radius-ui); background: var(--bg-card); color: var(--text-secondary); }
+.tree-filter:focus-within { border-color: var(--primary); }
 .tree-filter input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 13px; outline: none; }
 
 .tree { font-family: var(--font-mono-ui); font-size: 13px; }
@@ -88,8 +89,8 @@ body { margin: 0; background: var(--bg-default); color: var(--text-primary); fon
 .recent-list a:hover { color: var(--primary); text-decoration: underline; }
 .recent-empty { color: var(--text-secondary); font-size: 13px; }
 
-.viewer-content { min-width: 0; padding: 24px 40px 72px; }
 .markdown-body [id], #main { scroll-margin-top: calc(var(--shell-header-h) + 12px); }
+.viewer-content { min-width: 0; padding: 24px 40px 72px; }
 .viewer-content .markdown-body { max-width: 980px; margin: 0 auto; }
 .doc-head { display: flex; flex-direction: column; gap: 10px; max-width: 980px; margin: 0 auto 12px; }
 .breadcrumb { display: flex; flex-wrap: wrap; gap: 4px; color: var(--text-secondary); font-size: 13px; }
@@ -155,6 +156,8 @@ body { margin: 0; background: var(--bg-default); color: var(--text-primary); fon
 .toast-title { font-weight: 600; }
 .toast-body { margin-top: 2px; color: var(--text-secondary); font-size: 13px; }
 .toast .btn { height: 30px; padding: 0 10px; font-size: 13px; }
+.toast .toast-close { flex-shrink: 0; margin-left: auto; padding: 0 8px; border-color: transparent; background: transparent; color: var(--text-secondary); }
+.toast .toast-close:hover { background: var(--bg-neutral); color: var(--text-primary); }
 
 dialog { max-width: min(480px, calc(100vw - 32px)); padding: 20px 22px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-card); color: var(--text-primary); }
 dialog::backdrop { background: rgba(15, 18, 22, 0.45); }
@@ -166,6 +169,10 @@ dialog dd { margin: 0; word-break: break-all; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .keys kbd { padding: 1px 6px; border: 1px solid var(--border-color); border-radius: 4px; font-family: var(--font-mono-ui); font-size: 12px; }
 
+@media (min-width: 1100px) {
+  .shell-nav [data-nav-panel="files"][hidden] { display: flex; }
+  .shell-nav [data-nav-panel="toc"] { display: none; }
+}
 @media (max-width: 1099px) {
   .layout-doc { grid-template-columns: var(--shell-nav-w) minmax(0, 1fr); }
   .shell-toc { display: none; }

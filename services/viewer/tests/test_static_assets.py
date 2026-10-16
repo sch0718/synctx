@@ -97,11 +97,31 @@ def test_drawer_toc_link_closes_after_default_navigation():
     assert "window.setTimeout(" in block and "setNav(false)" in block
 
 
-def _rule(css, selector):
-    import re
-    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
-    assert match is not None, selector
-    return match.group(1)
+def test_tree_filter_shows_focus():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    assert "border-color: var(--primary)" in _rule(css, ".tree-filter:focus-within")
+
+
+def test_wide_layout_always_shows_file_tree_and_hides_drawer_toc():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    wide = css.split("@media (min-width: 1100px)")[1]
+    assert "display: flex" in _rule(wide, '.shell-nav [data-nav-panel="files"][hidden]')
+    assert "display: none" in _rule(wide, '.shell-nav [data-nav-panel="toc"]')
+
+
+def test_toasts_have_close_button_and_success_times_out():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    toast = js.split("function synctxToast(")[1].split("window.synctxToast")[0]
+    assert "toast-close" in toast and "'닫기'" in toast and "setAttribute('aria-label', '닫기')" in toast
+    assert "opts.kind === 'success'" in toast
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    assert ".toast-close" in css
+
+
+def test_marp_forbidden_is_not_reported_as_service_down():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert "권한이 없습니다" in js and "슬라이드를 만들거나 출판할 권한이 필요합니다. 관리자에게 요청하세요." in js
+    assert "e.message === '403'" in js
 
 
 def test_branch_list_is_filled_after_load_not_while_rendering():
@@ -109,13 +129,6 @@ def test_branch_list_is_filled_after_load_not_while_rendering():
     assert "'/branches'" in js and "core.branchChoices(" in js
     assert 'select[data-action="branch"]' in js
     assert "option.textContent = " in js
-
-
-def _rule(css, selector):
-    import re
-    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
-    assert match is not None, selector
-    return match.group(1)
 
 
 def test_subtree_marks_current_document():

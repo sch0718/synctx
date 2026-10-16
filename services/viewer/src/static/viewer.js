@@ -5,6 +5,7 @@
   var core = window.SynctxViewerCore;
   var RECENT_KEY = 'synctx-recent';
   var THEME_KEY = 'synctx-theme';
+  var SUCCESS_TOAST_MS = 8000;
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $all(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -52,6 +53,13 @@
       action.addEventListener('click', function () { close(); opts.onAction(); });
       el.appendChild(action);
     }
+    var dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'btn toast-close';
+    dismiss.textContent = '닫기';
+    dismiss.setAttribute('aria-label', '닫기');
+    dismiss.addEventListener('click', function () { close(); });
+    el.appendChild(dismiss);
     region.appendChild(el);
     var timer = null;
     if (opts.kind === 'progress') {
@@ -60,8 +68,9 @@
       timer = window.setInterval(function () {
         body.textContent = Math.round((Date.now() - started) / 1000) + '초 지남';
       }, 1000);
-    } else if (opts.timeout) {
-      timer = window.setTimeout(close, opts.timeout);
+    } else {
+      var timeout = opts.timeout || (opts.kind === 'success' ? SUCCESS_TOAST_MS : 0);
+      if (timeout) timer = window.setTimeout(close, timeout);
     }
     function close() { window.clearInterval(timer); window.clearTimeout(timer); el.remove(); }
     return { close: close };
@@ -96,15 +105,6 @@
     });
   }
 
-  /* ── 서랍(767px 이하)과 탭(1099px 이하) ── */
-  var DRAWER = window.matchMedia('(max-width: 767px)');
-  var WIDE = window.matchMedia('(min-width: 1100px)');
-  var blocked = [];
-
-  function showNavTab(name) {
-    $all('[data-nav-tab]').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.navTab === name)); });
-    $all('[data-nav-panel]').forEach(function (p) { p.hidden = p.dataset.navPanel !== name; });
-    var panel = $('[data-nav-panel="toc"]');
   // 서버는 현재 브랜치만 그려 두므로, 화면이 뜬 뒤 전체 목록으로 바꾼다. 실패하면 현재 브랜치만 남긴다
   async function loadBranches() {
     var selects = $all('select[data-action="branch"]');
@@ -128,6 +128,15 @@
     } catch (e) { return; }
   }
 
+  /* ── 서랍(767px 이하)과 탭(1099px 이하) ── */
+  var DRAWER = window.matchMedia('(max-width: 767px)');
+  var WIDE = window.matchMedia('(min-width: 1100px)');
+  var blocked = [];
+
+  function showNavTab(name) {
+    $all('[data-nav-tab]').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.navTab === name)); });
+    $all('[data-nav-panel]').forEach(function (p) { p.hidden = p.dataset.navPanel !== name; });
+    var panel = $('[data-nav-panel="toc"]');
     var source = $('.shell-toc .toc');
     if (name === 'toc' && panel && source && !panel.firstElementChild) panel.appendChild(source.cloneNode(true));
   }
@@ -421,6 +430,10 @@
     var doc = window.SYNCTX_DOC;
     if (doc && doc.downloadHtml) window.location.href = doc.downloadHtml;
   }
+  function marpFailure(e, serviceDownBody) {
+    if (e && e.message === '403') return { title: '권한이 없습니다', body: '슬라이드를 만들거나 출판할 권한이 필요합니다. 관리자에게 요청하세요.' };
+    return { body: serviceDownBody };
+  }
   async function marpPdf() {
     var progress = synctxToast({ kind: 'progress', title: 'PDF 만드는 중…' });
     try {
@@ -437,7 +450,8 @@
       synctxToast({ kind: 'success', title: 'PDF를 내려받았습니다', timeout: 4000 });
     } catch (e) {
       progress.close();
-      synctxToast({ kind: 'error', title: 'PDF를 만들지 못했습니다', body: 'Marp 서비스가 응답하지 않았습니다. HTML로 받아 보세요.', actionLabel: 'HTML로 받기', onAction: fallbackToHtml });
+      var failure = marpFailure(e, 'Marp 서비스가 응답하지 않았습니다. HTML로 받아 보세요.');
+      synctxToast({ kind: 'error', title: failure.title || 'PDF를 만들지 못했습니다', body: failure.body, actionLabel: 'HTML로 받기', onAction: fallbackToHtml });
     }
   }
   async function marpPreview() {
@@ -450,7 +464,8 @@
     } catch (e) {
       progress.close();
       if (win) win.close();
-      synctxToast({ kind: 'error', title: '슬라이드를 만들지 못했습니다', body: 'Marp 서비스가 응답하지 않았습니다. 잠시 후 다시 시도하세요.' });
+      var failure = marpFailure(e, 'Marp 서비스가 응답하지 않았습니다. 잠시 후 다시 시도하세요.');
+      synctxToast({ kind: 'error', title: failure.title || '슬라이드를 만들지 못했습니다', body: failure.body });
     }
   }
   function marpPublish() {
@@ -465,10 +480,11 @@
       try {
         var data = await (await marpRequest('publish', { markdown: rawMarkdown(), filename: window.SYNCTX_DOC.publishName })).json();
         progress.close();
-        synctxToast({ kind: 'success', title: '출판했습니다', body: data.url, actionLabel: '열기', onAction: function () { window.open(data.url, '_blank', 'noopener'); } });
+        synctxToast({ kind: 'success', title: '출판했습니다', body: data.url, timeout: 20000, actionLabel: '열기', onAction: function () { window.open(data.url, '_blank', 'noopener'); } });
       } catch (e) {
         progress.close();
-        synctxToast({ kind: 'error', title: '출판하지 못했습니다', body: '권한이나 게시 저장소 설정을 확인하세요.' });
+        var failure = marpFailure(e, '권한이나 게시 저장소 설정을 확인하세요.');
+        synctxToast({ kind: 'error', title: failure.title || '출판하지 못했습니다', body: failure.body });
       }
     });
   }
@@ -529,6 +545,7 @@
   }
 
   initSelects();
+  loadBranches();
   initNav();
   initClicks();
   initKeys();
@@ -537,4 +554,3 @@
   initTocSpy();
   initRecent();
 })();
-  loadBranches();
