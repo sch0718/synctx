@@ -134,3 +134,11 @@ def test_branch_list_is_filled_after_load_not_while_rendering():
 def test_subtree_marks_current_document():
     js = (STATIC / "viewer.js").read_text(encoding="utf-8")
     assert 'aria-current="page"' in js.split("async function loadSubtree(")[1].split("function filterTree")[0]
+
+
+def test_finder_enter_needs_visible_results_and_skips_ime_composition():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    finder = js.split("function initFinder(")[1].split("function focusFinder")[0]
+    assert "e.isComposing || e.keyCode === 229" in finder
+    assert "if (!input.value.trim()) { clearResults(); return; }" in finder
+    assert "if (active >= 0 && !list.hidden)" in finder

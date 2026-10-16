@@ -324,6 +324,7 @@
     var active = -1;
 
     function setOpen(open) { list.hidden = !open; input.setAttribute('aria-expanded', String(open)); }
+    function clearResults() { items = []; active = -1; input.setAttribute('aria-activedescendant', ''); setOpen(false); }
     function message(text) { items = []; active = -1; list.innerHTML = '<li class="finder-empty">' + escapeHtml(text) + '</li>'; setOpen(true); }
     function paint() {
       list.innerHTML = items.map(function (p, i) {
@@ -336,7 +337,7 @@
     }
     function render() {
       if (!ACTIVE_REPO) { message('저장소를 먼저 고르세요.'); return; }
-      if (!input.value.trim()) { setOpen(false); return; }
+      if (!input.value.trim()) { clearResults(); return; }
       var files = loader.files();
       if (files === null) {
         message('파일 목록을 불러오는 중…');
@@ -358,13 +359,15 @@
     input.addEventListener('input', render);
     input.addEventListener('focus', function () { if (ACTIVE_REPO) loader.load(); });
     input.addEventListener('keydown', function (e) {
+      // 한글 조합을 끝내는 Enter·방향키는 검색 결과 조작이 아니다
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         if (!items.length) return;
         e.preventDefault();
         active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
         paint();
       } else if (e.key === 'Enter') {
-        if (active >= 0) { e.preventDefault(); go(items[active]); }
+        if (active >= 0 && !list.hidden) { e.preventDefault(); go(items[active]); }
       } else if (e.key === 'Escape') {
         setOpen(false);
       }
