@@ -19,6 +19,8 @@ SNIPPET_WIDTH = 160
 MAX_CONCURRENT = 4
 
 _ELLIPSIS = "…"
+# 줄바꿈은 -F에서 여러 패턴이 되고, NUL은 subprocess 인자로 넘기면 예외가 난다
+_FORBIDDEN_QUERY_CHARS = ("\n", "\r", "\x00")
 _PARTIAL_CLONE_MODES = {"blobless", "treeless"}
 
 # 저장소 동기화가 쓰는 기본 실행기를 검색이 점유하지 않게 따로 둔다
@@ -29,7 +31,7 @@ def normalize_query(raw: str | None) -> str | None:
     if raw is None:
         return None
     query = raw.strip()
-    if not QUERY_MIN <= len(query) <= QUERY_MAX or "\n" in query or "\r" in query:
+    if not QUERY_MIN <= len(query) <= QUERY_MAX or any(char in query for char in _FORBIDDEN_QUERY_CHARS):
         return None
     return query
 
@@ -86,15 +88,16 @@ def _grep_repository(repo_id: str, repo_name: str, manager: Any, query: str, ref
     try:
         grep = manager.grep(query, ref, pathspecs=pathspecs, path_filter=path_filter,
                             limit=RESULT_LIMIT, timeout=remaining)
-    except Exception:
-        logger.warning("search_failed repo_id=%s", repo_id, exc_info=True)
+        matches = []
+        for item in grep.matches:
+            before, match, after = split_snippet(item.text, query)
+            matches.append({"path": item.path, "line": item.line,
+                            "before": before, "match": match, "after": after})
+        return _result(repo_id, repo_name, grep.status, grep.truncated, matches)
+    except Exception as exc:
+        # git 인자(인증 헤더 포함)가 예외 문구에 실릴 수 있어 종류만 남긴다
+        logger.warning("search_failed repo_id=%s error=%s", repo_id, type(exc).__name__)
         return _result(repo_id, repo_name, "failed")
-    matches = []
-    for item in grep.matches:
-        before, match, after = split_snippet(item.text, query)
-        matches.append({"path": item.path, "line": item.line,
-                        "before": before, "match": match, "after": after})
-    return _result(repo_id, repo_name, grep.status, grep.truncated, matches)
 
 
 async def search_repositories(

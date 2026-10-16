@@ -6,7 +6,7 @@ from synctx_common.git_manager import GrepMatch, GrepResult
 
 @pytest.mark.parametrize("raw, expected", [
     ("  회의 ", "회의"), ("a", None), (" ", None), (None, None),
-    ("x" * 100, "x" * 100), ("x" * 101, None), ("a\nb", None), ("a\rb", None)])
+    ("x" * 100, "x" * 100), ("x" * 101, None), ("a\nb", None), ("a\rb", None), ("a\x00b", None)])
 def test_normalize_query(raw, expected):
     assert search.normalize_query(raw) == expected
 
@@ -126,3 +126,20 @@ def test_search_skips_executor_when_every_repo_is_excluded(monkeypatch):
 
 def test_search_with_no_repositories_returns_empty():
     assert asyncio.run(search.search_repositories([], "ab", None, [], lambda p: True)) == []
+
+
+def test_failed_repository_logs_only_exception_type(caplog):
+    repos = [("r1", "One", _manager(exc=RuntimeError("Authorization: Basic SECRET")))]
+    with caplog.at_level("DEBUG"):
+        out = asyncio.run(search.search_repositories(repos, "ab", None, [], lambda p: True))
+    assert out[0]["status"] == "failed"
+    assert "SECRET" not in caplog.text
+    assert "RuntimeError" in caplog.text and "r1" in caplog.text
+
+
+def test_result_building_error_fails_only_that_repository():
+    ok = GrepResult(status="ok", matches=[GrepMatch("a.md", 1, "ab")], truncated=False)
+    broken = _manager(result=SimpleNamespace(status="ok", truncated=False))
+    repos = [("r1", "One", _manager(result=ok)), ("r2", "Two", broken), ("r3", "Three", _manager(result=ok))]
+    out = asyncio.run(search.search_repositories(repos, "ab", None, [], lambda p: True))
+    assert [(r["id"], r["status"]) for r in out] == [("r1", "ok"), ("r2", "failed"), ("r3", "ok")]
