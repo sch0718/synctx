@@ -54,7 +54,7 @@ test:
 		services/cdn/tests/ \
 		scripts/tests/ \
 		-q
-	node --test services/viewer/tests/js/memo-core.test.mjs
+	node --test services/viewer/tests/js/*.test.mjs
 
 # ──────────────────────────── Helm ────────────────────────────
 
