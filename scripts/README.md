@@ -24,6 +24,8 @@ scripts/
 │   ├── seed_cdn.py            # cdn 컨테이너 안에서 vendor 파일 업로드
 │   └── _common.sh             # 공통 함수
 └── local/                     # 로컬 minikube 개발 환경
+    ├── run-viewer.sh          # Docker·minikube 없이 Viewer+Marp+CDN 파일을 한 프로세스로 실행
+    ├── run_viewer.py          # run-viewer.sh가 실행하는 묶음 앱(/view, /marp, /cdn)
     ├── setup.sh               # 전체 설치 (one-shot)
     ├── verify.sh              # 환경 검증
     ├── cleanup.sh             # 환경 정리
@@ -167,6 +169,16 @@ K8s 클러스터가 없는 Docker 서버에 synctx를 배포한다. 옵션 파�
 ## 로컬 개발 환경 (local/)
 
 minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.local`을 사용한다.
+
+### run-viewer.sh — Viewer만 가볍게 실행
+
+```bash
+./scripts/local/run-viewer.sh                    # http://127.0.0.1:18000/view/
+./scripts/local/run-viewer.sh --port 18100       # 포트 변경
+./scripts/local/run-viewer.sh --config my.yaml   # 다른 .synctx.yaml 사용
+```
+
+Docker·minikube 없이 uvicorn 하나로 `/view`(Viewer), `/marp`(Marp), `/cdn`(`cdn-data/`)을 띄운다. 설정은 `helm/synctx/values-local.yaml`의 `synctxConfig.data`에서 `~/.cache/synctx/synctx.local.yaml`을 만들어 쓰고, 토큰은 `GIT_READ_TOKEN` 또는 `values-local.secret.yaml`에서 실행 시점에만 읽는다. Marp에는 `marp`·`mmdc`(npm)와 Chrome이 필요하며, 없으면 Marp를 끈 채 실행한다. 자세한 내용은 [docs/local-development.md](../docs/local-development.md) 0절.
 
 ### 사전 요구사항
 

@@ -335,3 +335,27 @@ class TestThemesAPI:
         marp_app.config.authz.enabled = True
         resp = client.get("/api/marp/themes")
         assert resp.status_code == 200
+
+
+class TestPuppeteerConfig:
+    def _read(self, path):
+        import json
+        return json.loads(Path(path).read_text())
+
+    def test_default_chromium_path(self, tmp_path, monkeypatch):
+        import app as marp_app
+        target = tmp_path / "puppeteer-config.json"
+        monkeypatch.setattr(marp_app, "PUPPETEER_CONFIG_PATH", str(target))
+        monkeypatch.delenv("CHROME_PATH", raising=False)
+        marp_app._ensure_puppeteer_config()
+        assert self._read(target) == {"executablePath": "/usr/bin/chromium", "args": ["--no-sandbox"]}
+
+    def test_chrome_path_env_is_used_and_rewritten(self, tmp_path, monkeypatch):
+        import app as marp_app
+        target = tmp_path / "puppeteer-config.json"
+        monkeypatch.setattr(marp_app, "PUPPETEER_CONFIG_PATH", str(target))
+        monkeypatch.delenv("CHROME_PATH", raising=False)
+        marp_app._ensure_puppeteer_config()
+        monkeypatch.setenv("CHROME_PATH", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        marp_app._ensure_puppeteer_config()
+        assert self._read(target)["executablePath"] == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"

@@ -2,6 +2,25 @@
 
 이 문서는 synctx를 로컬 minikube 클러스터에서 실행하는 방법을 설명한다.
 
+## 0. Viewer만 가볍게 실행 (Docker·minikube 없이)
+
+문서 보기, 회의 모드, 모션 그래픽(`synctx-html`), Marp 슬라이드 미리보기·PDF만 필요하면 클러스터 없이 프로세스 하나로 띄운다.
+
+```bash
+scripts/local/run-viewer.sh            # http://127.0.0.1:18000/view/
+scripts/local/run-viewer.sh --port 18100
+```
+
+- **구성**: uvicorn 하나에 `/view`(Viewer), `/marp`(Marp), `/cdn`(저장소의 `cdn-data/` 정적 파일)을 Ingress와 같은 경로로 묶는다. Draw.io·Sync·Feedback은 띄우지 않고, Viewer에는 `SYNCTX_ENABLED_SERVICES=viewer,cdn,marp`를 넘겨 Draw.io 버튼을 숨긴다.
+- **설정**: `helm/synctx/values-local.yaml`의 `synctxConfig.data`(minikube와 같은 저장소 목록)에서 `~/.cache/synctx/synctx.local.yaml`을 만들고, 공개 주소·CDN 주소·Marp 주소·저장소 캐시 위치(`~/.cache/synctx/repos`)만 로컬 값으로 바꾼다. 다른 설정을 쓰려면 `--config <.synctx.yaml>`.
+- **토큰**: `GIT_READ_TOKEN` 환경변수가 있으면 쓰고, 없으면 `values-local.secret.yaml`의 `git.secrets.readToken`을 실행 시점에만 읽는다. Marp 출판은 이 읽기 토큰을 그대로 쓰므로(쓰기 권한이 있으면 공유 저장소에 push된다) 만든 설정에서는 `marp.publish_repo`를 비워 출판을 끈다. 출판 버튼도 나오지 않는다. `--config`로 직접 준 설정은 그대로 쓰므로 `publish_repo`를 비워 두어야 한다.
+- **Marp 요구사항**: `npm install -g @marp-team/marp-cli @mermaid-js/mermaid-cli`와 Chrome(또는 Chromium). 없으면 경고를 내고 Marp를 끈 채 Viewer만 실행한다. Chrome 경로는 `CHROME_PATH`로 바꿀 수 있다.
+- **저장소 갱신**: Viewer는 시작할 때만 저장소를 받아 온다. 그 뒤 원격에 올라간 변경을 보려면 다시 실행하거나 저장소별로 갱신을 요청한다. 처음부터 다시 받으려면 `~/.cache/synctx/repos`를 지우고 다시 실행한다.
+
+  ```bash
+  curl -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:18000/view/api/repos/meeting-docs/webhook
+  ```
+
 ## 1. 운영 vs 로컬 환경 비교
 
 | 구성 요소 | 운영 (폐쇄망) | 로컬 (minikube) |

@@ -99,6 +99,7 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 - **빌드/배포**: 직접 `docker build`/`kubectl` 명령 사용 금지 — 반드시 `scripts/local/` 스크립트 사용
 - **스크립트 오류 시**: 스크립트를 우회하지 말고, 원인을 파악하여 스크립트 자체를 수정
 - **네임스페이스**: `synctx` (scripts에 정의됨, `default` 네임스페이스 사용 금지)
+- **Viewer만 로컬 실행**: `scripts/local/run-viewer.sh`(Docker·minikube 없이 `/view`·`/marp`·`/cdn`을 한 프로세스로, http://127.0.0.1:18000/view/). 설정은 values-local.yaml에서 만들어 `~/.cache/synctx/`에 둔다
 - **Docker Compose 배포**: `scripts/docker/deploy.sh`(옵션 파일 `deploy/docker/synctx.env`), 중지 `scripts/docker/down.sh`, 운영 명령 `scripts/docker/compose.sh -- <명령>`. 직접 `docker compose up` 금지 — 게이트웨이 설정과 설정 해시를 deploy.sh가 만든다
 
 ## 구현 주의사항

@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import json
 import os
 import re
 import subprocess
@@ -57,9 +58,10 @@ PUPPETEER_CONFIG_PATH = "/tmp/marp-work/puppeteer-config.json"
 
 def _ensure_puppeteer_config():
     config_path = Path(PUPPETEER_CONFIG_PATH)
-    if not config_path.exists():
+    content = json.dumps({"executablePath": os.getenv("CHROME_PATH", "/usr/bin/chromium"), "args": ["--no-sandbox"]})
+    if not config_path.exists() or config_path.read_text() != content:
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        config_path.write_text('{"executablePath":"/usr/bin/chromium","args":["--no-sandbox"]}')
+        config_path.write_text(content)
 
 
 def _preprocess_mermaid_sync(markdown: str, work_dir: Path) -> tuple[str, list[str]]:
