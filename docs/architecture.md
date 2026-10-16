@@ -329,6 +329,7 @@ flowchart TD
 ```
 GET /api/repos                      저장소 목록
 GET /api/repos/{id}/tree            트리 탐색
+GET /api/repos/{id}/files           볼 수 있는 파일 경로 목록(파일 찾기용)
 GET /api/repos/{id}/render          마크다운 렌더링
 GET /api/repos/{id}/download        HTML/PDF 다운로드
 GET /api/repos/{id}/meeting-export  회의 메모 포함 HTML 틀(오프라인, 메모 없음)
@@ -366,6 +367,16 @@ Viewer에서 마크다운 파일을 열람할 때, `marp: true` front matter가 
 - **디자인 레퍼런스**: 사내 example-fe 디자인 시스템 자산을 참조하여 색상 팔레트, 타이포그래피, 레이아웃 구조를 차용한다. (상세 내용은 `docs/reusable-assets.md` 참조)
 - **일관된 사용자 경험**: 기존 사내 서비스에 익숙한 사용자가 synctx Viewer 및 스크럼 보드(Kanban)를 사용할 때 이질감을 느끼지 않도록 시각적 스타일을 통일한다. 단, React 컴포넌트를 직접 재사용하지 않고 CSS 변수, 레이아웃 패턴, CSS 스타일시트만 추출하여 서버사이드 렌더링 환경(FastAPI)에 맞게 적용한다. (Phase 1~4의 Viewer는 순수 서버 렌더링 + Vanilla JS/CSS로 구현하며, 향후 Phase 6의 스크럼 보드 등 고도의 인터랙션이 필요한 기능 개발 시에만 `example-fe`의 React/Vite 스택을 별도 번들로 도입하는 것을 원칙으로 하여 프론트엔드의 이중 구조화를 방지한다.)
 - **반응형 웹 및 접근성**: 데스크탑 및 태블릿 환경에 최적화된 반응형 레이아웃을 구성하며, 마크다운 렌더링 결과물(테이블, 코드 블록, 인용구 등)이 기존 디자인 시스템 내에서 조화롭게 표시되도록 CSS를 세밀하게 조정한다.
+
+### 3.6 화면 구성
+
+모든 화면(첫 화면 `/`, 저장소 `/{repo}`, 문서 `/{repo}/{path}`, 오류 화면)은 `viewer_ui.py`가 만드는 공통 틀을 쓴다.
+
+- **공통 상단 바**: 저장소·브랜치 선택, 파일 찾기(`⌘K`·`/`), 저장소 상태, 테마 선택, 단축키 안내(`?`). 첫 포커스는 "본문으로 건너뛰기" 링크다.
+- **문서 화면 3단**: 1100px 이상에서 `파일 트리 | 본문 | 이 문서(목차)`. 768-1099px에서는 목차가 왼쪽 열의 "이 문서" 탭으로 들어가고, 767px 이하에서는 본문만 두고 ☰ 서랍(파일·이 문서 탭, 저장소·브랜치·테마 선택)과 "목차" 버튼을 쓴다.
+- **오류 화면**: 화면 경로의 `HTTPException`은 같은 상단 바를 가진 HTML 안내 화면(404 저장소·파일, 413, 415, 조회 실패 502, 그리기 실패 500)으로 돌려주고, `/api/...`·`/raw/...` 경로는 JSON을 유지한다. 예외 메시지는 화면에 넣지 않는다.
+- **정적 자산**: `static/viewer.css`(레이아웃·반응형), `static/viewer-core.js`(DOM에 의존하지 않는 로직: 파일 찾기 일치·파일 목록 로더, 최근 본 문서), `static/viewer.js`(상단 바·서랍·목차 추적·알림·확인 창 동작). 회의 모드 자산(`static/meeting/`)과 본문 `<article class="markdown-body">`는 그대로 쓴다.
+- **파일 찾기 데이터**: `GET /api/repos/{repo_id}/files?ref=`가 볼 수 있는 파일 경로 목록을 한 번 돌려주고, 브라우저에서 부분 일치로 거른다. 조회가 실패하면 502다.
 
 ## 4. CDN Service 설계
 
@@ -783,8 +794,12 @@ viewer/src/
 │   ├── rewrite_links()
 │   └── extract_title()
 ├── embed_view.py       # synctx-html 자리표시·iframe 채우기·PDF 치환
+├── viewer_ui.py        # 공통 화면 틀(상단 바·서랍·오류 화면) 마크업
 └── static/
-    └── style.css       # 프론트엔드 스타일시트
+    ├── style.css       # 프론트엔드 스타일시트
+    ├── viewer.css      # 화면 틀·3단 배치·반응형
+    ├── viewer-core.js  # 파일 찾기 일치·파일 목록 로더·최근 본 문서 로직
+    └── viewer.js       # 상단 바·서랍·목차 추적·알림·확인 창 동작
 ```
 
 ### 9.3 CDN Service 모듈

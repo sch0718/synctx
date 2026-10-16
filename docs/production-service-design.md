@@ -764,6 +764,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 |--------|------|------|------|
 | GET | `/api/repos` | viewer | 접근 가능한 repo 목록 |
 | GET | `/api/repos/{repo_id}/tree?ref=&path=` | viewer | Git tree 조회 |
+| GET | `/api/repos/{repo_id}/files?ref=` | viewer | 볼 수 있는 파일 경로 목록(`{"files": [...]}`, 파일 찾기용). 조회 실패 502 |
 | GET | `/api/repos/{repo_id}/render?ref=&path=` | viewer | Markdown HTML 렌더링 |
 | GET | `/api/repos/{repo_id}/raw?ref=&path=` | viewer | 원본 파일 다운로드 |
 | GET | `/api/repos/{repo_id}/download?format=html|pdf` | viewer | 변환 다운로드 |
@@ -774,6 +775,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 
 - `path`는 repo root 밖으로 벗어날 수 없다.
 - 렌더링 최대 파일 크기를 넘으면 413을 반환한다.
+- 화면 경로(`/`, `/{repo_id}`, `/{repo_id}/{path}`)의 오류(404·413·415·502·500)는 HTML 안내 화면으로, `/api/...`·`/raw/...` 경로는 JSON으로 돌려준다. 어느 쪽이든 예외 메시지는 응답에 넣지 않는다.
 - HTML은 sanitization 또는 신뢰 저장소 정책 중 하나를 명시한다. 운영 기본값은 신뢰 저장소 + CSP다.
 - `synctx-html` 블록은 sanitizer를 거친 뒤 자리표시를 sandbox iframe으로 채운다. 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지운다. CSP는 `font-src`에 `data:`, 각 지시어에 최상위 `html_embed.allowed_origins`를 더한다.
 - 회의 메모는 서버로 보내지 않는다. 브라우저 localStorage에만 저장하고, `<script>` 안 JSON은 `<`·`>`·`&`·U+2028·U+2029를 유니코드 이스케이프로 인코딩한다.
@@ -835,6 +837,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - 로컬 개발 환경에서는 publish worktree 안의 `.synctx-publish.lock` 파일 lock으로 fallback한다.
 - push 실패가 non-fast-forward이면 fetch/rebase 후 1회 재시도한다.
 - 같은 `publish_path`는 새 commit으로 갱신한다.
+- 응답 `url`은 `/slides/<이름>.html`이다. 받은 `filename`에 `.html`이 없으면 붙이고, 저장 경로·커밋 메시지·`url`에 같은 이름을 쓴다.
 
 ### 7.5 Sync Webhook & Admin API
 
