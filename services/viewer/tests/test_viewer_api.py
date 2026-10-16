@@ -318,6 +318,8 @@ class TestDocumentSidebarTree:
         current = re.findall(r'<div class="tree-entry current">.*?</div>', tree, re.S)
         assert len(current) == 1
         assert 'href="/view/test-repo/docs/sub/readme.md"' in current[0]
+        assert 'aria-current="page"' in current[0]
+        assert tree.count("aria-current") == 1
 
     def test_other_documents_link_to_their_view(self, client, tree_manager):
         tree = self._sidebar_tree(client.get("/test-repo/docs/sub/readme.md").text)
@@ -713,6 +715,39 @@ class TestDocumentPage:
         assert resp.text.count('<option value="feat/x" selected>feat/x</option>') == 2
 
 
+class TestDocumentTitle:
+    @staticmethod
+    def _title(text):
+        import re
+        return re.search(r"<title>(.*?)</title>", text, re.S).group(1)
+
+    def test_h1_is_the_title(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "# 안녕\n\n본문"
+        text = client.get("/test-repo/docs/a.md").text
+        assert "안녕" in self._title(text)
+
+    def test_document_without_h1_uses_file_name(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "본문만 있는 문서\n\n## 소제목"
+        text = client.get("/test-repo/docs/no-heading.md").text
+        assert "Markdown Preview" not in text
+        assert self._title(text).startswith("no-heading.md")
+        assert '"title": "no-heading.md"' in text
+
+    def test_code_file_uses_file_name(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = "print(1)"
+        text = client.get("/test-repo/src/tool.py").text
+        assert "Markdown Preview" not in text
+
+    def test_meeting_document_without_h1_uses_meeting_title(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = (
+            "---\nsynctx:\n  type: meeting\n  meeting:\n    id: dx-21\n    title: DX 21번 검토\n"
+            "    starts_at: '2026-10-08T14:00+09:00'\n    channel: dx-team\n---\n본문\n")
+        text = client.get("/test-repo/docs/meet.md").text
+        assert "Markdown Preview" not in text
+        assert self._title(text).startswith("DX 21번 검토")
+        assert '"title": "DX 21번 검토"' in text
+
+
 class TestAPIRoutes:
     def test_repos_list(self, client):
         resp = client.get("/api/repos")
@@ -777,6 +812,7 @@ class TestErrorPages:
         resp = client.get("/test-repo/files/a.bin")
         assert resp.status_code == 415
         assert "화면에서 볼 수 없는 형식입니다" in resp.text
+        assert 'href="/view/api/repos/test-repo/download?path=files/a.bin">원본 내려받기</a>' in resp.text
 
     def test_error_page_escapes_path(self, client, mock_repo_manager):
         mock_repo_manager.read_file_text.side_effect = RuntimeError("x")

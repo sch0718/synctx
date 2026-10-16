@@ -109,3 +109,15 @@ def test_branch_list_is_filled_after_load_not_while_rendering():
     assert "'/branches'" in js and "core.branchChoices(" in js
     assert 'select[data-action="branch"]' in js
     assert "option.textContent = " in js
+
+
+def _rule(css, selector):
+    import re
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
+    assert match is not None, selector
+    return match.group(1)
+
+
+def test_subtree_marks_current_document():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert 'aria-current="page"' in js.split("async function loadSubtree(")[1].split("function filterTree")[0]

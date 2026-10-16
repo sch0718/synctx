@@ -241,7 +241,9 @@
         var icon = FILE_ICONS[f.icon_type] || ICON_BINARY;
         if (f.viewable) {
           var href = VIEW_PREFIX + '/' + encodeURIComponent(ACTIVE_REPO) + '/' + encodePath(f.path) + _refParam('?');
-          html += '<div class="tree-entry">' + SPACER + icon + '<span class="name"><a href="' + escapeHtml(href) + '">' + escapeHtml(f.name) + '</a></span></div>';
+          var isCurrent = !!window.SYNCTX_DOC && window.SYNCTX_DOC.path === f.path;
+          html += '<div class="tree-entry' + (isCurrent ? ' current' : '') + '">' + SPACER + icon + '<span class="name"><a href="' + escapeHtml(href) + '"' +
+            (isCurrent ? ' aria-current="page"' : '') + '>' + escapeHtml(f.name) + '</a></span></div>';
         } else {
           html += '<div class="tree-entry disabled">' + SPACER + icon + '<span class="name">' + escapeHtml(f.name) + '</span></div>';
         }

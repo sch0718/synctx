@@ -20,7 +20,7 @@ from synctx_common.git_manager import GitRepoManager
 from synctx_common.html_bundle import repo_reader
 from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
-from renderer import render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
+from renderer import NO_TITLE_FALLBACK, render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
 
 import embed_view
 import meeting as meeting_mode
@@ -482,6 +482,18 @@ def _nav_controls(repo_id: str | None, ref: str | None, theme: str) -> str:
     )
 
 
+def _document_title(rendered_title, front_matter: dict, path: str) -> str:
+    """H1이 없어 렌더러가 영어 대체 제목을 돌려주면 회의 제목, 그것도 없으면 파일 이름을 쓴다."""
+    if rendered_title and rendered_title != NO_TITLE_FALLBACK:
+        return rendered_title
+    synctx_meta = front_matter.get("synctx") if isinstance(front_matter, dict) else None
+    meeting = synctx_meta.get("meeting") if isinstance(synctx_meta, dict) else None
+    meeting_title = meeting.get("title") if isinstance(meeting, dict) else None
+    if isinstance(meeting_title, str) and meeting_title.strip():
+        return meeting_title.strip()
+    return PurePosixPath(path).name
+
+
 def _commit_line(manager, path: str, ref: str | None) -> str:
     try:
         commit = manager.last_commit(path, ref=ref)
@@ -542,11 +554,13 @@ def _tree_level_html(manager, repo_id, path, ref, link_ref, current):
         name = html_lib.escape(e.name)
         if is_viewable(e.path):
             file_url = html_lib.escape(_view_url(f"{repo_id}/{quote(e.path)}") + ref_param)
-            entry_class = "tree-entry current" if e.path == current else "tree-entry"
+            is_current = e.path == current
+            entry_class = "tree-entry current" if is_current else "tree-entry"
+            current_attr = ' aria-current="page"' if is_current else ""
             html += f'''<div class="{entry_class}">
             <svg style="width:18px" viewBox="0 0 24 24"></svg>
             {icon}
-            <span class="name"><a href="{file_url}">{name}</a></span>
+            <span class="name"><a href="{file_url}"{current_attr}>{name}</a></span>
         </div>'''
         else:
             html += f'''<div class="tree-entry disabled">
@@ -834,7 +848,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             meeting_notice = meeting_mode.render_notice(meeting_ctx)
         toolbar_buttons = _build_toolbar(repo_id, path, is_md, front_matter, ref_param, meeting_href=meeting_href)
 
-        title = rendered.get("title", PurePosixPath(path).name)
+        title = _document_title(rendered.get("title"), front_matter, path)
         meta = _commit_line(manager, path, effective_ref)
         if meeting_ctx.enabled:
             meta += '<span class="badge">회의 문서</span>'

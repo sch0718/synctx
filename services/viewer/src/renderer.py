@@ -182,13 +182,16 @@ def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = Non
     return marker_re.sub(restore_block, rewritten)
 
 
+NO_TITLE_FALLBACK = "Markdown Preview"
+
+
 def extract_title(md_text):
     """마크다운 첫 번째 h1 제목을 추출한다."""
     for line in md_text.splitlines():
         line = line.strip()
         if line.startswith("# "):
             return line[2:].strip()
-    return "Markdown Preview"
+    return NO_TITLE_FALLBACK
 
 
 def render_markdown(md_text):
