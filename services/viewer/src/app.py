@@ -597,13 +597,13 @@ def _searchable_path(path: str) -> bool:
 
 
 async def _run_search(query: str, repo_id: str | None, ref: str | None) -> list[dict]:
-    if repo_id is None:
+    if not repo_id:
         repos = list(config.repositories)
     else:
         repos = [repo for repo in config.repositories if repo.id == repo_id]
     managers = [(repo.id, repo.name, get_repo_manager(repo.id)) for repo in repos]
     effective_ref = None
-    if repo_id is not None and managers and ref and ref != managers[0][2].profile.default_ref:
+    if repo_id and managers and ref and ref != managers[0][2].profile.default_ref:
         effective_ref = ref
     return await search_mod.search_repositories(managers, query, effective_ref, SEARCH_PATHSPECS, _searchable_path)
 
@@ -613,6 +613,8 @@ async def search_documents(q: str | None = None, repo: str | None = None, ref: s
     query = search_mod.normalize_query(q)
     if query is None:
         raise HTTPException(status_code=400, detail=SEARCH_QUERY_ERROR)
+    repo = repo or None
+    ref = ref or None
     if ref and not repo:
         raise HTTPException(status_code=400, detail="ref는 저장소를 지정할 때만 쓸 수 있습니다")
     if repo and not _repo_known(repo):

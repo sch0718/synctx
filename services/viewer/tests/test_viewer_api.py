@@ -798,6 +798,16 @@ class TestSearchApi:
         client.get("/api/search", params={"q": "ab", "repo": "test-repo", "ref": "feat/x"})
         assert mock_repo_manager.grep.call_args.args[1] == "feat/x"
 
+    def test_search_empty_repo_and_ref_mean_all_repositories(self, client, mock_repo_manager):
+        from synctx_common.git_manager import GrepResult
+        mock_repo_manager.grep.return_value = GrepResult("ok", [], False)
+        data = client.get("/api/search", params={"q": "ab", "repo": ""}).json()
+        assert [repo["id"] for repo in data["repos"]] == ["test-repo"]
+        mock_repo_manager.grep.assert_called_once()
+        assert mock_repo_manager.grep.call_args.args[1] is None
+        resp = client.get("/api/search", params={"q": "ab", "repo": "", "ref": ""})
+        assert resp.status_code == 200 and [repo["id"] for repo in resp.json()["repos"]] == ["test-repo"]
+
     def test_search_failure_hides_exception_text(self, client, mock_repo_manager):
         mock_repo_manager.grep.side_effect = RuntimeError("Authorization: Basic SECRET")
         resp = client.get("/api/search", params={"q": "ab"})
