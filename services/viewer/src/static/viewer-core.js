@@ -84,6 +84,68 @@
     });
   }
 
+  var FINDER_FILE_LIMIT = 8;
+  var FINDER_CONTENT_LIMIT = 5;
+  var FINDER_ALL_MIN = 2;
+
+  function finderOptions(fileMatches, searchData, query) {
+    var options = (fileMatches || []).slice(0, FINDER_FILE_LIMIT).map(function (path) {
+      return { kind: 'file', group: '파일', path: path };
+    });
+    var repos = searchData && Array.isArray(searchData.repos) ? searchData.repos : [];
+    var content = [];
+    for (var i = 0; i < repos.length && content.length < FINDER_CONTENT_LIMIT; i++) {
+      var repo = repos[i];
+      if (!repo || repo.status !== 'ok' || !Array.isArray(repo.matches)) continue;
+      for (var j = 0; j < repo.matches.length && content.length < FINDER_CONTENT_LIMIT; j++) {
+        var m = repo.matches[j];
+        content.push({
+          kind: 'content', group: '본문', repo: repo.id, path: m.path, line: m.line,
+          before: m.before, match: m.match, after: m.after,
+        });
+      }
+    }
+    options = options.concat(content);
+    if (String(query || '').trim().length >= FINDER_ALL_MIN) options.push({ kind: 'all', group: null });
+    return options;
+  }
+
+  // 요청 번호가 지금 번호와 같은 응답만 넘긴다. 같은 검색어로 돌아와도 앞 요청의 응답은 버린다
+  function createSearchScheduler(opts) {
+    var setTimer = opts.setTimer || function (fn, ms) { return setTimeout(fn, ms); };
+    var clearTimer = opts.clearTimer || function (t) { clearTimeout(t); };
+    var timer = null;
+    var controller = null;
+    var seq = 0;
+
+    function stop() {
+      seq += 1;
+      if (timer !== null) { clearTimer(timer); timer = null; }
+      if (controller) { controller.abort(); controller = null; }
+    }
+
+    return {
+      schedule: function (query) {
+        stop();
+        var mine = seq;
+        timer = setTimer(function () {
+          timer = null;
+          controller = new AbortController();
+          var result;
+          try {
+            result = Promise.resolve(opts.request(query, controller.signal));
+          } catch (e) {
+            return;
+          }
+          result.then(function (data) {
+            if (mine === seq) opts.onResult(query, data);
+          }, function () { return; });
+        }, opts.delay);
+      },
+      cancel: stop,
+    };
+  }
+
   root.SynctxViewerCore = {
     RECENT_LIMIT: RECENT_LIMIT,
     matchFiles: matchFiles,
@@ -91,5 +153,7 @@
     parseRecent: parseRecent,
     createFileLoader: createFileLoader,
     branchChoices: branchChoices,
+    finderOptions: finderOptions,
+    createSearchScheduler: createSearchScheduler,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

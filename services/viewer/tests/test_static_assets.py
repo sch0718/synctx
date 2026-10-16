@@ -155,3 +155,9 @@ def test_finder_scrolls_active_result_into_view():
     js = (STATIC / "viewer.js").read_text(encoding="utf-8")
     paint = js.split("function paint()")[1].split("function render()")[0]
     assert "scrollIntoView({ block: 'nearest' })" in paint
+
+
+def test_finder_uses_search_scheduler():
+    finder = (STATIC / "viewer.js").read_text(encoding="utf-8").split("function initFinder(")[1].split("function focusFinder")[0]
+    assert "core.createSearchScheduler(" in finder and "core.finderOptions(" in finder
+    assert "'/api/search?q='" in finder

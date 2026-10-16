@@ -608,6 +608,7 @@ class TestShellPages:
         assert "abcdef1" in text and "kim" in text
         assert "Filter files" not in text and "folders" not in text
         assert '<option value="main" selected>main (기본)</option>' in text
+        assert "위의 문서 검색을 쓰세요" in text and "파일 찾기" not in text
 
     def test_repo_page_offers_readme(self, client, mock_repo_manager):
         from types import SimpleNamespace

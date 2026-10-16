@@ -1,4 +1,4 @@
-/* Viewer 화면 동작: 테마·저장소 이동, 서랍, 트리, 파일 찾기, 목차 추적, 알림, Marp, 최근 문서, 단축키. */
+/* Viewer 화면 동작: 테마·저장소 이동, 서랍, 트리, 문서 검색, 목차 추적, 알림, Marp, 최근 문서, 단축키. */
 (function () {
   'use strict';
 
@@ -310,7 +310,7 @@
     if (current && nav) nav.scrollTop = current.offsetTop - nav.clientHeight / 2;
   }
 
-  /* ── 파일 찾기 ── */
+  /* ── 문서 검색 ── */
   function initFinder() {
     var input = $('#finder-input');
     var list = $('#finder-results');
@@ -320,18 +320,60 @@
         .then(function (res) { if (!res.ok) throw new Error('files'); return res.json(); })
         .then(function (data) { return data.files || []; });
     });
+    var scheduler = core.createSearchScheduler({
+      delay: 250,
+      request: function (q, signal) {
+        return fetch(VIEW_PREFIX + '/api/search?q=' + encodeURIComponent(q) +
+          (ACTIVE_REPO ? '&repo=' + encodeURIComponent(ACTIVE_REPO) + _refParam('&') : ''), { signal: signal })
+          .then(function (res) { if (!res.ok) throw new Error('search'); return res.json(); });
+      },
+      onResult: function (q, data) {
+        // 기다리는 동안 사용자가 닫았거나 다른 곳으로 옮겼으면 다시 열지 않는다
+        if (dismissed || document.activeElement !== input || !input.value.trim()) return;
+        if (input.value.trim() !== q) return;
+        searchData = data;
+        searchQuery = q;
+        refresh();
+      },
+    });
     var items = [];
     var active = -1;
     var dismissed = false;
+    var moved = false;
+    var loadFailed = false;
+    var fileMatches = [];
+    var searchData = null;
+    var searchQuery = '';
 
     function setOpen(open) { list.hidden = !open; input.setAttribute('aria-expanded', String(open)); }
-    function clearResults() { items = []; active = -1; input.setAttribute('aria-activedescendant', ''); setOpen(false); }
+    function clearResults() {
+      scheduler.cancel();
+      items = []; active = -1; fileMatches = []; searchData = null; searchQuery = '';
+      input.setAttribute('aria-activedescendant', '');
+      setOpen(false);
+    }
     function message(text) { items = []; active = -1; list.innerHTML = '<li class="finder-empty">' + escapeHtml(text) + '</li>'; setOpen(true); }
+    function optionKey(o) { return [o.kind, o.repo, o.path, o.line].join('|'); }
+    function optionHtml(o, i) {
+      var head = '<li role="option" id="finder-opt-' + i + '" aria-selected="' + (i === active) + '" data-index="' + i + '">';
+      if (o.kind === 'all') {
+        return head + '<span class="finder-name">‘' + escapeHtml(input.value.trim()) + '’ 전체 결과 보기</span></li>';
+      }
+      if (o.kind === 'file') {
+        return head + '<span class="finder-name">' + escapeHtml(o.path.split('/').pop()) + '</span>' +
+          '<span class="finder-path">' + escapeHtml(o.path) + '</span></li>';
+      }
+      return head + '<span class="finder-name">' + escapeHtml(o.path.split('/').pop()) + '</span>' +
+        '<span class="finder-path">' + escapeHtml((ACTIVE_REPO ? '' : o.repo + ' · ') + o.path + ' · ' + o.line + '행') + '</span>' +
+        '<span class="finder-snippet">' + escapeHtml(o.before) + (o.match ? '<mark>' + escapeHtml(o.match) + '</mark>' : '') + escapeHtml(o.after) + '</span></li>';
+    }
     function paint() {
-      list.innerHTML = items.map(function (p, i) {
-        return '<li role="option" id="finder-opt-' + i + '" aria-selected="' + (i === active) + '" data-path="' + escapeHtml(p) + '">' +
-          '<span class="finder-name">' + escapeHtml(p.split('/').pop()) + '</span>' +
-          '<span class="finder-path">' + escapeHtml(p) + '</span></li>';
+      var group = null;
+      list.innerHTML = items.map(function (o, i) {
+        var header = '';
+        if (o.group && o.group !== group) header = '<li role="presentation" class="finder-group">' + escapeHtml(o.group) + '</li>';
+        group = o.group;
+        return header + optionHtml(o, i);
       }).join('');
       input.setAttribute('aria-activedescendant', active >= 0 ? 'finder-opt-' + active : '');
       setOpen(true);
@@ -339,29 +381,58 @@
       var current = active >= 0 && document.getElementById('finder-opt-' + active);
       if (current) current.scrollIntoView({ block: 'nearest' });
     }
-    function render() {
-      if (!ACTIVE_REPO) { message('저장소를 먼저 고르세요.'); return; }
-      if (!input.value.trim()) { clearResults(); return; }
-      var files = loader.files();
-      if (files === null) {
-        message('파일 목록을 불러오는 중…');
-        loader.load().then(function (result) {
-          // 기다리는 동안 사용자가 닫았거나 다른 곳으로 옮겼으면 다시 열지 않는다
-          if (dismissed || document.activeElement !== input || !input.value.trim()) return;
-          if (result.ok) render();
-          else message('파일 목록을 불러오지 못했습니다. 검색어를 고치면 다시 시도합니다.');
-        });
+    function refresh() {
+      var q = input.value.trim();
+      var kept = moved && active >= 0 && items[active] ? optionKey(items[active]) : null;
+      items = core.finderOptions(fileMatches, searchQuery === q ? searchData : null, q);
+      active = items.length ? 0 : -1;
+      if (kept) {
+        for (var i = 0; i < items.length; i++) { if (optionKey(items[i]) === kept) { active = i; break; } }
+      }
+      if (!items.length) {
+        if (ACTIVE_REPO && loader.files() === null) message(loadFailed ? '파일 목록을 불러오지 못했습니다. 검색어를 고치면 다시 시도합니다.' : '파일 목록을 불러오는 중…');
+        else message(ACTIVE_REPO ? '맞는 파일이 없습니다.' : '두 글자 이상 입력하세요.');
         return;
       }
-      items = core.matchFiles(files, input.value, 20);
-      active = items.length ? 0 : -1;
-      if (!items.length) { message('맞는 파일이 없습니다.'); return; }
       paint();
     }
-    function go(path) {
-      window.location.href = VIEW_PREFIX + '/' + encodeURIComponent(ACTIVE_REPO) + '/' + encodePath(path) + _refParam('?');
+    function showFiles() {
+      var files = ACTIVE_REPO ? loader.files() : [];
+      if (files === null) {
+        fileMatches = [];
+        if (!loadFailed) {
+          loader.load().then(function (result) {
+            // 기다리는 동안 사용자가 닫았거나 다른 곳으로 옮겼으면 다시 열지 않는다
+            if (dismissed || document.activeElement !== input || !input.value.trim()) return;
+            if (!result.ok) loadFailed = true;
+            showFiles();
+          });
+        }
+      } else {
+        fileMatches = core.matchFiles(files, input.value, 8);
+      }
+      refresh();
     }
-    input.addEventListener('input', function () { dismissed = false; render(); });
+    function render() {
+      if (!input.value.trim()) { clearResults(); return; }
+      var q = input.value.trim();
+      moved = false;
+      if (q.length >= 2) scheduler.schedule(q); else scheduler.cancel();
+      showFiles();
+    }
+    function go(option) {
+      var q = input.value.trim();
+      if (option.kind === 'all') {
+        window.location.href = VIEW_PREFIX + '/search?q=' + encodeURIComponent(q) +
+          (ACTIVE_REPO ? '&repo=' + encodeURIComponent(ACTIVE_REPO) +
+            (ACTIVE_REF ? '&ref=' + encodeURIComponent(ACTIVE_REF) + '&ref_repo=' + encodeURIComponent(ACTIVE_REPO) : '') : '');
+        return;
+      }
+      var repo = option.kind === 'file' ? ACTIVE_REPO : option.repo;
+      window.location.href = VIEW_PREFIX + '/' + encodeURIComponent(repo) + '/' + encodePath(option.path) +
+        (repo === ACTIVE_REPO ? _refParam('?') : '');
+    }
+    input.addEventListener('input', function () { dismissed = false; loadFailed = false; render(); });
     input.addEventListener('focus', function () { if (ACTIVE_REPO) loader.load(); });
     input.addEventListener('keydown', function (e) {
       // 한글 조합을 끝내는 Enter·방향키는 검색 결과 조작이 아니다
@@ -369,20 +440,25 @@
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         if (!items.length) return;
         e.preventDefault();
+        moved = true;
         active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
         paint();
       } else if (e.key === 'Enter') {
         if (active >= 0 && !list.hidden) { e.preventDefault(); go(items[active]); }
       } else if (e.key === 'Escape') {
         dismissed = true;
+        scheduler.cancel();
         setOpen(false);
       }
     });
     list.addEventListener('mousedown', function (e) {
-      var li = e.target.closest('li[data-path]');
-      if (li) { e.preventDefault(); go(li.dataset.path); }
+      var li = e.target.closest('li[data-index]');
+      if (li) { e.preventDefault(); go(items[Number(li.dataset.index)]); }
     });
-    input.addEventListener('blur', function () { window.setTimeout(function () { setOpen(false); }, 150); });
+    input.addEventListener('blur', function () {
+      scheduler.cancel();
+      window.setTimeout(function () { setOpen(false); }, 150);
+    });
   }
   function focusFinder() { var input = $('#finder-input'); if (input) { input.focus(); input.select(); } }
 

@@ -765,7 +765,7 @@ def view_repo(repo_id: str, ref: str | None = None, path: str | None = None):
       </dl>
       {readme_btn}
     </section>
-    <p class="hint">왼쪽 파일 트리에서 문서를 고르거나 위의 파일 찾기를 쓰세요.</p>
+    <p class="hint">왼쪽 파일 트리에서 문서를 고르거나 위의 문서 검색을 쓰세요.</p>
   </main>
 </div>'''
     html = ui.page(view_prefix=VIEW_PREFIX, title=str(repo.name), theme="github-light",

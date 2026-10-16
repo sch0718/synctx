@@ -111,3 +111,140 @@ test('형식이 맞지 않는 브랜치 응답은 무시한다', () => {
   assert.equal(core.branchChoices({ branches: 'main' }, 'main'), null);
   assert.equal(core.branchChoices({ branches: [] , default: 'main'}, 'main'), null);
 });
+
+test('파일, 본문, 전체 결과 순서로 묶는다', () => {
+  const data = { repos: [{ id: 'r', status: 'ok', matches: [
+    { path: 'a.md', line: 1, before: '', match: 'x', after: '' }, { path: 'b.md', line: 2, before: '', match: 'y', after: '' }] }] };
+  const opts = core.finderOptions(['f1.md', 'f2.md'], data, 'ab');
+  assert.deepEqual(opts.map((o) => o.kind), ['file', 'file', 'content', 'content', 'all']);
+  assert.equal(opts[0].group, '파일');
+  assert.equal(opts[2].group, '본문');
+  assert.equal(opts[2].repo, 'r');
+});
+
+test('개수를 자르고 한 글자 검색어에는 전체 결과를 넣지 않는다', () => {
+  const many = { repos: [{ id: 'r', status: 'ok', matches: Array.from({ length: 9 }, (_, i) => ({ path: `p${i}.md`, line: 1, before: '', match: 't', after: '' })) }] };
+  const opts = core.finderOptions(Array.from({ length: 12 }, (_, i) => `f${i}.md`), many, 'ab');
+  assert.equal(opts.filter((o) => o.kind === 'file').length, 8);
+  assert.equal(opts.filter((o) => o.kind === 'content').length, 5);
+  assert.equal(core.finderOptions(['f.md'], null, 'a').some((o) => o.kind === 'all'), false);
+});
+
+test('본문 응답이 없거나 실패 상태면 본문 묶음이 없다', () => {
+  const data = { repos: [{ id: 'r', status: 'timeout', matches: [] }] };
+  assert.deepEqual(core.finderOptions([], data, 'ab').map((o) => o.kind), ['all']);
+});
+
+function fakeClock() {
+  let now = 0; const timers = [];
+  return {
+    setTimer: (fn, ms) => { const t = { at: now + ms, fn }; timers.push(t); return t; },
+    clearTimer: (t) => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); },
+    tick(ms) { now += ms; timers.filter((t) => t.at <= now).forEach((t) => { timers.splice(timers.indexOf(t), 1); t.fn(); }); },
+  };
+}
+
+test('입력이 멈춘 뒤 마지막 검색어로 한 번만 요청한다', async () => {
+  const clock = fakeClock(); const asked = [];
+  const s = core.createSearchScheduler({ delay: 250, request: async (q) => { asked.push(q); return { query: q }; }, onResult() {}, ...clock });
+  s.schedule('회의'); clock.tick(100); s.schedule('회의모'); clock.tick(249);
+  assert.deepEqual(asked, []);
+  clock.tick(1);
+  assert.deepEqual(asked, ['회의모']);
+});
+
+test('예약 중 취소하면 요청하지 않는다', () => {
+  const clock = fakeClock(); const asked = [];
+  const s = core.createSearchScheduler({ delay: 250, request: async (q) => { asked.push(q); }, onResult() {}, ...clock });
+  s.schedule('회의'); s.cancel(); clock.tick(500);
+  assert.deepEqual(asked, []);
+});
+
+test('늦게 온 앞 응답은 버리고 앞 요청은 취소한다', async () => {
+  const clock = fakeClock(); const resolvers = {}; const signals = {}; const got = [];
+  const s = core.createSearchScheduler({
+    delay: 250,
+    request: (q, signal) => { signals[q] = signal; return new Promise((r) => { resolvers[q] = r; }); },
+    onResult: (q, data) => got.push(q),
+    ...clock,
+  });
+  s.schedule('회의'); clock.tick(250);
+  s.schedule('회의모드'); clock.tick(250);
+  assert.equal(signals['회의'].aborted, true);
+  resolvers['회의모드']({}); await Promise.resolve();
+  resolvers['회의']({}); await Promise.resolve();
+  assert.deepEqual(got, ['회의모드']);
+});
+
+test('같은 검색어로 돌아와도 앞 요청의 응답은 버린다', async () => {
+  const clock = fakeClock(); const pending = []; const got = [];
+  const s = core.createSearchScheduler({
+    delay: 250,
+    request: (q) => new Promise((r) => pending.push({ q, r })),
+    onResult: (q) => got.push(q),
+    ...clock,
+  });
+  s.schedule('A'); clock.tick(250);
+  s.schedule('B'); clock.tick(250);
+  s.schedule('A'); clock.tick(250);
+  pending[0].r({}); await Promise.resolve();
+  assert.deepEqual(got, []);
+  pending[2].r({}); await Promise.resolve();
+  assert.deepEqual(got, ['A']);
+});
+
+async function withUnhandledCheck(fn) {
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(e);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await fn();
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+}
+
+test('지금 요청이 실패하면 넘기지 않고 처리되지 않은 거절도 남기지 않는다', () => withUnhandledCheck(async () => {
+  const clock = fakeClock(); const got = [];
+  const s = core.createSearchScheduler({
+    delay: 250, request: () => Promise.reject(new Error('500')), onResult: (q) => got.push(q), ...clock,
+  });
+  s.schedule('fail'); clock.tick(250);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(got, []);
+}));
+
+test('중단으로 AbortError가 나도 넘기지 않고 처리되지 않은 거절도 남기지 않는다', () => withUnhandledCheck(async () => {
+  const clock = fakeClock(); const got = []; let seen = null; let aborts = 0;
+  const s = core.createSearchScheduler({
+    delay: 250,
+    request: (q, signal) => new Promise((resolve, reject) => {
+      seen = signal;
+      signal.addEventListener('abort', () => { aborts += 1; reject(new DOMException('aborted', 'AbortError')); });
+    }),
+    onResult: (q) => got.push(q),
+    ...clock,
+  });
+  s.schedule('slow'); clock.tick(250);
+  s.cancel();
+  assert.equal(seen.aborted, true);
+  assert.equal(aborts, 1);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(got, []);
+}));
+
+test('진행 중 요청을 취소한 뒤 도착한 응답은 넘기지 않는다', async () => {
+  const clock = fakeClock(); let resolve; const got = [];
+  const s = core.createSearchScheduler({
+    delay: 250,
+    request: () => new Promise((r) => { resolve = r; }),
+    onResult: (q) => got.push(q),
+    ...clock,
+  });
+  s.schedule('회의'); clock.tick(250);
+  s.cancel();
+  resolve({}); await Promise.resolve();
+  assert.deepEqual(got, []);
+});

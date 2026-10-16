@@ -179,3 +179,11 @@ def test_search_page_has_no_ref_inputs_without_active_repo():
     html = ui.render_search_page(view_prefix="/view", query="ab", raw_query="ab", repos=REPOS,
                                  active_repo=None, ref=None, results=[])
     assert 'name="ref"' not in html and 'name="ref_repo"' not in html
+
+
+def test_header_and_shortcuts_say_document_search():
+    header = ui.render_header(view_prefix="/view", repos=REPOS, theme="github-light")
+    assert 'placeholder="문서 검색"' in header and 'aria-label="문서 검색"' in header
+    assert 'aria-label="검색 결과"' in header and "파일 찾기" not in header
+    page = ui.page(view_prefix="/view", title="t", theme="github-light", header="", body="")
+    assert "<dd>문서 검색</dd>" in page

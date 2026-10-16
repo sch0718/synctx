@@ -59,7 +59,7 @@ _THEME_BOOT_ATTR = (
 _SHORTCUTS_DIALOG = """<dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
   <h2 id="shortcuts-title">단축키</h2>
   <dl class="keys">
-    <dt><kbd>⌘</kbd> <kbd>K</kbd> · <kbd>Ctrl</kbd> <kbd>K</kbd> · <kbd>/</kbd></dt><dd>파일 찾기</dd>
+    <dt><kbd>⌘</kbd> <kbd>K</kbd> · <kbd>Ctrl</kbd> <kbd>K</kbd> · <kbd>/</kbd></dt><dd>문서 검색</dd>
     <dt><kbd>t</kbd></dt><dd>이 문서 목차 열기</dd>
     <dt><kbd>?</kbd></dt><dd>이 안내 열기</dd>
     <dt><kbd>Esc</kbd></dt><dd>열린 창·메뉴 닫기</dd>
@@ -142,8 +142,8 @@ def render_header(*, view_prefix, repos, theme, active_repo=None, branches=None,
   <a class="shell-logo" href="{esc(view_prefix)}/">{_LOGO}<span>synctx</span></a>
   <div class="shell-controls">{_select("저장소", "repo", repo_options(repos, active_repo))}{branch}</div>
   <div class="finder">
-    <label class="finder-box">{_SEARCH}<input type="search" id="finder-input" role="combobox" aria-expanded="false" aria-controls="finder-results" aria-autocomplete="list" autocomplete="off" placeholder="파일 찾기" aria-label="파일 찾기"><kbd aria-hidden="true">⌘K</kbd></label>
-    <ul id="finder-results" class="finder-results" role="listbox" aria-label="찾은 파일" hidden></ul>
+    <label class="finder-box">{_SEARCH}<input type="search" id="finder-input" role="combobox" aria-expanded="false" aria-controls="finder-results" aria-autocomplete="list" autocomplete="off" placeholder="문서 검색" aria-label="문서 검색"><kbd aria-hidden="true">⌘K</kbd></label>
+    <ul id="finder-results" class="finder-results" role="listbox" aria-label="검색 결과" hidden></ul>
   </div>
   <span class="shell-spacer"></span>
   {status}
