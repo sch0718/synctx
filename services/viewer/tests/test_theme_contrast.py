@@ -124,6 +124,18 @@ def test_mark_is_visible_without_relying_on_background_alone():
     assert _decl(rule, "font-weight") and "var(--primary)" in (_decl(rule, "box-shadow") or "")
 
 
+def test_meeting_exit_link_meets_aa():
+    color = _decl(_css_rule(".meeting-exit"), "color")
+    assert color
+    failures = []
+    for theme in _themes():
+        values = theme_vars(theme)
+        ratio = contrast(rgb(_resolve(color, values))[0], rgb(values["--bg-default"])[0])
+        if ratio < 4.5:
+            failures.append(f"{theme}: {ratio:.2f}")
+    assert not failures, failures
+
+
 @pytest.mark.parametrize("theme", _themes())
 @pytest.mark.parametrize("selector", [".present-top", ".present-nav"])
 def test_present_bands_meet_aa(theme, selector):

@@ -105,6 +105,7 @@ body { margin: 0; background: var(--bg-default); color: var(--text-primary); fon
 .badge { padding: 2px 8px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-neutral); color: var(--text-primary); font-size: 12px; }
 .doc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .meeting-exit-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 13px; }
+.meeting-exit { color: var(--primary); }
 .meeting-guide-open { padding: 4px 0; border: 0; background: none; color: var(--primary); font: inherit; text-decoration: underline; cursor: pointer; }
 .meeting-guide { padding: 14px 16px; border: 1px solid var(--border-color); border-left: 4px solid var(--primary); border-radius: var(--radius-ui); background: var(--bg-card); color: var(--text-primary); }
 .meeting-guide-title { margin: 0 0 8px; padding: 0; border: 0; color: var(--text-primary); font-size: 16px; line-height: 1.4; }
