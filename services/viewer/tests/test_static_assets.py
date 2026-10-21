@@ -225,3 +225,24 @@ def test_present_css_hides_slides_and_uses_one_column():
     assert re.search(r"\.page-present [^{]*\[hidden\][^{]*\{[^}]*display:\s*none\s*!important", css)
     assert re.search(r"\.page-present \.layout-doc[^{]*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)", css)
     assert ".page-present .meeting-card" not in css
+
+
+def test_meeting_guide_uses_guarded_storage_and_reopens_after_dialog():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert "MEETING_GUIDE_KEY = 'synctx-meeting-guide'" in js
+    assert "core.meetingGuideAutoOpen(storageGet(MEETING_GUIDE_KEY))" in js
+    assert "storageSet(MEETING_GUIDE_KEY, core.MEETING_GUIDE_HIDDEN)" in js
+    assert "window.setTimeout(openMeetingGuide, 0)" in js
+    for action in ("'meeting-guide-open'", "'meeting-guide-close'", "'meeting-guide-never'"):
+        assert action in js
+    body = js.split("function openMeetingGuide(")[1].split("\n  function ")[0]
+    assert "storageSet" not in body and "preventScroll: true" in body
+    assert "initMeetingGuide();" in js
+
+
+def test_meeting_guide_css_keeps_hidden_working():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    assert "display" not in _rule(css, ".meeting-guide")
+    assert "var(--primary)" in _rule(css, ".meeting-guide-open")
+    assert "display: none" in _rule(css, ".shortcuts-extra .btn[hidden]")
+    assert "padding: 4px 0" in _rule(css, ".meeting-guide-open")

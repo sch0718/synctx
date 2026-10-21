@@ -916,7 +916,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             )
             meeting_head, meeting_body = meeting_mode.render_assets(VIEW_PREFIX, meeting_cfg)
             if not presenting:
-                meeting_exit = f'<a class="meeting-exit" href="{html_lib.escape(doc_href + ref_param_first)}">회의 모드 나가기</a>'
+                meeting_exit = ui.render_meeting_exit(doc_href + ref_param_first)
         elif meeting_ctx.enabled:
             meeting_href = f"{doc_href}?mode=meeting"
         elif mode == "meeting":
@@ -1009,6 +1009,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             repo_id=repo_id, ref=ui_ref, page_class="page-doc page-present" if presenting else "page-doc",
             theme_via_query=True, doc_config=doc_config,
             head_extra=head_extra, body_extra=body_extra,
+            meeting_guide=bool(meeting_exit),
         )
         return HTMLResponse(content=html)
     except HTTPException:

@@ -104,7 +104,14 @@ body { margin: 0; background: var(--bg-default); color: var(--text-primary); fon
 .doc-meta .sha { font-family: var(--font-mono-ui); font-size: 12px; }
 .badge { padding: 2px 8px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--bg-neutral); color: var(--text-primary); font-size: 12px; }
 .doc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.meeting-exit { font-size: 13px; }
+.meeting-exit-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 13px; }
+.meeting-guide-open { padding: 4px 0; border: 0; background: none; color: var(--primary); font: inherit; text-decoration: underline; cursor: pointer; }
+.meeting-guide { padding: 14px 16px; border: 1px solid var(--border-color); border-left: 4px solid var(--primary); border-radius: var(--radius-ui); background: var(--bg-card); color: var(--text-primary); }
+.meeting-guide-title { margin: 0 0 8px; padding: 0; border: 0; color: var(--text-primary); font-size: 16px; line-height: 1.4; }
+.meeting-guide ul { margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.meeting-guide-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.shortcuts-extra { margin: 12px 0 0; }
+.shortcuts-extra .btn[hidden] { display: none; }
 .meeting-info { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: var(--radius-ui); background: var(--bg-card); color: var(--text-primary); }
 .meeting-info-title { margin: 0; padding: 0; border: 0; color: var(--text-primary); font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; }
 .meeting-info-facts { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0; font-size: 14px; }

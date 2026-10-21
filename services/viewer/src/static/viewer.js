@@ -5,6 +5,7 @@
   var core = window.SynctxViewerCore;
   var RECENT_KEY = 'synctx-recent';
   var THEME_KEY = 'synctx-theme';
+  var MEETING_GUIDE_KEY = 'synctx-meeting-guide';
   var SUCCESS_TOAST_MS = 8000;
 
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -774,6 +775,32 @@
   /* ── 단축키 안내 ── */
   function openShortcuts() { var d = $('#shortcuts-dialog'); if (d && typeof d.showModal === 'function' && !d.open) d.showModal(); }
 
+  /* ── 회의 모드 안내 ── */
+  function initMeetingGuide() {
+    var guide = $('#meeting-guide');
+    if (!guide) return;
+    $all('[data-action="meeting-guide-open"]').forEach(function (b) { b.hidden = false; });
+    if (core.meetingGuideAutoOpen(storageGet(MEETING_GUIDE_KEY))) guide.hidden = false;
+  }
+
+  function openMeetingGuide() {
+    var guide = $('#meeting-guide');
+    if (!guide) return;
+    guide.hidden = false;
+    guide.scrollIntoView({ block: 'nearest' });
+    var title = $('#meeting-guide-title');
+    if (title) title.focus({ preventScroll: true });
+  }
+
+  function closeMeetingGuide(never) {
+    var guide = $('#meeting-guide');
+    if (!guide) return;
+    if (never) storageSet(MEETING_GUIDE_KEY, core.MEETING_GUIDE_HIDDEN);
+    guide.hidden = true;
+    var opener = $('.meeting-guide-open');
+    if (opener) opener.focus();
+  }
+
   function initClicks() {
     document.addEventListener('click', function (e) {
       var dir = e.target.closest('.tree-dir');
@@ -796,6 +823,13 @@
       else if (action === 'close-nav') setNav(false);
       else if (action === 'open-toc') setNav(true, 'toc');
       else if (action === 'shortcuts') openShortcuts();
+      else if (action === 'meeting-guide-open') {
+        var dialog = el.closest('#shortcuts-dialog');
+        if (dialog) { dialog.close(); window.setTimeout(openMeetingGuide, 0); }
+        else openMeetingGuide();
+      }
+      else if (action === 'meeting-guide-close') closeMeetingGuide(false);
+      else if (action === 'meeting-guide-never') closeMeetingGuide(true);
       else if (action === 'marp-pdf') marpPdf();
       else if (action === 'marp-preview') marpPreview();
       else if (action === 'marp-publish') marpPublish();
@@ -816,6 +850,8 @@
       if (e.key === 'Escape') {
         if (navOpen()) setNav(false);
         $all('details.menu[open]').forEach(function (d) { d.open = false; });
+        var guide = $('#meeting-guide');
+        if (guide && !guide.hidden && guide.contains(document.activeElement)) closeMeetingGuide(false);
         return;
       }
       // 서랍이 열린 동안에는 서랍 밖(막힌 요소)을 여는 단축키를 쓰지 않는다
@@ -837,6 +873,7 @@
   initFinder();
   initTocSpy();
   initMeetingStatus();
+  initMeetingGuide();
   initPresent();
   initRecent();
 })();

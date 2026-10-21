@@ -131,3 +131,19 @@ def test_present_bands_meet_aa(theme, selector):
     values = theme_vars(theme)
     color, background = _resolve(_decl(rule, "color"), values), _resolve(_decl(rule, "background"), values)
     assert contrast(rgb(color)[0], rgb(background)[0]) >= 4.5
+
+
+@pytest.mark.parametrize("theme", _themes())
+@pytest.mark.parametrize("selector", [".meeting-guide", ".meeting-guide-title"])
+def test_meeting_guide_text_meets_aa(theme, selector):
+    values = theme_vars(theme)
+    color = _resolve(_decl(_css_rule(selector), "color"), values)
+    background = _resolve(_decl(_css_rule(".meeting-guide"), "background"), values)
+    assert contrast(rgb(color)[0], rgb(background)[0]) >= 4.5
+
+
+@pytest.mark.parametrize("theme", _themes())
+def test_meeting_guide_open_button_meets_aa(theme):
+    values = theme_vars(theme)
+    color = _resolve(_decl(_css_rule(".meeting-guide-open"), "color"), values)
+    assert contrast(rgb(color)[0], rgb(values["--bg-default"])[0]) >= 4.5

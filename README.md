@@ -333,7 +333,7 @@ synctx/
 │   │       ├── search.py              # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
 │   │       ├── static/viewer.css      # 화면 틀·3단 배치·반응형
 │   │       ├── static/viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서·회의 진행 상태·안건 소속 절·발표 장 나누기와 키 판단 로직
-│   │       ├── static/viewer.js       # 상단 바·서랍·목차·안건 추적·회의 진행 상태 갱신·발표 화면·알림·확인 창 동작
+│   │       ├── static/viewer.js       # 상단 바·서랍·목차·안건 추적·회의 진행 상태 갱신·회의 모드 안내·발표 화면·알림·확인 창 동작
 │   │       ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·CSS
 │   │       └── static/style.css       # 사용하지 않는 이전 스타일시트
 │   │

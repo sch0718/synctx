@@ -1,5 +1,6 @@
 """viewer_ui: 공통 틀·문구·오류 본문 테스트."""
 
+import re
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -235,3 +236,23 @@ def test_present_bar_controls_and_escaping():
         assert label in html
     assert '<p class="present-empty" hidden>발표할 내용이 없습니다</p>' in html
     assert 'data-action="present-memo"' not in ui.render_present_bar(title="t", exit_href="/x", memo=False)
+
+
+def test_meeting_exit_renders_hidden_guide_and_open_button():
+    html = ui.render_meeting_exit('/view/r/a.md?ref=x"y')
+    assert 'href="/view/r/a.md?ref=x&quot;y"' in html and "회의 모드 나가기" in html
+    assert re.search(r'<button[^>]*data-action="meeting-guide-open"[^>]*aria-controls="meeting-guide"[^>]*hidden>사용법</button>', html)
+    assert re.search(r'<section id="meeting-guide"[^>]*aria-labelledby="meeting-guide-title"[^>]*hidden>', html)
+    assert '<h2 id="meeting-guide-title" class="meeting-guide-title" tabindex="-1">회의 모드 안내</h2>' in html
+    assert len(ui.MEETING_GUIDE_ITEMS) == 4 and all(f"<li>{t}</li>" in html for t in ui.MEETING_GUIDE_ITEMS)
+    assert ui.MEETING_GUIDE_ITEMS[0] == "메모는 이 브라우저에만 저장되고 다른 사람과 공유되지 않습니다."
+    assert '>다시 보지 않기</button>' in html and 'data-action="meeting-guide-close">닫기</button>' in html
+
+
+def test_shortcuts_dialog_offers_meeting_guide_only_when_asked():
+    plain = ui.page(view_prefix="/view", title="t", theme="github-light", header="", body="")
+    guided = ui.page(view_prefix="/view", title="t", theme="github-light", header="", body="", meeting_guide=True)
+    assert "회의 모드 안내 보기" not in plain and "<dd>문서 검색</dd>" in plain
+    dialog = guided.split('<dialog id="shortcuts-dialog"')[1].split("</dialog>")[0]
+    assert re.search(r'data-action="meeting-guide-open" hidden>회의 모드 안내 보기</button>', dialog)
+    assert dialog.index("</dl>") < dialog.index("회의 모드 안내 보기") < dialog.index('method="dialog"')

@@ -2,6 +2,7 @@
 
 import json
 import re
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -546,3 +547,41 @@ class TestPresentMode:
         assert "mermaid.min.js" in present and "mermaid.initialize(" in present
         assert "mermaid.run(" not in present
         assert "mermaid.run();" in client.get("/test-repo/docs/m.md").text
+
+
+class TestMeetingGuide:
+    def test_meeting_mode_has_guide_in_doc_head(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md?mode=meeting").text
+        assert 'id="meeting-guide"' in text and "회의 모드 안내 보기" in text
+        assert text.index('class="meeting-exit"') < text.index('id="meeting-guide"') < text.index('class="doc-meta"')
+        assert 'meeting-guide' not in article(text)
+
+    def test_present_mode_has_no_guide(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md?mode=present").text
+        assert "meeting/meeting.js" in text
+        assert 'id="meeting-guide"' not in text and "회의 모드 안내 보기" not in text
+
+    @pytest.mark.parametrize("doc,collab,query", [
+        ("meeting", True, ""), ("meeting", False, "?mode=meeting"),
+        ("meeting", True, "?mode=meeting&ref=dev"), ("plain", True, "?mode=meeting"),
+    ])
+    def test_no_guide_without_meeting_mode(self, client, manager, doc, collab, query):
+        manager.profile = _profile(collab=collab)
+        manager.read_file_text.return_value = meeting_doc() if doc == "meeting" else "# 일반 문서"
+        text = client.get("/test-repo/docs/m.md" + query).text
+        assert 'id="meeting-guide"' not in text and "회의 모드 안내 보기" not in text
+
+    def test_export_has_no_guide(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/api/repos/test-repo/meeting-export", params={"path": "docs/m.md"}).text
+        assert "meeting-guide" not in text
+
+    def test_guide_button_names_exist_in_meeting_js(self):
+        import viewer_ui as ui
+        js = (Path(ui.__file__).parent / "static" / "meeting" / "meeting.js").read_text(encoding="utf-8")
+        copy = " ".join(ui.MEETING_GUIDE_ITEMS)
+        for name in ("+ 메모", "메모", "회의 정리", ".md로 내보내기", "가져오기"):
+            assert f"「{name}」" in copy
+            assert f"['{name}']" in js, name

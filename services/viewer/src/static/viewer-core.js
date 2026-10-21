@@ -223,6 +223,10 @@
     return null;
   }
 
+  // 안내는 '다시 보지 않기'를 저장한 브라우저에서만 저절로 뜨지 않는다
+  var MEETING_GUIDE_HIDDEN = 'hidden';
+  function meetingGuideAutoOpen(stored) { return stored !== MEETING_GUIDE_HIDDEN; }
+
   root.SynctxViewerCore = {
     RECENT_LIMIT: RECENT_LIMIT,
     matchFiles: matchFiles,
@@ -239,5 +243,7 @@
     buildSlides: buildSlides,
     slideFromHash: slideFromHash,
     presentKeyAction: presentKeyAction,
+    MEETING_GUIDE_HIDDEN: MEETING_GUIDE_HIDDEN,
+    meetingGuideAutoOpen: meetingGuideAutoOpen,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

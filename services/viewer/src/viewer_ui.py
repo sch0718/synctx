@@ -56,14 +56,18 @@ _THEME_BOOT_ATTR = (
     "if(s)document.documentElement.setAttribute('data-theme',s);}catch(e){}})();</script>"
 )
 
-_SHORTCUTS_DIALOG = """<dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+
+def _shortcuts_dialog(meeting_guide: bool) -> str:
+    extra = ('\n  <p class="shortcuts-extra"><button type="button" class="btn" data-action="meeting-guide-open" hidden>'
+             '회의 모드 안내 보기</button></p>') if meeting_guide else ""
+    return f"""<dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
   <h2 id="shortcuts-title">단축키</h2>
   <dl class="keys">
     <dt><kbd>⌘</kbd> <kbd>K</kbd> · <kbd>Ctrl</kbd> <kbd>K</kbd> · <kbd>/</kbd></dt><dd>문서 검색</dd>
     <dt><kbd>t</kbd></dt><dd>이 문서 목차 열기</dd>
     <dt><kbd>?</kbd></dt><dd>이 안내 열기</dd>
     <dt><kbd>Esc</kbd></dt><dd>열린 창·메뉴 닫기</dd>
-  </dl>
+  </dl>{extra}
   <form method="dialog" class="dialog-actions"><button class="btn">닫기</button></form>
 </dialog>"""
 
@@ -170,7 +174,8 @@ def render_mobile_nav(*, controls: str, extra: str = "") -> str:
 
 
 def page(*, view_prefix, title, theme, header, body, repo_id="", ref="", page_class="",
-         theme_via_query=False, doc_config=None, head_extra="", body_extra="") -> str:
+         theme_via_query=False, doc_config=None, head_extra="", body_extra="",
+         meeting_guide: bool = False) -> str:
     classes = page_class
     mode = "query" if theme_via_query else "attr"
     boot = _THEME_BOOT_QUERY if theme_via_query else _THEME_BOOT_ATTR
@@ -190,7 +195,7 @@ def page(*, view_prefix, title, theme, header, body, repo_id="", ref="", page_cl
 {header}
 {body}
 <div class="toast-region" id="toast-region"></div>
-{_SHORTCUTS_DIALOG}
+{_shortcuts_dialog(meeting_guide)}
 <script>
 var VIEW_PREFIX = {encode_for_script(view_prefix)};
 var ACTIVE_REPO = {encode_for_script(repo_id)};
@@ -313,6 +318,30 @@ def render_meeting_card(data: dict) -> str:
             f'<dl class="meeting-info-facts">{facts}</dl>'
             f'<p class="meeting-info-status" role="status" aria-live="polite">{status}</p>'
             f'{agenda}</section>')
+
+
+MEETING_GUIDE_ITEMS = (
+    "메모는 이 브라우저에만 저장되고 다른 사람과 공유되지 않습니다.",
+    "문단 옆 「+ 메모」를 누르거나 본문을 드래그해 선택하면 메모를 남길 수 있습니다.",
+    "오른쪽 아래 「메모」 버튼으로 패널을 열면 결정·액션 메모가 「회의 정리」 탭에 모입니다.",
+    "메모를 함께 보려면 패널의 「.md로 내보내기」로 받은 파일을 전하고, 받은 사람은 「가져오기」로 합칩니다.",
+)
+
+
+def render_meeting_exit(exit_href: str) -> str:
+    items = "".join(f"<li>{esc(text)}</li>" for text in MEETING_GUIDE_ITEMS)
+    return ('<div class="meeting-exit-row">'
+            f'<a class="meeting-exit" href="{esc(exit_href)}">회의 모드 나가기</a>'
+            '<button type="button" class="meeting-guide-open" data-action="meeting-guide-open" '
+            'aria-controls="meeting-guide" hidden>사용법</button>'
+            '</div>'
+            '<section id="meeting-guide" class="meeting-guide" aria-labelledby="meeting-guide-title" hidden>'
+            '<h2 id="meeting-guide-title" class="meeting-guide-title" tabindex="-1">회의 모드 안내</h2>'
+            f'<ul>{items}</ul>'
+            '<div class="meeting-guide-actions">'
+            '<button type="button" class="btn" data-action="meeting-guide-never">다시 보지 않기</button>'
+            '<button type="button" class="btn" data-action="meeting-guide-close">닫기</button>'
+            '</div></section>')
 
 
 def render_present_bar(*, title: str, exit_href: str, memo: bool) -> str:

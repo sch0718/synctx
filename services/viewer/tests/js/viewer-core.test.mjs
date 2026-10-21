@@ -352,3 +352,11 @@ test('발표 키 동작', () => {
   assert.equal(core.presentKeyAction(' ', o({ onControl: true, shiftKey: true })), null);
   assert.equal(core.presentKeyAction('ArrowRight', o({ onControl: true })), 'next');
 });
+
+test('회의 모드 안내는 다시 보지 않기를 저장한 때만 저절로 뜨지 않는다', () => {
+  assert.equal(core.MEETING_GUIDE_HIDDEN, 'hidden');
+  assert.equal(core.meetingGuideAutoOpen(null), true);
+  assert.equal(core.meetingGuideAutoOpen(''), true);
+  assert.equal(core.meetingGuideAutoOpen('other'), true);
+  assert.equal(core.meetingGuideAutoOpen('hidden'), false);
+});
