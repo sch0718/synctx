@@ -116,6 +116,30 @@
     return options;
   }
 
+  function encodePath(path) { return String(path).split('/').map(encodeURIComponent).join('/'); }
+
+  // ctx: { viewPrefix, activeRepo, activeRef, query }. ref는 지금 보고 있는 저장소로 갈 때만 붙인다
+  function finderHref(option, ctx) {
+    var ref = ctx.activeRef ? 'ref=' + encodeURIComponent(ctx.activeRef) : '';
+    if (option.kind === 'all') {
+      var href = ctx.viewPrefix + '/search?q=' + encodeURIComponent(ctx.query);
+      if (ctx.activeRepo) {
+        href += '&repo=' + encodeURIComponent(ctx.activeRepo);
+        if (ref) href += '&' + ref + '&ref_repo=' + encodeURIComponent(ctx.activeRepo);
+      }
+      return href;
+    }
+    var repo = option.kind === 'file' ? ctx.activeRepo : option.repo;
+    return ctx.viewPrefix + '/' + encodeURIComponent(repo) + '/' + encodePath(option.path) +
+      (repo === ctx.activeRepo && ref ? '?' + ref : '');
+  }
+
+  // 저장소를 보고 있는데 파일 목록이 아직 없으면(받는 중·실패) 그 상태를 알린다
+  function finderFileStatus(activeRepo, files, loadFailed) {
+    if (!activeRepo || files !== null) return null;
+    return loadFailed ? '파일 목록을 불러오지 못했습니다. 검색어를 고치면 다시 시도합니다.' : '파일 목록을 불러오는 중…';
+  }
+
   // 요청 번호가 지금 번호와 같은 응답만 넘긴다. 같은 검색어로 돌아와도 앞 요청의 응답은 버린다
   function createSearchScheduler(opts) {
     var setTimer = opts.setTimer || function (fn, ms) { return setTimeout(fn, ms); };
@@ -235,6 +259,8 @@
     createFileLoader: createFileLoader,
     branchChoices: branchChoices,
     finderOptions: finderOptions,
+    finderHref: finderHref,
+    finderFileStatus: finderFileStatus,
     isSearchable: isSearchable,
     createSearchScheduler: createSearchScheduler,
     meetingStatus: meetingStatus,

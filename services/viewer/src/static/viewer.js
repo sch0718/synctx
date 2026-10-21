@@ -369,13 +369,24 @@
         '<span class="finder-snippet">' + escapeHtml(o.before) + (o.match ? '<mark>' + escapeHtml(o.match) + '</mark>' : '') + escapeHtml(o.after) + '</span></li>';
     }
     function paint() {
+      var status = core.finderFileStatus(ACTIVE_REPO, ACTIVE_REPO ? loader.files() : [], loadFailed);
+      var html = status ? '<li role="presentation" class="finder-empty">' + escapeHtml(status) + '</li>' : '';
       var group = null;
-      list.innerHTML = items.map(function (o, i) {
-        var header = '';
-        if (o.group && o.group !== group) header = '<li role="presentation" class="finder-group">' + escapeHtml(o.group) + '</li>';
-        group = o.group;
-        return header + optionHtml(o, i);
-      }).join('');
+      var groupCount = 0;
+      items.forEach(function (o, i) {
+        if (o.group !== group) {
+          if (group) html += '</ul></li>';
+          if (o.group) {
+            var groupId = 'finder-group-' + (groupCount++);
+            html += '<li role="group" aria-labelledby="' + groupId + '"><span class="finder-group" id="' + groupId + '">' +
+              escapeHtml(o.group) + '</span><ul role="none">';
+          }
+          group = o.group;
+        }
+        html += optionHtml(o, i);
+      });
+      if (group) html += '</ul></li>';
+      list.innerHTML = html;
       input.setAttribute('aria-activedescendant', active >= 0 ? 'finder-opt-' + active : '');
       setOpen(true);
       // 포커스는 입력칸에 있으므로 선택한 결과가 목록 밖이면 직접 스크롤한다
@@ -391,8 +402,8 @@
         for (var i = 0; i < items.length; i++) { if (optionKey(items[i]) === kept) { active = i; break; } }
       }
       if (!items.length) {
-        if (ACTIVE_REPO && loader.files() === null) message(loadFailed ? '파일 목록을 불러오지 못했습니다. 검색어를 고치면 다시 시도합니다.' : '파일 목록을 불러오는 중…');
-        else message(ACTIVE_REPO ? '맞는 파일이 없습니다.' : '두 글자 이상 입력하세요.');
+        message(core.finderFileStatus(ACTIVE_REPO, ACTIVE_REPO ? loader.files() : [], loadFailed) ||
+          (ACTIVE_REPO ? '맞는 파일이 없습니다.' : '두 글자 이상 입력하세요.'));
         return;
       }
       paint();
@@ -422,16 +433,9 @@
       showFiles();
     }
     function go(option) {
-      var q = input.value.trim();
-      if (option.kind === 'all') {
-        window.location.href = VIEW_PREFIX + '/search?q=' + encodeURIComponent(q) +
-          (ACTIVE_REPO ? '&repo=' + encodeURIComponent(ACTIVE_REPO) +
-            (ACTIVE_REF ? '&ref=' + encodeURIComponent(ACTIVE_REF) + '&ref_repo=' + encodeURIComponent(ACTIVE_REPO) : '') : '');
-        return;
-      }
-      var repo = option.kind === 'file' ? ACTIVE_REPO : option.repo;
-      window.location.href = VIEW_PREFIX + '/' + encodeURIComponent(repo) + '/' + encodePath(option.path) +
-        (repo === ACTIVE_REPO ? _refParam('?') : '');
+      window.location.href = core.finderHref(option, {
+        viewPrefix: VIEW_PREFIX, activeRepo: ACTIVE_REPO, activeRef: ACTIVE_REF, query: input.value.trim(),
+      });
     }
     input.addEventListener('input', function () { dismissed = false; loadFailed = false; render(); });
     input.addEventListener('focus', function () { if (ACTIVE_REPO) loader.load(); });
@@ -662,10 +666,8 @@
       new MutationObserver(function (records) {
         var id = null;
         records.forEach(function (r) {
-          if (r.target.matches('mark.meeting-hl.meeting-hl--flash[data-memo-id]') &&
-              String(r.oldValue || '').split(/\s+/).indexOf('meeting-hl--flash') === -1) {
-            id = r.target.getAttribute('data-memo-id');
-          }
+          // 깜빡이는 중에 같은 메모로 다시 가도(표시가 이미 붙어 있어도) 그 장으로 옮긴다
+          if (r.target.matches('mark.meeting-hl.meeting-hl--flash[data-memo-id]')) id = r.target.getAttribute('data-memo-id');
         });
         if (id === null) return;
         var safeId = window.CSS && CSS.escape ? CSS.escape(id) : id;
@@ -674,7 +676,38 @@
         if (i === -1 || slideOf[i] === current) return;
         show(slideOf[i], true);
         mark.scrollIntoView({ block: 'center' });
-      }).observe(article, { attributes: true, attributeFilter: ['class'], attributeOldValue: true, subtree: true });
+      }).observe(article, { attributes: true, attributeFilter: ['class'], subtree: true });
+    }
+
+    // 메모 패널은 위·아래 띠 사이에 둔다. 띠는 좁은 화면에서 줄이 바뀌므로 높이를 다시 잰다
+    var topBand = $('.present-top');
+    function measureBands() {
+      var rootStyle = document.documentElement.style;
+      if (topBand) rootStyle.setProperty('--present-top-h', topBand.offsetHeight + 'px');
+      if (nav) rootStyle.setProperty('--present-nav-h', nav.offsetHeight + 'px');
+    }
+    measureBands();
+    if ('ResizeObserver' in window) {
+      var bandObserver = new ResizeObserver(measureBands);
+      if (topBand) bandObserver.observe(topBand);
+      if (nav) bandObserver.observe(nav);
+    } else {
+      window.addEventListener('resize', measureBands);
+    }
+
+    // "메모 보기(N)"가 회의 모드 메모 버튼과 같은 열림 상태를 알린다. 메모 버튼은 meeting.js가 문서 해석 뒤에 만든다
+    var memoButton = $('[data-action="present-memo"]');
+    function watchMemoToggle() {
+      var toggle = document.querySelector('.meeting-toggle');
+      if (!memoButton || !toggle) return;
+      function sync() { memoButton.setAttribute('aria-expanded', toggle.getAttribute('aria-expanded') === 'true' ? 'true' : 'false'); }
+      sync();
+      if ('MutationObserver' in window) new MutationObserver(sync).observe(toggle, { attributes: true, attributeFilter: ['aria-expanded'] });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { window.setTimeout(watchMemoToggle, 0); });
+    } else {
+      watchMemoToggle();
     }
   }
 

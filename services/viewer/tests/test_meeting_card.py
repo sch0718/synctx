@@ -39,3 +39,9 @@ def test_card_data_shape():
     assert data["starts_at_iso"] == "2026-10-15T15:00:00+09:00"
     assert data["presenters"] == ["리드"] and data["cancelled"] is True and data["agenda"] == []
     assert data["time_label"] == "2026-10-15 (목) 15:00–15:30"
+
+
+def test_card_data_converts_other_offsets_to_kst():
+    data = mc.card_data(_meeting(starts_at=datetime(2026, 10, 15, 6, 0, tzinfo=timezone.utc)), [])
+    assert data["starts_at_iso"] == "2026-10-15T15:00:00+09:00"
+    assert data["time_label"] == "2026-10-15 (목) 15:00–15:30"

@@ -246,3 +246,40 @@ def test_meeting_guide_css_keeps_hidden_working():
     assert "var(--primary)" in _rule(css, ".meeting-guide-open")
     assert "display: none" in _rule(css, ".shortcuts-extra .btn[hidden]")
     assert "padding: 4px 0" in _rule(css, ".meeting-guide-open")
+
+
+def _present_js():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    return js.split("function initPresent(")[1].split("\n  }\n")[0]
+
+
+def test_present_memo_button_mirrors_meeting_toggle_state():
+    present = _present_js()
+    assert "aria-expanded" in present and "present-memo" in present
+    assert re.search(r"attributeFilter: \['aria-expanded'\]", present)
+
+
+def test_present_flash_jump_does_not_depend_on_old_class():
+    present = _present_js()
+    assert "meeting-hl--flash" in present and "oldValue" not in present
+
+
+def test_present_panel_sits_between_bands():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.page-present \.meeting-panel\s*\{([^}]*)\}", css).group(1)
+    assert "var(--present-top-h" in rule and "var(--present-nav-h" in rule and "max-width" in rule
+    present = _present_js()
+    assert "--present-top-h" in present and "--present-nav-h" in present
+
+
+def _finder_js():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    return js.split("function initFinder(")[1].split("\n  }\n")[0]
+
+
+def test_finder_groups_results_and_uses_core_helpers():
+    finder = _finder_js()
+    assert 'role="group"' in finder and "aria-labelledby" in finder
+    assert "core.finderHref(" in finder and "core.finderFileStatus(" in finder
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    assert re.search(r'\.finder-results li\[role="group"\]\s*\{[^}]*padding:\s*0', css)

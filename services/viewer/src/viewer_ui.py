@@ -282,8 +282,10 @@ def render_search_page(*, view_prefix: str, query: str, raw_query: str, repos: S
     title = f"\u2018{esc(query)}\u2019 검색 결과" if results is not None else "문서 검색"
     parts = ['<main id="main" class="search-page" tabindex="-1">', f"<h1>{title}</h1>",
              _search_form(view_prefix=view_prefix, raw_query=raw_query, repos=repos, active_repo=active_repo, ref=ref)]
-    if results is None:
+    if results is None and raw_query.strip():
         parts.append(f'<p class="search-note search-note-invalid" role="alert">{SEARCH_QUERY_HINT}</p>')
+    elif results is None:
+        parts.append(f'<p class="search-note">{SEARCH_QUERY_HINT}</p>')
     else:
         total = sum(len(g["matches"]) for g in results)
         found = sum(1 for g in results if g["matches"])
@@ -345,12 +347,13 @@ def render_meeting_exit(exit_href: str) -> str:
 
 
 def render_present_bar(*, title: str, exit_href: str, memo: bool) -> str:
-    memo_button = ('<button type="button" class="btn" data-action="present-memo" aria-keyshortcuts="N">'
+    memo_button = ('<button type="button" class="btn" data-action="present-memo" aria-keyshortcuts="N" '
+                   'aria-controls="meeting-panel" aria-expanded="false">'
                    '메모 보기(N)</button>') if memo else ""
     return (f'<header class="present-top"><span class="present-title">{esc(title)}</span>'
             f'<span class="present-time" data-present-time></span></header>'
             '<nav class="present-nav" aria-label="발표 이동">'
-            '<div class="present-progress" role="progressbar" aria-label="발표 진행" aria-valuemin="1" aria-valuemax aria-valuenow>'
+            '<div class="present-progress" role="progressbar" aria-label="발표 진행" aria-valuemin="1">'
             '<span class="present-progress-bar"></span></div>'
             '<button type="button" class="btn" data-action="present-prev" aria-keyshortcuts="ArrowLeft PageUp">이전(←)</button>'
             '<span class="present-count"></span>'

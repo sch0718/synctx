@@ -75,14 +75,15 @@ def _slow_grep(seconds, seen):
     return grep
 
 def test_search_waiting_time_counts_toward_deadline(monkeypatch):
-    monkeypatch.setattr(search, "TIMEOUT_SECONDS", 0.1)
+    # 기다린 시간을 기한에 넣지 않으면 뒤 차례 저장소가 기한을 한 번 더 써서 약 0.6초가 걸린다
+    monkeypatch.setattr(search, "TIMEOUT_SECONDS", 0.3)
     seen = []
-    repos = [(f"r{i}", f"R{i}", SimpleNamespace(status="ready", grep=_slow_grep(0.15, seen), profile=SimpleNamespace(storage_mode="full")))
+    repos = [(f"r{i}", f"R{i}", SimpleNamespace(status="ready", grep=_slow_grep(1.0, seen), profile=SimpleNamespace(storage_mode="full")))
              for i in range(search.MAX_CONCURRENT + 2)]
     started = time.monotonic()
     out = asyncio.run(search.search_repositories(repos, "ab", None, [], lambda p: True))
-    assert time.monotonic() - started < 0.2
-    assert all(0 < t <= 0.1 for t in seen)
+    assert time.monotonic() - started < 0.5
+    assert all(0 < t <= 0.3 for t in seen)
     assert {r["status"] for r in out} == {"timeout"} and all(r["matches"] == [] for r in out)
 
 def test_search_answers_by_deadline_when_executor_is_busy(monkeypatch):
@@ -105,7 +106,8 @@ def test_search_answers_by_deadline_when_executor_is_busy(monkeypatch):
         begin = time.monotonic()
         # 기한 처리가 빠진 구현도 무한 대기하지 않고 실패하도록 바깥 제한을 둔다
         out = asyncio.run(asyncio.wait_for(search.search_repositories(repos, "ab", None, [], lambda p: True), 1.0))
-        assert time.monotonic() - begin < 0.2
+        # 기한을 지키지 않으면 막힌 작업자를 기다리다 바깥 제한(1초)에 걸린다
+        assert time.monotonic() - begin < 0.6
         assert [r["status"] for r in out] == ["timeout", "unavailable", "unsupported"]
     finally:
         release.set()

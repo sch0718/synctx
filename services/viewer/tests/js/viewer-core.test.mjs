@@ -360,3 +360,22 @@ test('회의 모드 안내는 다시 보지 않기를 저장한 때만 저절로
   assert.equal(core.meetingGuideAutoOpen('other'), true);
   assert.equal(core.meetingGuideAutoOpen('hidden'), false);
 });
+
+test('찾기 결과의 주소를 만든다', () => {
+  const ctx = { viewPrefix: '/view', activeRepo: 'r 1', activeRef: 'feat/x', query: 'a b&c' };
+  assert.equal(core.finderHref({ kind: 'file', path: '회의/a b#.md' }, ctx),
+    '/view/r%201/%ED%9A%8C%EC%9D%98/a%20b%23.md?ref=feat%2Fx');
+  assert.equal(core.finderHref({ kind: 'content', repo: 'r 1', path: 'd/x.md' }, ctx), '/view/r%201/d/x.md?ref=feat%2Fx');
+  assert.equal(core.finderHref({ kind: 'content', repo: 'other', path: 'x.md' }, ctx), '/view/other/x.md');
+  assert.equal(core.finderHref({ kind: 'all' }, ctx), '/view/search?q=a%20b%26c&repo=r%201&ref=feat%2Fx&ref_repo=r%201');
+  assert.equal(core.finderHref({ kind: 'all' }, { ...ctx, activeRef: '' }), '/view/search?q=a%20b%26c&repo=r%201');
+  assert.equal(core.finderHref({ kind: 'all' }, { ...ctx, activeRepo: '', activeRef: '' }), '/view/search?q=a%20b%26c');
+  assert.equal(core.finderHref({ kind: 'file', path: 'a.md' }, { ...ctx, activeRef: '' }), '/view/r%201/a.md');
+});
+
+test('파일 목록 상태 문구', () => {
+  assert.equal(core.finderFileStatus('r', null, false), '파일 목록을 불러오는 중…');
+  assert.equal(core.finderFileStatus('r', null, true), '파일 목록을 불러오지 못했습니다. 검색어를 고치면 다시 시도합니다.');
+  assert.equal(core.finderFileStatus('r', [], false), null);
+  assert.equal(core.finderFileStatus('', null, false), null);
+});

@@ -74,13 +74,48 @@ def fix_heading_ids(html, id_map=None):
             slug = f"{slug}-{used[slug]}"
         else:
             used[slug] = 0
-        if id_map is not None and f' {HEADING_MARK}="1"' in attrs:
-            old_id = re.search(r'\sid="([^"]*)"', attrs)
+        # 속성값 안의 "id=" 같은 글을 속성으로 읽지 않도록 속성을 하나씩 나눠 읽는다
+        parsed = _heading_attrs(attrs)
+        if id_map is not None and any(name == HEADING_MARK for name, _, _ in parsed):
+            old_id = next((value for name, value, _ in parsed if name == "id" and value), None)
             if old_id:
-                id_map[html_lib.unescape(old_id.group(1))] = slug
-        return f'<{tag} id="{slug}">{inner}</{tag}>'
+                id_map[html_lib.unescape(old_id.strip("\"'"))] = slug
+        rest = "".join(" " + raw for name, _, raw in parsed if name not in ("id", HEADING_MARK))
+        return f'<{tag} id="{slug}"{rest}>{inner}</{tag}>'
 
     return re.sub(r"<(h[1-6])([^>]*)>(.*?)</\1>", replacer, html, flags=re.DOTALL)
+
+
+# 공백 묶음·속성·그 밖의 한 글자 중 하나를 매번 소비해 앞으로만 나아간다(같은 자리를 다시 훑지 않는다)
+_HEADING_ATTR_TOKEN = re.compile(r"""(\s+)|([^\s"'>/=]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?|(.)""", re.DOTALL)
+
+
+def _heading_attrs(attrs):
+    """여는 태그의 속성을 (소문자 이름, 값, 원문) 목록으로 나눈다. 이름이 아닌 글자는 이름 None으로 둔다."""
+    parsed = []
+    for m in _HEADING_ATTR_TOKEN.finditer(attrs):
+        if m.group(1):
+            continue
+        if m.group(2):
+            parsed.append((m.group(2).lower(), m.group(3), m.group(0)))
+        else:
+            parsed.append((None, None, m.group(0)))
+    return parsed
+
+
+def _remap_toc_links(html, toc_html, id_map):
+    """본문의 [TOC] 블록 링크도 바뀐 제목 id를 가리키게 한다.
+
+    목차 확장이 만든 목차 HTML(md.toc)이 본문에 그대로 들어가므로 그 문자열만 바꿔 끼운다.
+    """
+    if not toc_html or not id_map or toc_html not in html:
+        return html
+
+    def remap_href(match):
+        old = html_lib.unescape(match.group(1))
+        return f'href="#{html_lib.escape(id_map.get(old, old))}"'
+
+    return html.replace(toc_html, re.sub(r'href="#([^"]*)"', remap_href, toc_html))
 
 
 def _remap_toc_ids(tokens, id_map):
@@ -251,6 +286,7 @@ def render_markdown(md_text):
     html_body = md.convert(preprocessed)
     id_map = {}
     html_body = fix_heading_ids(html_body, id_map)
+    html_body = _remap_toc_links(html_body, getattr(md, "toc", ""), id_map)
     html_body = transform_mermaid_blocks(html_body)
 
     toc_tokens = getattr(md, "toc_tokens", [])

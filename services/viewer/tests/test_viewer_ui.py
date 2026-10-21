@@ -256,3 +256,25 @@ def test_shortcuts_dialog_offers_meeting_guide_only_when_asked():
     dialog = guided.split('<dialog id="shortcuts-dialog"')[1].split("</dialog>")[0]
     assert re.search(r'data-action="meeting-guide-open" hidden>회의 모드 안내 보기</button>', dialog)
     assert dialog.index("</dl>") < dialog.index("회의 모드 안내 보기") < dialog.index('method="dialog"')
+
+
+def test_present_bar_memo_button_exposes_panel_state():
+    html = ui.render_present_bar(title="t", exit_href="/x", memo=True)
+    button = re.search(r'<button[^>]*data-action="present-memo"[^>]*>', html).group(0)
+    assert 'aria-controls="meeting-panel"' in button and 'aria-expanded="false"' in button
+
+
+def test_present_progress_has_no_empty_aria_values():
+    html = ui.render_present_bar(title="t", exit_href="/x", memo=False)
+    progress = re.search(r'<div class="present-progress"[^>]*>', html).group(0)
+    assert not re.search(r"aria-value(max|now)(?!=)", progress)
+
+
+def test_search_page_without_query_is_not_an_alert():
+    html = ui.render_search_page(view_prefix="/view", query="", raw_query="", repos=REPOS,
+                                 active_repo=None, ref=None, results=None)
+    assert 'role="alert"' not in html and "search-note-invalid" not in html
+    assert ui.SEARCH_QUERY_HINT in html
+    blank = ui.render_search_page(view_prefix="/view", query="", raw_query="   ", repos=REPOS,
+                                  active_repo=None, ref=None, results=None)
+    assert 'role="alert"' not in blank

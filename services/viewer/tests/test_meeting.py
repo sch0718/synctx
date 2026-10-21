@@ -495,6 +495,19 @@ class TestMeetingCard:
         manager.read_file_text.return_value = "# Hello"
         assert 'class="meeting-info"' not in client.get("/test-repo/docs/a.md").text
 
+    def test_card_without_meeting_mode_offers_no_meeting_link(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md?ref=feat").text
+        assert 'class="meeting-info"' in text and "mode=meeting" not in text
+
+    def test_cancelled_meeting_shows_cancelled_status(self, client, manager):
+        fm = {"synctx": {"type": "meeting", "meeting": {
+            "id": "dx-21", "title": "DX 21번 검토", "starts_at": "2026-10-08T14:00+09:00",
+            "channel": "dx-team", "cancelled": True}}}
+        manager.read_file_text.return_value = "---\n" + yaml.safe_dump(fm, allow_unicode=True) + "---\n# 본문\n"
+        text = client.get("/test-repo/docs/m.md").text
+        assert 'data-cancelled="true"' in text and "취소된 회의</p>" in text
+
 
 class TestPresentMode:
     def test_present_mode_renders_bar_and_meeting_assets(self, client, manager):
