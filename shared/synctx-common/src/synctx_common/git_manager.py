@@ -100,12 +100,17 @@ class GitRepoManager:
 
     def _sanitize_git_text(self, text: str) -> str:
         masked = re.sub(r"(https?://)([^/@:\s]+):([^@/\s]+)@", r"\1\2:***@", text)
+        masked = re.sub(r"(https?://)[^/@:\s]+@", r"\1***@", masked)
         masked = re.sub(
             r"(?i)(Authorization:\s*(?:Bearer|Basic|token)\s+)\S+",
             r"\1***",
             masked,
         )
         return masked
+
+    def _safe_cmd(self, args: Sequence[str]) -> list[str]:
+        # 예외에 남는 명령에는 인증 헤더가 든 설정 인자를 넣지 않고, URL 인증정보도 가린다
+        return ["git", *(self._sanitize_git_text(a) for a in args)]
 
     def _git_env(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -160,13 +165,14 @@ class GitRepoManager:
             return self._run_git_with_deadline(args, cwd, extra_env, timeout)
         except subprocess.CalledProcessError as exc:
             stderr = self._sanitize_git_text((exc.stderr or b"").decode("utf-8", errors="replace"))
+            cmd = self._safe_cmd(args)
             logger.warning(
                 "git_command_failed repo_id=%s args=%s stderr=%s",
                 self.profile.id,
-                " ".join(args),
+                " ".join(cmd[1:]),
                 stderr.strip(),
             )
-            raise
+            raise subprocess.CalledProcessError(exc.returncode, cmd, exc.output, exc.stderr) from None
 
     def _run_git_with_deadline(
         self,
@@ -189,8 +195,7 @@ class GitRepoManager:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             self._stop_process_group(proc)
-            # cmd에는 인증 헤더가 든 설정 인자를 넣지 않는다
-            raise subprocess.TimeoutExpired(["git", *args], timeout) from None
+            raise subprocess.TimeoutExpired(self._safe_cmd(args), timeout) from None
         if proc.returncode != 0:
             raise subprocess.CalledProcessError(proc.returncode, ["git", *args], stdout, stderr)
         return subprocess.CompletedProcess(["git", *args], proc.returncode, stdout, stderr)

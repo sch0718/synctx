@@ -1,3 +1,4 @@
+import base64
 import os
 import subprocess
 import threading
@@ -6,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from synctx_common.git_manager import GitRepoManager, GrepMatch, GrepResult
-from synctx_common.config import RepoProfile
+from synctx_common.config import RepoAuthConfig, RepoProfile
 
 def test_validate_path():
     profile = RepoProfile(id="test", name="test", url="dummy")
@@ -502,3 +503,41 @@ async def test_grep_strips_carriage_return_from_crlf_lines(tmp_path, remote):
     manager = _manager(tmp_path, bare)
     await manager.ensure()
     assert [(m.line, m.text) for m in manager.grep("hello").matches] == [(1, "Hello Search")]
+
+
+FAKE_TOKEN = "FAKE-TOKEN-1234"
+
+
+def _token_manager(tmp_path: Path, monkeypatch, url: str = "https://example.invalid/r.git") -> GitRepoManager:
+    monkeypatch.setenv("SYNCTX_TEST_GIT_TOKEN", FAKE_TOKEN)
+    profile = RepoProfile(id="r", name="r", url=url, auth=RepoAuthConfig(type="token", credential_env="SYNCTX_TEST_GIT_TOKEN"))
+    return GitRepoManager(profile, str(tmp_path / "cache"))
+
+
+@pytest.mark.parametrize("timeout", [None, 5.0])
+def test_failed_git_error_does_not_carry_auth_header(tmp_path, monkeypatch, timeout):
+    manager = _token_manager(tmp_path, monkeypatch)
+    with pytest.raises(subprocess.CalledProcessError) as info:
+        manager._run_git("rev-parse", "HEAD", cwd=tmp_path, timeout=timeout)
+    text = str(info.value) + repr(info.value.cmd)
+    assert FAKE_TOKEN not in text
+    assert base64.b64encode(f"x-access-token:{FAKE_TOKEN}".encode()).decode() not in text
+    assert "extraHeader" not in text
+    assert info.value.cmd == ["git", "rev-parse", "HEAD"]
+
+
+@pytest.mark.parametrize("timeout", [None, 5.0])
+def test_failed_git_error_masks_token_in_url_args(tmp_path, monkeypatch, caplog, timeout):
+    manager = _token_manager(tmp_path, monkeypatch)
+    with caplog.at_level("WARNING"), pytest.raises(subprocess.CalledProcessError) as info:
+        manager._run_git("ls-remote", f"https://{FAKE_TOKEN}@127.0.0.1:9/r.git", cwd=tmp_path, timeout=timeout)
+    assert FAKE_TOKEN not in str(info.value)
+    assert FAKE_TOKEN not in caplog.text
+    assert "https://***@127.0.0.1:9/r.git" in str(info.value)
+
+
+def test_sanitize_git_text_masks_url_userinfo(tmp_path):
+    manager = GitRepoManager(RepoProfile(id="r", name="r", url="https://example.invalid/r.git"), str(tmp_path / "cache"))
+    assert manager._sanitize_git_text("fatal: https://ghp_abc123@github.com/o/r.git") == "fatal: https://***@github.com/o/r.git"
+    assert manager._sanitize_git_text("https://user:pw@host/r.git") == "https://user:***@host/r.git"
+    assert manager._sanitize_git_text("see https://host/r.git and a@b.com") == "see https://host/r.git and a@b.com"

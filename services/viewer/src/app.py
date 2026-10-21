@@ -205,7 +205,8 @@ def list_branches(repo_id: str):
         branches = manager.list_branches()
         return {"branches": branches, "default": manager.profile.default_ref}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning("list_branches_failed repo_id=%s error=%s", repo_id, type(e).__name__)
+        raise HTTPException(status_code=400, detail="Failed to list branches")
 
 
 @app.get("/api/repos/{repo_id}/tree", dependencies=[Depends(verify_viewer_access)])
@@ -225,7 +226,8 @@ def get_tree(repo_id: str, path: str = "", ref: str | None = None):
             result.append(entry)
         return {"path": path, "entries": result}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning("list_tree_failed repo_id=%s error=%s", repo_id, type(e).__name__)
+        raise HTTPException(status_code=400, detail="Failed to list files")
 
 
 @app.get("/api/repos/{repo_id}/files", dependencies=[Depends(verify_viewer_access)])
@@ -322,7 +324,8 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
         raise
     except Exception as e:
         if isinstance(e, (subprocess.CalledProcessError, ValueError)) and not isinstance(e, UnicodeEncodeError):
-            raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
+            logger.warning("download_not_found repo_id=%s error=%s", repo_id, type(e).__name__)
+            raise HTTPException(status_code=404, detail="File not found")
         logger.exception("download_failed repo_id=%s path=%s format=%s", repo_id, path, format)
         raise HTTPException(status_code=500, detail="Download failed")
 
@@ -333,7 +336,8 @@ def raw_file(repo_id: str, path: str, ref: str | None = None):
     try:
         return Response(content=manager.read_file(path, ref=ref), media_type="application/octet-stream")
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
+        logger.warning("raw_file_failed repo_id=%s error=%s", repo_id, type(e).__name__)
+        raise HTTPException(status_code=404, detail="File not found")
 
 
 def _verify_service_token(request: Request):
@@ -355,7 +359,8 @@ async def repo_webhook(repo_id: str, request: Request):
         head_sha = await manager.fetch(source=f"webhook:{source}")
         return {"status": "ok", "repo_id": repo_id, "head_sha": head_sha}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Repository refresh failed: {e}")
+        logger.warning("webhook_refresh_failed repo_id=%s error=%s", repo_id, type(e).__name__)
+        raise HTTPException(status_code=502, detail="Repository refresh failed")
 
 
 # ── File Type Detection ──
@@ -1015,7 +1020,8 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"File not found or error: {e}")
+        logger.warning("render_failed repo_id=%s error=%s", repo_id, type(e).__name__)
+        raise HTTPException(status_code=404, detail="File not found")
 
 
 @app.get("/api/repos/{repo_id}/render", dependencies=[Depends(verify_viewer_access)])
@@ -1141,7 +1147,8 @@ def render_board(repo_id: str, version: str):
         html = KANBAN_TEMPLATE.format(version=safe_version, repo_id=safe_repo_id, columns_html=columns_html)
         return HTMLResponse(content=html)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning("board_failed repo_id=%s error=%s", repo_id, type(e).__name__)
+        raise HTTPException(status_code=400, detail="Failed to build board")
 
 
 # catch-all이므로 다른 모든 라우트 뒤에 등록해야 한다.

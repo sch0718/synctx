@@ -1135,3 +1135,41 @@ class TestBoardRoute:
             "onclick=\"window.location.href='/view/api/repos/%3Cscript%3E%27x/render?path=docs/it%27s%20task.md'\""
             in resp.text
         )
+
+
+class TestErrorResponsesHideExceptionText:
+    SECRET = "SECRET-TOKEN-9876"
+
+    def _git_error(self):
+        import subprocess
+        return subprocess.CalledProcessError(
+            128, ["git", "-c", f"http.extraHeader=Authorization: Basic {self.SECRET}", "show"],
+            stderr=f"fatal: https://{self.SECRET}@git.test/r.git".encode(),
+        )
+
+    @pytest.mark.parametrize("method,attr,url,status,detail", [
+        ("get", "list_branches", "/api/repos/test-repo/branches", 400, "Failed to list branches"),
+        ("get", "list_tree", "/api/repos/test-repo/tree", 400, "Failed to list files"),
+        ("get", "read_file", "/api/repos/test-repo/download?path=docs/a.md&format=raw", 404, "File not found"),
+        ("get", "read_file", "/raw/test-repo/docs/a.md", 404, "File not found"),
+        ("get", "read_file_text", "/api/repos/test-repo/render?path=docs/a.md", 404, "File not found"),
+        ("get", "list_tree", "/api/repos/test-repo/board/v1", 400, "Failed to build board"),
+    ])
+    def test_git_failure_detail_is_fixed_text(self, client, mock_repo_manager, caplog, method, attr, url, status, detail):
+        getattr(mock_repo_manager, attr).side_effect = self._git_error()
+        with caplog.at_level("WARNING"):
+            resp = getattr(client, method)(url)
+        assert resp.status_code == status
+        assert resp.json()["detail"] == detail
+        assert self.SECRET not in resp.text and "extraHeader" not in resp.text
+        assert self.SECRET not in caplog.text
+
+    def test_webhook_refresh_failure_detail_is_fixed_text(self, client, mock_repo_manager, monkeypatch, caplog):
+        from unittest.mock import AsyncMock
+        monkeypatch.delenv("SYNCTX_SERVICE_TOKEN", raising=False)
+        mock_repo_manager.fetch = AsyncMock(side_effect=self._git_error())
+        with caplog.at_level("WARNING"):
+            resp = client.post("/api/repos/test-repo/webhook", json={"after": "abc"})
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "Repository refresh failed"
+        assert self.SECRET not in resp.text and self.SECRET not in caplog.text
