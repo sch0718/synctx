@@ -11,6 +11,7 @@ from urllib.parse import quote, unquote
 
 import markdown
 from markdown.extensions.toc import TocExtension
+from markdown.treeprocessors import Treeprocessor
 
 
 def github_slugify(text, sep="-"):
@@ -37,13 +38,35 @@ def preprocess_md(text):
     return "\n".join(result)
 
 
-def fix_heading_ids(html):
-    """heading id를 GitHub 방식으로 맞춘다."""
+HEADING_MARK = "data-synctx-md"
+_HEADING_TAGS = {f"h{n}" for n in range(1, 7)}
+
+
+class _HeadingMarker(Treeprocessor):
+    """Markdown이 만든 제목에 표시를 붙여 원시 HTML 제목과 구분한다."""
+
+    def run(self, root):
+        for el in root.iter():
+            if el.tag in _HEADING_TAGS:
+                el.set(HEADING_MARK, "1")
+
+
+class _HeadingMarkExtension(markdown.Extension):
+    def extendMarkdown(self, md):
+        md.treeprocessors.register(_HeadingMarker(md), "synctx-heading-mark", 4)
+
+
+def fix_heading_ids(html, id_map=None):
+    """heading id를 GitHub 방식으로 맞춘다.
+
+    id_map이 주어지면 Markdown이 만든 제목의 원래 id를 새 id로 기록한다.
+    """
     used = {}
 
     def replacer(match):
         tag = match.group(1)
-        inner = match.group(2)
+        attrs = match.group(2)
+        inner = match.group(3)
         plain = re.sub(r"<[^>]+>", "", inner).strip()
         slug = github_slugify(plain)
         if slug in used:
@@ -51,9 +74,19 @@ def fix_heading_ids(html):
             slug = f"{slug}-{used[slug]}"
         else:
             used[slug] = 0
+        if id_map is not None and f' {HEADING_MARK}="1"' in attrs:
+            old_id = re.search(r'\sid="([^"]*)"', attrs)
+            if old_id:
+                id_map[html_lib.unescape(old_id.group(1))] = slug
         return f'<{tag} id="{slug}">{inner}</{tag}>'
 
-    return re.sub(r"<(h[1-6])[^>]*>(.*?)</\1>", replacer, html, flags=re.DOTALL)
+    return re.sub(r"<(h[1-6])([^>]*)>(.*?)</\1>", replacer, html, flags=re.DOTALL)
+
+
+def _remap_toc_ids(tokens, id_map):
+    for token in tokens:
+        token["id"] = id_map.get(token["id"], token["id"])
+        _remap_toc_ids(token.get("children", []), id_map)
 
 
 def transform_mermaid_blocks(html):
@@ -210,15 +243,18 @@ def render_markdown(md_text):
             TocExtension(slugify=github_slugify, toc_depth="1-4"),
             "sane_lists",
             "md_in_html",
+            _HeadingMarkExtension(),
         ],
         output_format="html5",
     )
 
     html_body = md.convert(preprocessed)
-    html_body = fix_heading_ids(html_body)
+    id_map = {}
+    html_body = fix_heading_ids(html_body, id_map)
     html_body = transform_mermaid_blocks(html_body)
 
     toc_tokens = getattr(md, "toc_tokens", [])
+    _remap_toc_ids(toc_tokens, id_map)
 
     return {
         "html": html_body,

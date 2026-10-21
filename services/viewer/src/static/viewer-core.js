@@ -152,6 +152,77 @@
     };
   }
 
+  var MINUTE_MS = 60000;
+  var DAY_MS = 24 * 60 * MINUTE_MS;
+
+  // 분은 내림, 시작까지 남은 분만 올림. 시각이 숫자가 아니면 null
+  function meetingStatus(startsAtMs, durationMin, nowMs, cancelled) {
+    if (![startsAtMs, durationMin, nowMs].every(function (n) { return typeof n === 'number' && isFinite(n); })) return null;
+    if (cancelled) return { kind: 'cancelled', label: '취소된 회의' };
+    var endsAtMs = startsAtMs + durationMin * MINUTE_MS;
+    if (nowMs < startsAtMs) {
+      var until = startsAtMs - nowMs;
+      if (until >= DAY_MS) return { kind: 'before', label: '시작 전' };
+      return { kind: 'before', label: '시작 전 · ' + Math.max(1, Math.ceil(until / MINUTE_MS)) + '분 후' };
+    }
+    if (nowMs >= endsAtMs) return { kind: 'after', label: '끝남' };
+    var elapsedMin = Math.floor((nowMs - startsAtMs) / MINUTE_MS);
+    var remainingMin = Math.floor((endsAtMs - nowMs) / MINUTE_MS);
+    return {
+      kind: 'live', label: '진행 중 · ' + elapsedMin + '분 지남 · ' + remainingMin + '분 남음',
+      elapsedMin: elapsedMin, remainingMin: remainingMin,
+    };
+  }
+
+  function presentTimeLabel(status) {
+    if (!status) return '';
+    if (status.kind === 'live') return status.elapsedMin + '분 지남 · ' + status.remainingMin + '분 남음';
+    return status.label;
+  }
+
+  // 제목 id마다 그 제목이 속한 h2 id. 첫 h2 앞 제목과 h1은 null
+  function sectionOwners(headings) {
+    var owners = {};
+    var owner = null;
+    headings.forEach(function (h) {
+      if (h.level <= 1) owner = null;
+      else if (h.level === 2) owner = h.id;
+      owners[h.id] = h.level <= 1 ? null : owner;
+    });
+    return owners;
+  }
+
+  // 본문 최상위 요소마다 장 번호. 첫 요소 뒤에 나오는 H2가 새 장을 연다
+  function buildSlides(tags) {
+    var slide = 0;
+    return tags.map(function (tag, i) {
+      if (tag === 'H2' && i > 0) slide += 1;
+      return slide;
+    });
+  }
+
+  function slideFromHash(hash, total) {
+    var m = /^#slide-(\d+)$/.exec(hash || '');
+    if (!m || total <= 0) return 0;
+    return Math.min(Math.max(parseInt(m[1], 10) - 1, 0), total - 1);
+  }
+
+  // 입력 중이거나 조합키를 누르면 가로채지 않는다. 버튼·링크 위 Space는 그 요소의 기본 동작에 맡긴다
+  function presentKeyAction(key, opts) {
+    if (opts.typing || opts.modKey) return null;
+    if (key === ' ') {
+      if (opts.onControl) return null;
+      return opts.shiftKey ? 'prev' : 'next';
+    }
+    if (key === 'ArrowRight' || key === 'PageDown') return 'next';
+    if (key === 'ArrowLeft' || key === 'PageUp') return 'prev';
+    if (key === 'Home') return 'first';
+    if (key === 'End') return 'last';
+    if (key === 'n' || key === 'N') return 'memo';
+    if (key === 'Escape') return opts.panelOpen ? null : 'exit';
+    return null;
+  }
+
   root.SynctxViewerCore = {
     RECENT_LIMIT: RECENT_LIMIT,
     matchFiles: matchFiles,
@@ -162,5 +233,11 @@
     finderOptions: finderOptions,
     isSearchable: isSearchable,
     createSearchScheduler: createSearchScheduler,
+    meetingStatus: meetingStatus,
+    presentTimeLabel: presentTimeLabel,
+    sectionOwners: sectionOwners,
+    buildSlides: buildSlides,
+    slideFromHash: slideFromHash,
+    presentKeyAction: presentKeyAction,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -477,3 +477,72 @@ class TestRenderDownloadHtml:
         html = render_download_html("본문")
         assert '<article class="markdown-body"><p>' in html
         assert "</p></article>" in html
+
+
+class TestMeetingCard:
+    def test_meeting_doc_shows_card_before_meta(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md").text
+        assert text.index('class="meeting-info"') < text.index('class="doc-meta"')
+        assert "2026-10-08 (목) 14:00–15:00" in text and 'class="agenda"' in text
+
+    def test_card_shown_even_when_meeting_mode_unavailable(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        assert 'class="meeting-info"' in client.get("/test-repo/docs/m.md?ref=feat").text
+
+    def test_plain_doc_has_no_card(self, client, manager):
+        manager.read_file_text.return_value = "# Hello"
+        assert 'class="meeting-info"' not in client.get("/test-repo/docs/a.md").text
+
+
+class TestPresentMode:
+    def test_present_mode_renders_bar_and_meeting_assets(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md?mode=present").text
+        assert 'class="page-doc page-present"' in text and 'data-action="present-next"' in text
+        assert '<article class="markdown-body">' in text
+        assert 'src="/view/static/meeting/meeting.js"' in text and 'data-action="present-memo"' in text
+
+    def test_present_without_meeting_mode_hides_memo(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md?mode=present&ref=feat").text
+        assert 'data-action="present-next"' in text and 'data-action="present-memo"' not in text
+        assert "meeting/meeting.js" not in text
+        assert 'href="/view/test-repo/docs/m.md?ref=feat"' in text
+
+    def test_present_on_plain_doc_shows_notice(self, client, manager):
+        manager.read_file_text.return_value = "# Hello"
+        text = client.get("/test-repo/docs/a.md?mode=present").text
+        assert "발표 화면은 회의 문서에서만 쓸 수 있습니다" in text and "page-present" not in text
+
+    def test_meeting_doc_offers_present_button(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        assert 'href="/view/test-repo/docs/m.md?mode=present">발표하기</a>' in client.get("/test-repo/docs/m.md").text
+
+    def test_present_on_invalid_meeting_shows_validation_reason(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(starts_at="2026-10-08T14:00")
+        text = client.get("/test-repo/docs/m.md?mode=present").text
+        assert "회의 정보에 오류가 있습니다: starts_at에 타임존이 없습니다" in text
+        assert "발표 화면은 회의 문서에서만 쓸 수 있습니다" not in text and "page-present" not in text
+
+    def test_present_has_no_meeting_exit_link(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md?mode=present").text
+        assert "회의 모드 나가기" not in text and "meeting-exit" not in text
+
+    def test_present_button_keeps_non_default_ref(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md?ref=feat").text
+        assert 'href="/view/test-repo/docs/m.md?mode=present&amp;ref=feat"' in text
+
+    def test_present_bar_sits_between_doc_head_and_article(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        text = client.get("/test-repo/docs/m.md?mode=present").text
+        assert text.index('class="doc-head"') < text.index('class="present-top"') < text.index('<article class="markdown-body">')
+
+    def test_present_leaves_mermaid_rendering_to_slides(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=MERMAID_BODY)
+        present = client.get("/test-repo/docs/m.md?mode=present").text
+        assert "mermaid.min.js" in present and "mermaid.initialize(" in present
+        assert "mermaid.run(" not in present
+        assert "mermaid.run();" in client.get("/test-repo/docs/m.md").text

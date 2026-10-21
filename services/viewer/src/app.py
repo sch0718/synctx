@@ -24,6 +24,7 @@ from renderer import NO_TITLE_FALLBACK, render_markdown, rewrite_links, THEME_CS
 
 import embed_view
 import meeting as meeting_mode
+import meeting_card
 import search as search_mod
 import viewer_ui as ui
 
@@ -793,12 +794,14 @@ def _sanitize_html(html_str: str) -> str:
 
 
 def _build_toolbar(repo_id: str, path: str, is_md: bool, front_matter: dict, ref_param: str,
-                   meeting_href: str | None = None) -> str:
+                   meeting_href: str | None = None, present_href: str | None = None) -> str:
     download = f"{VIEW_PREFIX}/api/repos/{repo_id}/download?path={quote(path)}{ref_param}"
     is_marp = is_md and bool(front_matter.get("marp", False)) and _service_enabled("marp")
     buttons = []
     if meeting_href:
         buttons.append(f'<a class="btn btn-primary" href="{html_lib.escape(meeting_href)}">회의 모드로 열기</a>')
+    if present_href:
+        buttons.append(f'<a class="btn" href="{html_lib.escape(present_href)}">발표하기</a>')
     if is_marp:
         preview_class = "btn" if meeting_href else "btn btn-primary"
         buttons.append(f'<button type="button" class="{preview_class}" data-action="marp-preview">슬라이드 미리보기</button>')
@@ -897,35 +900,47 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 
         cdn_base = config.viewer.cdn_base_url.rstrip("/")
 
-        has_mermaid = 'class="mermaid"' in rendered.get("html", "")
-        if has_mermaid:
-            mermaid_scripts = (
-                f'<script src="{cdn_base}/mermaid/10.9.1/mermaid.min.js"></script>\n'
-                f'    <script>mermaid.initialize({{ startOnLoad: false, theme: \'{mermaid_theme}\' }});mermaid.run();</script>'
-            )
-        else:
-            mermaid_scripts = ""
-
         doc_href = f"{VIEW_PREFIX}/{repo_id}/{quote(path)}"
         if is_md:
             meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
         else:
             meeting_ctx = meeting_mode.MeetingContext(False, None, None)
-        meeting_active = mode == "meeting" and meeting_ctx.enabled
-        meeting_head = meeting_body = meeting_notice = meeting_exit = ""
-        meeting_href = None
+        presenting = mode == "present" and meeting_ctx.meeting is not None
+        meeting_active = (mode == "meeting" or presenting) and meeting_ctx.enabled
+        meeting_head = meeting_body = meeting_notice = meeting_exit = present_bar = ""
+        meeting_href = present_href = None
         if meeting_active:
             meeting_cfg = meeting_mode.build_config(
                 repo_id, path, meeting_ctx.meeting, readonly=False,
                 export_url=meeting_mode.export_url(VIEW_PREFIX, repo_id, path),
             )
             meeting_head, meeting_body = meeting_mode.render_assets(VIEW_PREFIX, meeting_cfg)
-            meeting_exit = f'<a class="meeting-exit" href="{html_lib.escape(doc_href + ref_param_first)}">회의 모드 나가기</a>'
+            if not presenting:
+                meeting_exit = f'<a class="meeting-exit" href="{html_lib.escape(doc_href + ref_param_first)}">회의 모드 나가기</a>'
         elif meeting_ctx.enabled:
             meeting_href = f"{doc_href}?mode=meeting"
         elif mode == "meeting":
             meeting_notice = meeting_mode.render_notice(meeting_ctx)
-        toolbar_buttons = _build_toolbar(repo_id, path, is_md, front_matter, ref_param, meeting_href=meeting_href)
+        if presenting:
+            present_bar = ui.render_present_bar(title=meeting_ctx.meeting.title, exit_href=doc_href + ref_param_first,
+                                                memo=meeting_ctx.enabled)
+        elif meeting_ctx.meeting is not None:
+            present_href = f"{doc_href}?mode=present{ref_param}"
+        elif mode == "present":
+            meeting_notice = meeting_mode.render_notice(meeting_ctx if meeting_ctx.reason else
+                meeting_mode.MeetingContext(False, "발표 화면은 회의 문서에서만 쓸 수 있습니다", None))
+        has_mermaid = 'class="mermaid"' in rendered.get("html", "")
+        if has_mermaid:
+            # 발표 화면은 숨긴 장의 그림이 0 크기로 그려지므로 viewer.js가 보이는 장만 그린다
+            mermaid_run = "" if presenting else "mermaid.run();"
+            mermaid_scripts = (
+                f'<script src="{cdn_base}/mermaid/10.9.1/mermaid.min.js"></script>\n'
+                f'    <script>mermaid.initialize({{ startOnLoad: false, theme: \'{mermaid_theme}\' }});{mermaid_run}</script>'
+            )
+        else:
+            mermaid_scripts = ""
+        toolbar_buttons = _build_toolbar(repo_id, path, is_md, front_matter, ref_param,
+                                         meeting_href=meeting_href, present_href=present_href)
 
         title = _document_title(rendered.get("title"), front_matter, path)
         meta = _commit_line(manager, path, effective_ref)
@@ -942,6 +957,9 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         breadcrumb = (f'<a href="{VIEW_PREFIX}/">저장소</a>{sep}'
                       f'<a href="{VIEW_PREFIX}/{repo_id}{html_lib.escape(ref_param_first)}">{html_lib.escape(str(manager.profile.name))}</a>'
                       f'{sep}{_build_path_trail(repo_id, path, ref, sep)}')
+        meeting_card_html = ""
+        if meeting_ctx.meeting is not None:
+            meeting_card_html = ui.render_meeting_card(meeting_card.card_data(meeting_ctx.meeting, rendered.get("toc") or []))
         body = f'''<div class="layout layout-doc">
   <nav id="shell-nav" class="shell-nav" aria-label="파일과 목차">
     {ui.NAV_CLOSE}
@@ -961,11 +979,13 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
   <main id="main" class="viewer-content" tabindex="-1">
     <div class="doc-head">
       <div class="breadcrumb">{breadcrumb}</div>
+      {meeting_card_html}
       {meeting_exit}
       <div class="doc-meta">{meta}</div>
       <div class="doc-actions">{toolbar_buttons}</div>
     </div>
     {meeting_notice}
+    {present_bar}
     <article class="markdown-body">{rendered.get("html", "")}</article>
   </main>
   <aside class="shell-toc" aria-label="이 문서의 목차">
@@ -986,7 +1006,8 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         html = ui.page(
             view_prefix=VIEW_PREFIX, title=title, theme=theme,
             header=_shell_header(repo_id, ref, theme), body=body,
-            repo_id=repo_id, ref=ui_ref, page_class="page-doc", theme_via_query=True, doc_config=doc_config,
+            repo_id=repo_id, ref=ui_ref, page_class="page-doc page-present" if presenting else "page-doc",
+            theme_via_query=True, doc_config=doc_config,
             head_extra=head_extra, body_extra=body_extra,
         )
         return HTMLResponse(content=html)

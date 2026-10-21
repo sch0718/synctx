@@ -280,3 +280,75 @@ test('onResult가 예외를 던져도 처리되지 않은 거절을 남기지 �
   await new Promise((r) => setImmediate(r));
   assert.equal(called, 1);
 }));
+
+const start = Date.parse('2026-10-15T15:00:00+09:00');
+const MIN = 60000;
+
+test('회의 진행 상태를 계산한다', () => {
+  assert.equal(core.meetingStatus(start, 30, start - 10 * MIN, false).label, '시작 전 · 10분 후');
+  assert.equal(core.meetingStatus(start, 30, start - 30 * 1000, false).label, '시작 전 · 1분 후');
+  assert.equal(core.meetingStatus(start, 30, start - 25 * 60 * MIN, false).label, '시작 전');
+  assert.equal(core.meetingStatus(start, 30, start, false).kind, 'live');
+  assert.equal(core.meetingStatus(start, 30, start + 12 * MIN + 30000, false).label, '진행 중 · 12분 지남 · 17분 남음');
+  assert.equal(core.meetingStatus(start, 30, start + 30 * MIN, false).label, '끝남');
+  assert.equal(core.meetingStatus(start, 30, start, true).label, '취소된 회의');
+  assert.equal(core.meetingStatus(NaN, 30, start, false), null);
+});
+
+test('시작 24시간 전 경계', () => {
+  assert.equal(core.meetingStatus(start, 30, start - 24 * 60 * MIN, false).label, '시작 전');
+  assert.equal(core.meetingStatus(start, 30, start - 24 * 60 * MIN + 1, false).label, '시작 전 · 1440분 후');
+});
+
+test('발표 시간 띠 글', () => {
+  assert.equal(core.presentTimeLabel(core.meetingStatus(start, 30, start + 12 * MIN + 30000, false)), '12분 지남 · 17분 남음');
+  assert.equal(core.presentTimeLabel(core.meetingStatus(start, 30, start - 10 * MIN, false)), '시작 전 · 10분 후');
+  assert.equal(core.presentTimeLabel(core.meetingStatus(start, 30, start, true)), '취소된 회의');
+  assert.equal(core.presentTimeLabel(null), '');
+});
+
+test('제목마다 소속 h2를 구한다', () => {
+  const hs = [['t', 1], ['intro', 3], ['a', 2], ['a1', 3], ['a2', 4], ['b', 2], ['b1', 3], ['t2', 1], ['x', 3]]
+    .map(([id, level]) => ({ id, level }));
+  assert.deepEqual(core.sectionOwners(hs), { t: null, intro: null, a: 'a', a1: 'a', a2: 'a', b: 'b', b1: 'b', t2: null, x: null });
+  assert.deepEqual(core.sectionOwners([]), {});
+});
+
+test('h2마다 장을 나눈다', () => {
+  assert.deepEqual(core.buildSlides(['H1', 'P', 'H2', 'P', 'UL', 'H2', 'P']), [0, 0, 1, 1, 1, 2, 2]);
+  assert.deepEqual(core.buildSlides(['H2', 'P', 'H2', 'H2']), [0, 0, 1, 2]);
+  assert.deepEqual(core.buildSlides(['H1', 'P']), [0, 0]);
+  assert.deepEqual(core.buildSlides([]), []);
+});
+
+test('주소의 장 번호를 범위 안으로 맞춘다', () => {
+  assert.equal(core.slideFromHash('#slide-3', 5), 2);
+  assert.equal(core.slideFromHash('#slide-0', 5), 0);
+  assert.equal(core.slideFromHash('#slide-99', 5), 4);
+  assert.equal(core.slideFromHash('#slide-x', 5), 0);
+  assert.equal(core.slideFromHash('', 5), 0);
+  assert.equal(core.slideFromHash('#slide-2', 0), 0);
+});
+
+test('발표 키 동작', () => {
+  const o = (x) => ({ shiftKey: false, modKey: false, typing: false, onControl: false, panelOpen: false, ...x });
+  assert.equal(core.presentKeyAction('ArrowRight', o()), 'next');
+  assert.equal(core.presentKeyAction(' ', o()), 'next');
+  assert.equal(core.presentKeyAction(' ', o({ shiftKey: true })), 'prev');
+  assert.equal(core.presentKeyAction('PageUp', o()), 'prev');
+  assert.equal(core.presentKeyAction('Home', o()), 'first');
+  assert.equal(core.presentKeyAction('End', o()), 'last');
+  assert.equal(core.presentKeyAction('N', o()), 'memo');
+  assert.equal(core.presentKeyAction('Escape', o()), 'exit');
+  assert.equal(core.presentKeyAction('Escape', o({ panelOpen: true })), null);
+  assert.equal(core.presentKeyAction('ArrowRight', o({ typing: true })), null);
+  assert.equal(core.presentKeyAction('Escape', o({ typing: true })), null);
+  assert.equal(core.presentKeyAction('x', o()), null);
+  assert.equal(core.presentKeyAction('n', o({ modKey: true })), null);
+  assert.equal(core.presentKeyAction('Home', o({ modKey: true })), null);
+  assert.equal(core.presentKeyAction('ArrowLeft', o({ modKey: true })), null);
+  assert.equal(core.presentKeyAction('Escape', o({ modKey: true })), null);
+  assert.equal(core.presentKeyAction(' ', o({ onControl: true })), null);
+  assert.equal(core.presentKeyAction(' ', o({ onControl: true, shiftKey: true })), null);
+  assert.equal(core.presentKeyAction('ArrowRight', o({ onControl: true })), 'next');
+});

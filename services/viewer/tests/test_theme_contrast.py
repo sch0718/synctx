@@ -122,3 +122,12 @@ def test_mark_text_meets_aa_on_its_background():
 def test_mark_is_visible_without_relying_on_background_alone():
     rule = _css_rule(MARK_SELECTOR)
     assert _decl(rule, "font-weight") and "var(--primary)" in (_decl(rule, "box-shadow") or "")
+
+
+@pytest.mark.parametrize("theme", _themes())
+@pytest.mark.parametrize("selector", [".present-top", ".present-nav"])
+def test_present_bands_meet_aa(theme, selector):
+    rule = _css_rule(selector)
+    values = theme_vars(theme)
+    color, background = _resolve(_decl(rule, "color"), values), _resolve(_decl(rule, "background"), values)
+    assert contrast(rgb(color)[0], rgb(background)[0]) >= 4.5

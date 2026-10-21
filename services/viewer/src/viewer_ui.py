@@ -293,3 +293,41 @@ def render_search_page(*, view_prefix: str, query: str, raw_query: str, repos: S
                                            ref=ref if ref and group["id"] == active_repo else None))
     parts.append("</main>")
     return "".join(parts)
+
+
+def render_meeting_card(data: dict) -> str:
+    rows = [("일시", data["time_label"])]
+    if data["presenters"]:
+        rows.append(("발표자", ", ".join(data["presenters"])))
+    if data["channel"]:
+        rows.append(("채널", data["channel"]))
+    facts = "".join(f"<div><dt>{label}</dt><dd>{esc(value)}</dd></div>" for label, value in rows)
+    status = "취소된 회의" if data["cancelled"] else ""
+    agenda = ""
+    if data["agenda"]:
+        items = "".join(f'<li><a href="#{esc(anchor)}">{esc(name)}</a></li>' for anchor, name in data["agenda"])
+        agenda = f'<nav class="agenda" aria-label="안건"><ol>{items}</ol></nav>'
+    return (f'<section class="meeting-info" aria-label="회의 정보" data-starts-at="{esc(data["starts_at_iso"])}" '
+            f'data-duration="{esc(data["duration_minutes"])}" data-cancelled="{"true" if data["cancelled"] else "false"}">'
+            f'<h2 class="meeting-info-title">{esc(data["title"])}</h2>'
+            f'<dl class="meeting-info-facts">{facts}</dl>'
+            f'<p class="meeting-info-status" role="status" aria-live="polite">{status}</p>'
+            f'{agenda}</section>')
+
+
+def render_present_bar(*, title: str, exit_href: str, memo: bool) -> str:
+    memo_button = ('<button type="button" class="btn" data-action="present-memo" aria-keyshortcuts="N">'
+                   '메모 보기(N)</button>') if memo else ""
+    return (f'<header class="present-top"><span class="present-title">{esc(title)}</span>'
+            f'<span class="present-time" data-present-time></span></header>'
+            '<nav class="present-nav" aria-label="발표 이동">'
+            '<div class="present-progress" role="progressbar" aria-label="발표 진행" aria-valuemin="1" aria-valuemax aria-valuenow>'
+            '<span class="present-progress-bar"></span></div>'
+            '<button type="button" class="btn" data-action="present-prev" aria-keyshortcuts="ArrowLeft PageUp">이전(←)</button>'
+            '<span class="present-count"></span>'
+            '<button type="button" class="btn" data-action="present-next" aria-keyshortcuts="ArrowRight PageDown Space">다음(→)</button>'
+            f'{memo_button}'
+            f'<a class="btn" href="{esc(exit_href)}" data-present-exit aria-keyshortcuts="Escape">발표 끝내기(Esc)</a>'
+            '</nav>'
+            '<p class="present-empty" hidden>발표할 내용이 없습니다</p>'
+            '<div class="visually-hidden" aria-live="polite" data-present-live></div>')

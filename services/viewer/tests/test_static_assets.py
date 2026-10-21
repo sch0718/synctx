@@ -1,5 +1,6 @@
 """정적 자산 제공과 필수 동작 함수 존재 확인."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -161,3 +162,66 @@ def test_finder_uses_search_scheduler():
     finder = (STATIC / "viewer.js").read_text(encoding="utf-8").split("function initFinder(")[1].split("function focusFinder")[0]
     assert "core.createSearchScheduler(" in finder and "core.finderOptions(" in finder
     assert "'/api/search?q='" in finder
+
+
+def test_meeting_card_status_and_agenda_tracking():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert "core.meetingStatus(" in js
+    spy = js.split("function initTocSpy(")[1].split("\n  }\n")[0]
+    assert ".agenda a[href^=" in spy and "core.sectionOwners(" in spy
+
+
+def test_present_mode_hides_without_moving_nodes():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    present = js.split("function initPresent(")[1].split("\n  }\n")[0]
+    assert "core.buildSlides(" in present and "core.presentKeyAction(" in present
+    assert ".hidden = " in present and "appendChild" not in present and "insertBefore" not in present
+    assert "history.replaceState" in present
+    assert "core.presentTimeLabel(" in present
+    assert "MutationObserver" in present and "meeting-hl--flash" in present and "data-memo-id" in present
+    assert "present-empty" in present
+    assert re.search(r"window\.addEventListener\('keydown',[\s\S]*?,\s*true\)", present)
+    assert "querySelector('.meeting-toggle')" in present or 'querySelector(".meeting-toggle")' in present
+
+
+def test_present_keeps_author_hidden_blocks_hidden():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    present = js.split("function initPresent(")[1].split("\n  }\n")[0]
+    blocks = present.split("var blocks = ")[1].split(";\n")[0]
+    assert "!el.hidden" in blocks
+
+
+def test_present_renders_mermaid_per_slide():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    present = js.split("function initPresent(")[1].split("\n  }\n")[0]
+    assert "window.mermaid.run({ nodes:" in present and "data-processed" in present
+    assert "if (!window.mermaid) return;" in present
+    assert "DOMContentLoaded" in present
+
+
+def test_present_follows_hash_changes():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    present = js.split("function initPresent(")[1].split("\n  }\n")[0]
+    assert "window.addEventListener('hashchange'" in present
+    assert "decodeURIComponent(" in present and "scrollIntoView(" in present
+
+
+def test_meeting_status_writes_only_changed_text():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    status = js.split("function initMeetingStatus(")[1].split("\n  }\n")[0]
+    assert "label.textContent !== status.label" in status
+    present = js.split("function initPresent(")[1].split("\n  }\n")[0]
+    assert "time.textContent !== text" in present
+
+
+def test_shell_shortcuts_stop_in_present_mode():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    handler = js.split("else if (e.key === 't'")[0].rsplit("document.addEventListener('keydown'", 1)[1]
+    assert "page-present" in handler
+
+
+def test_present_css_hides_slides_and_uses_one_column():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    assert re.search(r"\.page-present [^{]*\[hidden\][^{]*\{[^}]*display:\s*none\s*!important", css)
+    assert re.search(r"\.page-present \.layout-doc[^{]*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)", css)
+    assert ".page-present .meeting-card" not in css

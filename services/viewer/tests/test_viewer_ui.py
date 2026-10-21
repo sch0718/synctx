@@ -201,3 +201,37 @@ def test_header_and_shortcuts_say_document_search():
     assert 'aria-label="검색 결과"' in header and "파일 찾기" not in header
     page = ui.page(view_prefix="/view", title="t", theme="github-light", header="", body="")
     assert "<dd>문서 검색</dd>" in page
+
+
+def test_meeting_card_escapes_once():
+    data = {"title": '<b>"회의"</b> & 정리', "time_label": "2026-10-15 (목) 15:00–15:30",
+            "starts_at_iso": "2026-10-15T15:00:00+09:00", "duration_minutes": 30,
+            "presenters": ["<i>리드</i>"], "channel": "dx&ops", "cancelled": False,
+            "agenda": [("a", "A & <B>")]}
+    html = ui.render_meeting_card(data)
+    assert "<b>" not in html and "<i>" not in html
+    assert "&lt;b&gt;&quot;회의&quot;&lt;/b&gt; &amp; 정리" in html
+    assert "&amp;amp;" not in html
+    assert 'href="#a">A &amp; &lt;B&gt;</a>' in html
+    assert 'data-starts-at="2026-10-15T15:00:00+09:00"' in html and 'data-duration="30"' in html
+
+
+def test_meeting_card_omits_empty_rows_and_marks_cancelled():
+    data = {"title": "회의", "time_label": "t", "starts_at_iso": "x", "duration_minutes": 60,
+            "presenters": [], "channel": "dx", "cancelled": True, "agenda": []}
+    html = ui.render_meeting_card(data)
+    assert "발표자" not in html and 'class="agenda"' not in html
+    assert "취소된 회의" in html and 'data-cancelled="true"' in html
+
+
+def test_present_bar_controls_and_escaping():
+    html = ui.render_present_bar(title='<b>회의</b>', exit_href="/view/r/m.md?ref=a&b", memo=True)
+    assert "<b>" not in html and "&lt;b&gt;회의&lt;/b&gt;" in html
+    assert 'href="/view/r/m.md?ref=a&amp;b"' in html
+    for action in ("present-prev", "present-next", "present-memo"):
+        assert f'data-action="{action}"' in html
+    assert 'role="progressbar"' in html and "data-present-live" in html
+    for label in ("이전(←)", "다음(→)", "메모 보기(N)", "발표 끝내기(Esc)"):
+        assert label in html
+    assert '<p class="present-empty" hidden>발표할 내용이 없습니다</p>' in html
+    assert 'data-action="present-memo"' not in ui.render_present_bar(title="t", exit_href="/x", memo=False)
