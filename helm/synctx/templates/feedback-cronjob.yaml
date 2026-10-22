@@ -29,6 +29,10 @@ spec:
               imagePullPolicy: {{ .Values.feedback.image.pullPolicy | default "IfNotPresent" }}
               command: ["synctx-feedback"]
               env:
+                {{- if include "synctx.feedbackMetricsPush" . }}
+                - name: SYNCTX_PUSHGATEWAY_URL
+                  value: "http://{{ include "synctx.fullname" . }}-pushgateway:9091"
+                {{- end }}
                 - name: OUTBOUND_FEEDBACK_HMAC_KEY
                   valueFrom:
                     secretKeyRef:

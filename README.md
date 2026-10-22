@@ -67,7 +67,7 @@ flowchart TB
         Slides["Slides Server"]
         SyncWebhook["Sync Webhook<br>Receiver"]
         Sync["Sync Engine<br>(CronJob)"]
-        Pushgateway["Pushgateway<br>(Sync 메트릭)"]
+        Pushgateway["Pushgateway<br>(CronJob 메트릭)"]
         Prometheus[("Prometheus")]
         Feedback["Outbound Feedback<br>Exporter (optional)"]
         MailGateway[("Approved<br>Mail Gateway")]
@@ -103,6 +103,7 @@ flowchart TB
 
         OP -. "허용 필드 변경" .-> Feedback
         Feedback -. "redacted + signed email" .-> MailGateway
+        Feedback -. "누적 메트릭 push" .-> Pushgateway
     end
 
     MailGateway -. "mail" .-> ExternalInbox
@@ -389,11 +390,13 @@ synctx/
 │   │   │   ├── redactor.py            # allowlist/redaction
 │   │   │   ├── signer.py              # HMAC 서명 + key rotation
 │   │   │   ├── mailer.py              # approved SMTP 발송
-│   │   │   └── event_store.py         # event_id 중복 방지와 재전송 상태
+│   │   │   ├── event_store.py         # event_id 중복 방지와 재전송 상태
+│   │   │   └── feedback_metrics.py    # Feedback 메트릭 누적 보존 + Pushgateway push
 │   │   └── tests/                     # 단위 테스트
 │   │       ├── test_signer.py
 │   │       ├── test_redactor.py
-│   │       └── test_event_store.py
+│   │       ├── test_event_store.py
+│   │       └── test_feedback_metrics.py
 │   │
 │   ├── drawio/                        # Draw.io Service (외부 이미지)
 │   │
@@ -416,6 +419,7 @@ synctx/
 │           ├── auth.py                # 공통 인증 헬퍼
 │           ├── frontmatter.py         # Front matter 파서 + 검증
 │           ├── observability.py       # healthz/readyz/version/metrics
+│           ├── metrics_push.py        # CronJob 메트릭 실행 간 누적 + Pushgateway push (Sync·Feedback 공용)
 │           ├── harness.py             # Harness Validator 로직
 │           └── cli.py                 # CLI 엔트리포인트
 │
@@ -449,7 +453,7 @@ synctx/
 │           ├── slides-configmap.yaml
 │           ├── slides-pvc.yaml
 │           ├── servicemonitor.yaml
-│           ├── pushgateway.yaml       # Sync 메트릭용 Pushgateway + ServiceMonitor
+│           ├── pushgateway.yaml       # Sync·Feedback 메트릭용 Pushgateway + ServiceMonitor
 │           └── prometheusrule.yaml
 │
 ├── deploy/
@@ -517,7 +521,7 @@ workspace/
 | 컨테이너 | Docker |
 | 오케스트레이션 | Kubernetes + Helm Chart |
 | 동기화 실행 | K8s CronJob / GitLab CI pipeline |
-| 관측성 | Prometheus (ServiceMonitor·PrometheusRule), Sync CronJob 메트릭은 Pushgateway |
+| 관측성 | Prometheus (ServiceMonitor·PrometheusRule), Sync·Feedback CronJob 메트릭은 Pushgateway |
 
 ## 기존 자산 활용
 

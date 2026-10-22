@@ -7,6 +7,7 @@ import pytest
 import metrics_push
 import sync_engine
 from metrics_push import RepoMetrics, push_totals
+from synctx_common import metrics_push as cumulative
 from synctx_common.observability import (
     sync_failures_total,
     sync_items_total,
@@ -19,7 +20,7 @@ from test_embed_sync import FakeLock, engine, locked_with, profile, repo  # noqa
 @pytest.fixture(autouse=True)
 def immediate_baseline(monkeypatch):
     # 기준값 수집 대기는 test_deferred_increase_waits_until_baseline_could_be_scraped에서 따로 본다
-    monkeypatch.setattr(metrics_push, "BASELINE_SCRAPE_GRACE_SECONDS", 0)
+    monkeypatch.setattr(cumulative, "BASELINE_SCRAPE_GRACE_SECONDS", 0)
 
 
 def totals_by_name(totals, name, **labels):
@@ -302,9 +303,9 @@ def test_metrics_file_does_not_collide_with_other_repo_state(tmp_path):
 
 def test_deferred_increase_waits_until_baseline_could_be_scraped(tmp_path, monkeypatch):
     auth = ("synctx_sync_failures_total", (("error_type", "auth_error"), ("repo_id", "m12"), ("target", "xwiki")))
-    monkeypatch.setattr(metrics_push, "BASELINE_SCRAPE_GRACE_SECONDS", 60)
+    monkeypatch.setattr(cumulative, "BASELINE_SCRAPE_GRACE_SECONDS", 60)
     now = [1000.0]
-    monkeypatch.setattr(metrics_push.time, "time", lambda: now[0])
+    monkeypatch.setattr(cumulative.time, "time", lambda: now[0])
     first = RepoMetrics(str(tmp_path), "m12")
     sync_failures_total.labels(repo_id="m12", target="xwiki", error_type="auth_error").inc()
     first.commit()

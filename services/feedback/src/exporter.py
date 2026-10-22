@@ -6,7 +6,14 @@ import logging
 from typing import Dict, Any
 
 from synctx_common.config import SynctxConfig
+from synctx_common.observability import (
+    feedback_events_total,
+    feedback_last_success_timestamp,
+    feedback_mail_failures_total,
+    feedback_redacted_fields_total,
+)
 from event_store import EventStore
+from feedback_metrics import FeedbackMetrics
 from mailer import send_feedback_email
 from redactor import redact_work_package
 from signer import FeedbackSigner
@@ -55,6 +62,13 @@ class FeedbackExporter:
             logger.info("Outbound feedback is disabled.")
             return
 
+        metrics = FeedbackMetrics(os.path.dirname(self.state_file))
+        try:
+            await self._export()
+        finally:
+            metrics.publish()
+
+    async def _export(self):
         last_ts = self._get_last_timestamp()
         current_ts = datetime.now(timezone.utc).isoformat()
         
@@ -87,14 +101,24 @@ class FeedbackExporter:
         failure_count = 0
         skipped_count = 0
         for wp in updated_wps:
-            payload = self._redact_and_format(wp)
+            try:
+                payload = self._redact_and_format(wp)
+            except Exception as e:
+                # 걸러지지 않은 내용이 나가지 않게 그 WP는 보내지 않고, 다음 실행에서 다시 본다
+                feedback_events_total.labels(result="redaction_error").inc()
+                failure_count += 1
+                logger.error(f"Failed to redact WP {wp.get('id')}: {e}")
+                continue
             if not payload:
+                feedback_events_total.labels(result="skipped").inc()
                 skipped_count += 1
                 continue
                 
             if self.event_store.has_event(payload["event_id"]):
+                feedback_events_total.labels(result="skipped").inc()
                 skipped_count += 1
                 continue
+            feedback_redacted_fields_total.inc(len(payload["ignored_fields"]))
             signature = self.signer.sign(payload)
             final_message = {
                 "payload": payload,
@@ -106,15 +130,20 @@ class FeedbackExporter:
             
             try:
                 send_feedback_email(self.fb_config.outbound_mail, subject, body)
-                self.event_store.record(payload["event_id"], payload, final_message, "sent")
-                success_count += 1
             except Exception as e:
                 self.event_store.record(payload["event_id"], payload, final_message, "failed")
+                feedback_mail_failures_total.inc()
+                feedback_events_total.labels(result="mail_error").inc()
                 failure_count += 1
                 logger.error(f"Failed to process WP {wp['id']}: {e}")
+                continue
+            self.event_store.record(payload["event_id"], payload, final_message, "sent")
+            feedback_events_total.labels(result="sent").inc()
+            success_count += 1
                 
         if failure_count == 0:
             self._update_last_timestamp(current_ts)
+            feedback_last_success_timestamp.set_to_current_time()
         else:
             logger.warning("Feedback export had failures; timestamp state was not advanced.")
         logger.info(

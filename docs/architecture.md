@@ -30,7 +30,7 @@ flowchart TB
     Slides["Slides Server"]
     SyncWebhook["Sync Webhook<br>Receiver"]
     Sync["Sync Engine<br>(CronJob)"]
-    Pushgateway["Pushgateway<br>(Sync 메트릭)"]
+    Pushgateway["Pushgateway<br>(CronJob 메트릭)"]
     Prometheus[("Prometheus")]
     Feedback["Outbound Feedback<br>Exporter (optional)"]
     MailGateway[("Approved<br>Mail Gateway")]
@@ -69,6 +69,7 @@ flowchart TB
 
     OP -. "허용 필드 변경" .-> Feedback
     Feedback -. "redacted + signed email" .-> MailGateway
+    Feedback -. "누적 메트릭 push" .-> Pushgateway
     MailGateway -. "mail" .-> ExternalInbox
     ExternalInbox -. "PR 생성" .-> PR
     PR -. "review + merge" .-> ExternalGit
@@ -109,6 +110,7 @@ flowchart TB
 - 내부 Exporter는 redaction과 HMAC 서명을 적용한 JSON payload를 전용 외부 메일 계정으로 전송한다.
 - 외부 Importer는 서명과 중복 이벤트를 검증한 뒤 Markdown 변경 PR만 생성한다. main branch 직접 push는 금지한다.
 - PR merge 후 기존 외부→내부 Git 동기화가 다시 OpenProject에 반영되므로 최종 source of truth는 여전히 Git/Markdown이다.
+- Exporter도 실행마다 새로 뜨는 CronJob이라 메트릭 누적값을 sync-state의 `feedback_metrics.json`에 두고 실행이 끝날 때 Pushgateway로 push한다(Sync와 같은 `synctx_common.metrics_push` 사용, 상세: production-service-design.md 9.2).
 
 ### 2.3 Git diff 기반 증분 동기화
 
@@ -802,6 +804,7 @@ synctx-common/
 ├── auth.py            # 인증 헬퍼 (credential_env → header 변환)
 ├── frontmatter.py     # YAML front matter 파서 및 Pydantic 검증
 ├── observability.py   # healthz/readyz/version/metrics 공통 라우트
+├── metrics_push.py    # CronJob 메트릭 실행 간 누적(0 기준값·보류분) + Pushgateway push (Sync·Feedback 공용)
 ├── harness.py         # Harness Validator 로직 (context schema, agent-readiness)
 └── cli.py             # CLI 엔트리포인트 (validate-harness)
 ```
@@ -865,7 +868,7 @@ sync/src/
 ├── state.py            # state.json atomic read/write
 ├── embed_sync.py       # synctx-html 분석·합본 반영 해시·XWiki 매크로 변환
 ├── lease.py            # 실행 잠금 (O_CREAT|O_EXCL 기반)
-├── metrics_push.py     # 저장소별 메트릭 누적 보존 + Pushgateway push
+├── metrics_push.py     # 저장소별 메트릭 누적 보존 + Pushgateway push (synctx_common.metrics_push 사용)
 ├── sync_converters/
 │   └── mermaid.py      # Mermaid → SVG 변환
 └── targets/
@@ -883,7 +886,8 @@ feedback/src/
 ├── redactor.py         # allowlist 필드 추출 및 금지 필드 제거
 ├── signer.py           # HMAC 서명과 key_id 처리
 ├── mailer.py           # approved SMTP relay 발송
-└── event_store.py      # event_id 중복 방지와 재전송 상태
+├── event_store.py      # event_id 중복 방지와 재전송 상태
+└── feedback_metrics.py # Feedback 메트릭 누적 보존 + Pushgateway push (synctx_common.metrics_push 사용)
 ```
 
 ## 10. Helm Chart 설계
@@ -928,7 +932,7 @@ helm/synctx/
     │
     ├── ingress.yaml                # 통합 Ingress
     ├── servicemonitor.yaml         # Prometheus ServiceMonitor
-    ├── pushgateway.yaml            # Sync 메트릭용 Pushgateway + ServiceMonitor (metrics.enabled·sync)
+    ├── pushgateway.yaml            # Sync·Feedback 메트릭용 Pushgateway + ServiceMonitor (metrics.enabled·sync.persistence·sync 또는 feedback)
     └── prometheusrule.yaml         # Prometheus Alert Rule
 ```
 
@@ -974,7 +978,7 @@ marp:
     limits: { cpu: 1000m, memory: 1Gi }  # Chromium 사용으로 리소스 다소 필요
 
 metrics:
-  enabled: true                     # ServiceMonitor·PrometheusRule, Sync와 sync.persistence가 켜졌으면 Pushgateway
+  enabled: true                     # ServiceMonitor·PrometheusRule, sync.persistence와 Sync 또는 Feedback이 켜졌으면 Pushgateway
   pushgateway:
     image:
       repository: prom/pushgateway
@@ -1276,6 +1280,7 @@ flowchart LR
 2. 내부 Exporter: 변경 감지, redaction, HMAC 서명, 메일 발송 구현
 3. 외부 Importer: 메일 수신, 서명 검증, replay 방지, Markdown 변경 PR 생성 구현
 4. PR 리뷰와 merge 후 기존 외부→내부 동기화로 재반영되는 폐루프 검증
+5. Exporter 메트릭을 Pushgateway로 수집해 메일 발송 실패·redaction 실패 Alert 평가
 
 ### Phase 8: 협업 통합 (회의 모드 · Jitsi · 메신저)
 

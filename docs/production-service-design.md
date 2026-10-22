@@ -954,7 +954,7 @@ Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전
 | jgraph/drawio | 검증 완료한 명시 버전 |
 | nginx | 검증 완료한 명시 버전 |
 | alpine/git | 검증 완료한 명시 버전 (Docker Compose Slides sidecar) |
-| prom/pushgateway | 검증 완료한 명시 버전 (`v1.11.1`, Sync 메트릭 수집) |
+| prom/pushgateway | 검증 완료한 명시 버전 (`v1.11.1`, Sync·Feedback 메트릭 수집) |
 
 `npm install -g @marp-team/marp-cli`는 빌드 시 버전을 고정한다.
 외부에서 다운로드한 모든 JS/CSS/font/image tarball은 SHA-256 manifest에 기록한다.
@@ -1156,10 +1156,10 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `synctx_sync_failures_total`
 - `synctx_sync_last_success_timestamp`
 - `synctx_cdn_bytes_served_total`
-- `synctx_feedback_events_total`
-- `synctx_feedback_redacted_fields_total`
+- `synctx_feedback_events_total` (`result`: `sent`, `skipped`(외부 키 없음·이미 보낸 이벤트), `mail_error`, `redaction_error`)
+- `synctx_feedback_redacted_fields_total` (반출 이벤트에서 뺀 필드 수, 이벤트의 `ignored_fields` 개수 합)
 - `synctx_feedback_mail_failures_total`
-- `synctx_feedback_last_success_timestamp`
+- `synctx_feedback_last_success_timestamp` (실패 없이 끝난 실행의 시각)
 - `synctx_html_bundle_total` (synctx-html 블록 처리 결과. `result`: `ok`, `disabled`, `missing_file`, `outside_repo`, `disallowed_host`, `too_large`, `invalid_block`, `unsupported`)
 
 수집 경로:
@@ -1168,6 +1168,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 |------|------|
 | Viewer·CDN·Marp | `synctx/metrics: "true"` 라벨이 붙은 Service의 `/metrics`를 ServiceMonitor(`synctx`)가 수집한다 |
 | Sync Engine (CronJob) | 실행이 끝나면 저장소별 누적값을 Pushgateway(`synctx-pushgateway:9091`)에 push하고, ServiceMonitor(`synctx-pushgateway`, `honorLabels: true`)가 수집한다 |
+| Outbound Feedback Exporter (CronJob) | 실행이 끝나면 누적값을 같은 Pushgateway에 `job="synctx-feedback"` 그룹으로 push한다 |
 
 Sync CronJob은 실행마다 새 프로세스라 카운터가 0에서 시작한다. 그래서 다음처럼 누적값을 넘긴다.
 
@@ -1178,8 +1179,17 @@ Sync CronJob은 실행마다 새 프로세스라 카운터가 0에서 시작한�
 - 한 번도 성공하지 못한 저장소는 감시를 시작한 실행의 시각을 `synctx_sync_last_success_timestamp`의 기준값으로 둔다. 첫 실행부터 계속 실패해도 30분 뒤 `SynctxSyncNoSuccess`가 울린다.
 - 저장소가 이미 최신이거나 바뀐 파일이 없는 실행도 성공으로 보고 `synctx_sync_last_success_timestamp`를 갱신한다.
 - `--repo` 없이 전체 저장소를 도는 실행(dry-run 제외)은 끝에 `.synctx.yaml`에 없는 `repo_id`의 그룹을 Pushgateway에서 지운다. 저장소를 빼거나 id를 바꾼 뒤 남은 그룹의 마지막 성공 시각이 멈춰 `SynctxSyncNoSuccess`가 계속 울리지 않게 하기 위해서다. 메트릭 파일은 지우지 않는다(다시 넣으면 누적값이 이어진다).
-- Pushgateway는 `metrics.enabled`이고 `sync`가 켜졌고 `sync.persistence.enabled`일 때만 배포한다. 누적값을 sync-state PVC에 두므로 PVC가 없으면 Sync 메트릭을 보내지 않고 Helm NOTES로 경고한다. Sync에는 `SYNCTX_PUSHGATEWAY_URL`이 들어가고, Sync NetworkPolicy가 Pushgateway Pod의 9091 포트로 나가는 것을 허용한다. 이 환경변수가 없으면 누적값만 저장하고 push하지 않는다.
-- Outbound Feedback CronJob 메트릭은 아직 이 경로로 보내지 않는다.
+- Sync 메트릭은 `metrics.enabled`이고 `sync`가 켜졌고 `sync.persistence.enabled`일 때만 Pushgateway로 보낸다. 누적값을 sync-state PVC에 두므로 PVC가 없으면 Sync 메트릭을 보내지 않고 Helm NOTES로 경고한다. Sync에는 `SYNCTX_PUSHGATEWAY_URL`이 들어가고, Sync NetworkPolicy가 Pushgateway Pod의 9091 포트로 나가는 것을 허용한다. 이 환경변수가 없으면 누적값만 저장하고 push하지 않는다.
+
+Outbound Feedback CronJob도 실행마다 새 프로세스이므로 같은 방식(`synctx_common.metrics_push`)을 쓴다. Sync와 다른 점은 다음과 같다.
+
+- 누적값은 Feedback이 이미 쓰는 sync-state PVC의 `feedback_metrics.json`에 둔다(`feedback_state.json`·`feedback_events.json` 옆). Sync의 `metrics/{repo_id}.json`과 겹치지 않는다.
+- 저장소 구분이 없으므로 push 그룹은 `job="synctx-feedback"` 하나다. CronJob이 `concurrencyPolicy: Forbid`이고 Webhook 같은 다른 실행 경로가 없어 Lease 없이 저장·push한다. Sync의 저장소 그룹 정리(`job="synctx-sync"`만 대상)는 이 그룹을 지우지 않는다.
+- 0 기준값을 먼저 보내는 계열은 `synctx_feedback_events_total`의 네 `result`, `synctx_feedback_mail_failures_total`, `synctx_feedback_redacted_fields_total`이다. 첫 실행의 실패는 Sync와 마찬가지로 기준값 push가 수집된 뒤의 실행(기본 5분 뒤)에 Alert로 잡힌다.
+- `synctx_feedback_last_success_timestamp`는 실패가 없는 실행만 갱신하고, 한 번도 성공하지 않았으면 내보내지 않는다(이 값을 보는 Alert가 없다).
+- redaction 중 예외가 난 Work Package는 `result="redaction_error"`로 세고 메일을 보내지 않으며 event store에도 남기지 않는다. 실패로 보므로 마지막 처리 시각을 진행하지 않아 다음 실행에서 다시 본다. 다른 Work Package는 계속 처리한다.
+- push 실패는 로그(`Failed to push feedback metrics`)만 남기고 반출 결과에 영향을 주지 않는다. `outbound_feedback.enabled: false`인 실행은 저장·push하지 않는다.
+- Feedback에는 `metrics.enabled`, `feedback.enabled`, `sync.persistence.enabled`일 때 `SYNCTX_PUSHGATEWAY_URL`이 들어간다. Pushgateway는 Sync와 Feedback 중 하나라도 push하면 배포한다. Feedback에는 NetworkPolicy가 없어 9091 egress를 따로 열지 않는다.
 
 ### 9.3 Alert
 
@@ -1196,7 +1206,7 @@ Sync CronJob은 실행마다 새 프로세스라 카운터가 0에서 시작한�
 - readiness failure 5분 지속
 - synctx-html 합본이 허용되지 않은 외부 주소 또는 크기 초과로 거부됨 (`SynctxHtmlBundleRejected`, 저장소별 1시간 안에 1건 이상, warning)
 
-Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)는 Pushgateway로 수집한 시계열로 평가한다. `scripts/tests/test_prometheus_rules.py`가 Helm이 렌더한 PrometheusRule을 `promtool test rules`로 평가한다(`scripts/tests/prometheus/*.test.yaml`). promtool이 없으면 `PROMTOOL` 환경변수로 컨테이너 명령을 준다.
+Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound Feedback Alert(메일 발송 실패, redaction 실패)는 Pushgateway로 수집한 시계열로 평가한다. `scripts/tests/test_prometheus_rules.py`가 Helm이 렌더한 PrometheusRule을 `promtool test rules`로 평가한다(`scripts/tests/prometheus/*.test.yaml`). promtool이 없으면 `PROMTOOL` 환경변수로 컨테이너 명령을 준다.
 
 ## 10. 테스트 전략
 
@@ -1215,7 +1225,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)는 Pushgatewa
 | Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
 | Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·`synctx-html` 블록 한 줄 안내·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
-| Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync fake Pushgateway | Sync Alert 발생·미발생 시점, 실행 간 누적값, push 그룹 |
+| Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync·Feedback fake Pushgateway | Sync·Feedback Alert 발생·미발생 시점, 실행 간 누적값, 0 기준값, push 그룹 |
 
 ### 10.2 운영 전 수용 기준
 
@@ -1382,6 +1392,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)는 Pushgatewa
 - [x] Markdown front matter 변경 PR 생성 구현
 - [x] conflict label과 수동 리뷰 흐름 구현
 - [x] 감사 로그와 운영 runbook 작성
+- [x] Exporter 메트릭 계측과 Pushgateway 수집, 메일 발송 실패·redaction 실패 Alert promtool 규칙 테스트 (9.2, 9.3)
 
 완료 기준:
 
@@ -1492,9 +1503,9 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)는 Pushgatewa
 
 ### 12.5 Outbound Feedback 장애
 
-1. `synctx_feedback_last_success_timestamp`와 `synctx_feedback_mail_failures_total` 확인
+1. `synctx_feedback_last_success_timestamp`와 `synctx_feedback_mail_failures_total` 확인. 값이 없거나 멈췄으면 Pushgateway의 `push_time_seconds{job="synctx-feedback"}`가 최근인지, Feedback 로그에 `Failed to push feedback metrics` 줄이 있는지 본다
 2. SMTP 실패면 approved mail gateway 접속, 계정 잠금, `OUTBOUND_SMTP_CREDENTIAL` 만료 여부 확인
-3. redaction failure면 실패 event의 `ignored_fields`와 allowlist 설정을 확인하고, 본문/댓글/첨부가 payload에 포함되지 않았는지 검증
+3. redaction failure면 Feedback 로그의 `Failed to redact WP` 줄로 Work Package와 오류를 찾고 allowlist 설정을 확인한다. 그 Work Package는 발송·기록하지 않고 다음 실행에서 다시 보므로, 고칠 때까지 Alert가 이어진다. 본문/댓글/첨부가 payload에 포함되지 않았는지 dry-run으로 검증
 4. HMAC 검증 실패가 외부 Importer에서 발생하면 `key_id`, active/previous key 배포 상태, key rotation overlap이 `replay_window_minutes` 이상인지 확인
 5. replay reject가 증가하면 중복 메일 발송 또는 Importer event store 손상 여부 확인
 6. `changed_by`가 평문 또는 단순 SHA-256으로 기록되면 즉시 발송을 중단하고 `OUTBOUND_FEEDBACK_HASH_SALT` 설정과 redaction 테스트를 재검증

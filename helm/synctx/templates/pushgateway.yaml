@@ -1,5 +1,5 @@
-{{- if include "synctx.syncMetricsPush" . }}
-# Sync CronJob은 실행 후 바로 끝나므로 누적 메트릭을 여기에 push하고 Prometheus가 수집한다.
+{{- if include "synctx.pushgateway" . }}
+# Sync·Feedback CronJob은 실행 후 바로 끝나므로 누적 메트릭을 여기에 push하고 Prometheus가 수집한다.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

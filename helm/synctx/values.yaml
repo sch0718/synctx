@@ -5,7 +5,7 @@ podSecurityContext:
 
 metrics:
   enabled: true
-  # Sync CronJob 메트릭을 받아 두는 Pushgateway. metrics.enabled이고 sync가 켜졌을 때만 배포한다.
+  # Sync·Feedback CronJob 메트릭을 받아 두는 Pushgateway. metrics.enabled이고 sync.persistence가 켜졌고 sync 또는 feedback이 켜졌을 때만 배포한다.
   pushgateway:
     image:
       repository: prom/pushgateway

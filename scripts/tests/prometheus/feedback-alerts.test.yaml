@@ -1,0 +1,71 @@
+# Outbound Feedback Alert 규칙 단위 테스트. test_prometheus_rules.py가 렌더한 PrometheusRule을 rules.yaml로 두고 promtool로 돌린다.
+# 시계열은 Feedback CronJob이 Pushgateway에 push하고 Prometheus가 honorLabels로 수집한 모양이다.
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # 30분 안에 메일 발송이 세 번 실패하면 울린다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_feedback_mail_failures_total{job="synctx-feedback"}'
+        values: '0x4 1x5 2x5 3x30'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: SynctxFeedbackMailFailure
+        exp_alerts: []
+      - eval_time: 19m
+        alertname: SynctxFeedbackMailFailure
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: synctx-feedback
+            exp_annotations:
+              summary: "Feedback 메일 발송 3회 이상 실패"
+              description: "Outbound Feedback 메일 발송이 30분 내 3회 이상 실패했습니다. SMTP 연결을 확인하세요."
+
+  # 세 번째 실패가 30분 넘게 떨어져 있으면 울리지 않는다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_feedback_mail_failures_total{job="synctx-feedback"}'
+        values: '0x9 1x20 2x20 3x20'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: SynctxFeedbackMailFailure
+        exp_alerts: []
+
+  # Feedback이 0부터 둔 redaction_error 계열이 1로 오르면 첫 실패도 증가로 잡히고, 10분 뒤 풀린다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_feedback_events_total{job="synctx-feedback",result="redaction_error"}'
+        values: '0 0 0 1x20'
+      - series: 'synctx_feedback_events_total{job="synctx-feedback",result="sent"}'
+        values: '0+1x22'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SynctxFeedbackRedactionFailure
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: SynctxFeedbackRedactionFailure
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: synctx-feedback
+              result: redaction_error
+            exp_annotations:
+              summary: "Feedback redaction 실패"
+              description: "Outbound Feedback 이벤트 redaction 중 오류가 발생했습니다. 민감정보 유출 위험이 있으므로 즉시 확인하세요."
+      - eval_time: 20m
+        alertname: SynctxFeedbackRedactionFailure
+        exp_alerts: []
+
+  # 0 기준값 없이 1로 처음 나타난 계열은 증가로 잡히지 않는다. Feedback이 0을 먼저 push하는 이유다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_feedback_events_total{job="synctx-feedback",result="redaction_error"}'
+        values: '_x3 1x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SynctxFeedbackRedactionFailure
+        exp_alerts: []

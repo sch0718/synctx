@@ -217,6 +217,31 @@ def test_pushgateway_needs_metrics_and_sync():
     assert 9091 not in _sync_egress_ports(docs)
 
 
+FEEDBACK_FLAGS = "feedback.enabled=true,feedback.secrets.existingSecret=synctx-feedback-secrets"
+
+
+def _feedback_env(docs):
+    cron = next(d for d in docs if d["kind"] == "CronJob" and d["metadata"]["name"] == "synctx-feedback")
+    return {e["name"]: e.get("value") for e in cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+
+def test_feedback_pushes_metrics_to_pushgateway():
+    docs = _docs("--set", FEEDBACK_FLAGS)
+    assert _feedback_env(docs)["SYNCTX_PUSHGATEWAY_URL"] == "http://synctx-pushgateway:9091"
+
+
+def test_pushgateway_stays_for_feedback_without_sync():
+    docs = _docs("--set", FEEDBACK_FLAGS + ",sync.enabled=false")
+    assert PUSHGATEWAY_RESOURCES <= _names(docs)
+
+
+def test_feedback_does_not_push_without_metrics_or_sync_state():
+    for flags in ["metrics.enabled=false", "sync.persistence.enabled=false"]:
+        docs = _docs("--set", FEEDBACK_FLAGS + ",sync.enabled=false," + flags)
+        assert "SYNCTX_PUSHGATEWAY_URL" not in _feedback_env(docs)
+        assert not PUSHGATEWAY_RESOURCES & _names(docs)
+
+
 def test_notes_warn_when_metrics_without_sync_state():
     result = subprocess.run(
         ["helm", "install", "synctx", str(CHART), "--dry-run=client", "--set", "sync.persistence.enabled=false"],

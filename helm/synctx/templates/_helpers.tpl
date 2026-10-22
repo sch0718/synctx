@@ -38,6 +38,20 @@ Sync 메트릭을 Pushgateway로 보낼 때 "true". 누적값을 sync-state PVC�
 {{- end }}
 
 {{/*
+Feedback 메트릭을 Pushgateway로 보낼 때 "true". 누적값을 Feedback이 함께 쓰는 sync-state PVC에 둔다.
+*/}}
+{{- define "synctx.feedbackMetricsPush" -}}
+{{- if and .Values.metrics.enabled .Values.feedback.enabled .Values.sync.persistence.enabled }}true{{- end }}
+{{- end }}
+
+{{/*
+CronJob 메트릭을 받는 Pushgateway를 배포할 때 "true".
+*/}}
+{{- define "synctx.pushgateway" -}}
+{{- if or (include "synctx.syncMetricsPush" .) (include "synctx.feedbackMetricsPush" .) }}true{{- end }}
+{{- end }}
+
+{{/*
 켜진 서비스를 정해진 순서대로 쉼표로 잇는다. Viewer의 SYNCTX_ENABLED_SERVICES 값이다.
 */}}
 {{- define "synctx.enabledServices" -}}
