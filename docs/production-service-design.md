@@ -1376,13 +1376,17 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### Phase 9: 인터랙티브 HTML 임베드
 
-- [ ] XWiki `markdown/1.2` 안 html 매크로 실행 확인
-- [ ] 설정 모델과 출처·부분집합 검사
-- [ ] `html_bundle` 합본·CSP meta·이스케이프
-- [ ] Viewer 렌더링·CSP·다운로드
-- [ ] Sync 변환과 다시 처리할 조건
+- [x] XWiki `markdown/1.2` 안 html 매크로 실행 확인 (로컬 XWiki 16.10.17에서 확인)
+- [x] 설정 모델과 출처·부분집합 검사
+- [x] `html_bundle` 합본·CSP meta·이스케이프
+- [x] Viewer 렌더링·CSP·다운로드
+- [x] Sync 변환과 다시 처리할 조건
 - [ ] 메트릭·Alert·Runbook
+  - 계측(`synctx_html_bundle_total`)·Alert(`SynctxHtmlBundleRejected`)·Runbook(12.6)은 있다. Sync CronJob은 메트릭을 노출·전송하지 않아 Sync에서 난 합본 거부는 수집되지 않는다(Viewer 쪽만 수집). 수집 경로를 정하고 Alert가 실제로 울리는지 확인한다.
 - [ ] 운영 XWiki·실제 브라우저 확인
+  - 운영 XWiki: `markdown/1.2` 확장 설치, 동기화 전용 계정과 대상 공간 `WebPreferences`의 그 계정 한정 script right, Helm `synctxConfig.create: true`와 `synctxConfig.data` 안의 최상위 `html_embed`·`repositories[].html_embed`(`enabled`, XWiki 대상이면 `xwiki_credential_env`), Secret `feedback.secrets.xwikiHtmlCredentialEnabled: true`(`existingSecret`을 쓰면 그 Secret에 `xwiki-html-credential` 키) 뒤 재생·토글 확인
+  - 실제 Chrome·Edge에서 재생과 CSP meta 차단 비교 시험(meta 있음/없음)
+  - 신뢰 해제·계정 교체 때 XWiki content author가 실제로 바뀌는지
 
 완료 기준:
 

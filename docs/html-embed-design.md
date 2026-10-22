@@ -217,7 +217,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 페이지는 지금처럼 `markdown/1.2` 문법으로 보낸다(`XWikiTargetConfig.syntax`). 로컬 XWiki 16.10.17에서 `markdown/1.2` 페이지 안의 `{{html clean="false"}}` 매크로가 sandbox srcdoc iframe을 그대로 내보내고, iframe 안의 스크립트도 실행되는 것을 확인했다. 앞뒤의 Markdown 문단도 정상으로 렌더링됐다.
 
 - 전제: XWiki 기본 배포(Standard Flavor)에는 `markdown/1.2` 파서가 없다. "CommonMark Markdown Syntax 1.2" 확장(`org.xwiki.contrib.markdown:syntax-markdown-commonmark12`, 확인 버전 8.9.1)이 설치되어 있어야 한다. 기존 문서(`xwiki-api-reference.md`, `production-service-design.md` 4장)가 이미 이 확장을 전제로 한다.
-- 이 확인은 위키 소유자 계정으로 작성한 페이지로 했다. 공간 한정 스크립트 권한만 가진 동기화 계정의 경우는 종단 확인에서 다시 본다.
+- 이 확인은 위키 소유자 계정으로 작성한 페이지로 했다. 이후 로컬 종단 확인(XWiki 16.10.17, `docs` 공간의 script right만 가진 전용 계정)에서 이 계정으로 만든 페이지의 재생과 토글도 확인했다. 운영 XWiki에서의 확인은 `production-service-design.md` Phase 9의 마지막 항목에 남아 있다.
 
 ### 7.3 다시 처리할 조건
 
@@ -389,4 +389,4 @@ repositories:
 4. Sync Engine 블록 변환, 다시 처리할 조건(역참조 색인, 합본 반영 해시, 정책 지문)과 테스트
 5. 메트릭·Alert
 6. 문서 반영(12장)
-7. 룰 엔진 클러스터 모션 그래픽으로 종단 확인 (Viewer, 로컬 XWiki)
+7. 룰 엔진 클러스터 모션 그래픽으로 종단 확인 (Viewer, 로컬 XWiki) — 로컬에서 수행했다(PR #27)
