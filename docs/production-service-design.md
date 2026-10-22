@@ -610,7 +610,7 @@ synctx:
 - 근거 원문 문서의 규약:
   - 문서명은 front matter `title:` → 없으면 첫 `#` 제목(H1) → 없으면 파일 이름(확장자 제외) 순으로 정한다. 근거 문서에는 `title:`을 두기를 권한다.
   - 링크의 `#앵커`는 먼저 원시 HTML 명시 앵커 `<a id="…"></a>`를 찾고, 없으면 Viewer가 제목에 붙이는 id(GitHub 방식 slug, 중복은 번호)로 찾는다. 명시 앵커는 조문 `aN`(예: `a1`), 대비표 행 `cN-N-N`(예: `c3-1-4`), 외부 자료 조문 `efsr-*`(예: `efsr-8-3`)처럼 문서 안에서 유일하게 둔다. 앵커가 없거나 못 찾으면 "문서 첫 부분"을 대신 보이고 위치에 안내를 붙인다.
-  - 발췌 범위: 제목이면 같거나 상위 제목 직전까지, 표의 행이면 머리글 2줄과 그 행, 굵은 제목 줄(`**제9조(목적)**`·`**<표 …**`)이면 다음 제목·`---`·명시 앵커·다음 조문 줄(`**제N조`·`**제N조의M`) 직전까지, 그 밖의 줄이면 다음 빈 줄 두 개 또는 위 경계까지다. 발췌 안의 `<div class="commentary">` 해설 블록은 뺀다. 발췌 하나는 80줄·16 KiB를 넘으면 줄이고 "…(발췌가 길어 줄였습니다)"를 붙인다.
+  - 발췌 범위: 제목이면 같거나 상위 제목 직전까지, 표의 행이면 머리글 2줄과 그 행, 굵은 제목 줄(`**제9조(목적)**`·`**<표 …**`)이면 다음 제목·`---`·명시 앵커·다음 조문 줄(`**제N조`·`**제N조의M`) 직전까지, 그 밖의 줄이면 다음 빈 줄 두 개 또는 위 경계까지다. 발췌 안의 `<div class="commentary">` 해설 블록은 뺀다. 발췌 안의 `synctx-html` 블록(Viewer가 iframe으로 바꾸는 펜스, 다른 펜스 안의 예시는 제외)은 설정 줄 대신 "[인터랙티브 HTML: <title>]" 한 줄로 보이고, `title`이 없으면 `src` 파일 이름을 쓴다(`src`가 없거나 YAML 객체가 아닌 블록은 원문 그대로). HTML 본문은 "원문 열기"로 본다. 발췌 하나는 80줄·16 KiB를 넘으면 줄이고 "…(발췌가 길어 줄였습니다)"를 붙인다.
 
 ## 6. Sync Engine 상세 설계
 
@@ -1191,7 +1191,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 | Outbound Feedback | fake OpenProject + fake SMTP + fake importer | redaction, signature, replay, PR 생성 검증 |
 | Offline build | vendor artifact only | 외부 네트워크 없이 이미지 빌드 |
 | Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
-| Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
+| Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·`synctx-html` 블록 한 줄 안내·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
 
 ### 10.2 운영 전 수용 기준
@@ -1376,7 +1376,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - [x] `.md`·메모 포함 HTML 내보내기/가져오기
 - [x] 8.1b 근거 미리보기·근거 모음
   - [x] front matter `synctx.meeting.references`(접두어 매핑) 검증과 저장소 간 링크 해석
-  - [x] 근거 링크 판정과 발췌 규칙(앵커·제목 slug·표 행·조문 경계·해설 블록 제거·상한)
+  - [x] 근거 링크 판정과 발췌 규칙(앵커·제목 slug·표 행·조문 경계·해설 블록 제거·`synctx-html` 블록 한 줄 안내·상한)
   - [x] 발췌 전용 허용 목록 정화
   - [x] 링크 말풍선(포인터·키보드·Esc)과 근거 모음(인용한 곳·원문 열기)
   - [x] 메모 포함 HTML에 근거 모음·말풍선 포함

@@ -214,6 +214,45 @@ def test_extract_cleanup_keeps_code_verbatim():
     crossing = '## 절\n\n<div class="commentary">\n해설\n~~~\n</div>\n~~~\n</div>\n본문 [링크](y.md)\n'
     assert ev.extract(crossing, "절")[1] == "본문 링크"  # 코드 안의 </div>로 해설이 끝나지 않는다
 
+HTML_WRAPPER = '# 규제 조문\n\n```synctx-html\nsrc: ./규제_조문.html\nheight: 1100\ntitle: "금융권 규제 — 근거 조문"\n```\n'
+
+def test_extract_html_embed_block_becomes_one_line():
+    assert ev.extract(HTML_WRAPPER, "") == (ev.DOC_START, "[인터랙티브 HTML: 금융권 규제 — 근거 조문]")
+    label, md = ev.extract(HTML_WRAPPER, "efsr-8-3")
+    assert label.startswith(ev.DOC_START) and md == "[인터랙티브 HTML: 금융권 규제 — 근거 조문]"
+    assert ev.extract(HTML_WRAPPER, "규제-조문")[1] == "[인터랙티브 HTML: 금융권 규제 — 근거 조문]"
+
+def test_extract_html_embed_block_without_title_uses_src_file_name():
+    body = "## 절\n\n앞 문단\n\n  ~~~~ synctx-html \n  src: ../자료/규제_조문.html?v=1#top\n  ~~~~\n\n뒤 문단\n"
+    md = ev.extract(body, "절")[1]
+    assert md == "앞 문단\n\n  [인터랙티브 HTML: 규제\\_조문.html]\n\n뒤 문단"
+    out = ev.sanitize_excerpt(renderer.render_markdown(md)["html"])
+    assert out == "<p>앞 문단</p>\n<p>[인터랙티브 HTML: 규제_조문.html]</p>\n<p>뒤 문단</p>"
+
+def test_extract_keeps_code_and_broken_html_embed_blocks():
+    nested = "## 예시\n\n````\n```synctx-html\nsrc: a.html\n```\n````\n"
+    assert ev.extract(nested, "예시")[1] == "````\n```synctx-html\nsrc: a.html\n```\n````"
+    unclosed = "## 절\n\n```synctx-html\nsrc: a.html\n"
+    assert ev.extract(unclosed, "절")[1] == "```synctx-html\nsrc: a.html"
+    no_src = "## 절\n\n```synctx-html\nheight: 10\n```\n"
+    assert ev.extract(no_src, "절")[1] == "```synctx-html\nheight: 10\n```"
+    bad_date = "## 절\n\n본문\n\n```synctx-html\nsrc: a.html\ntitle: 2026-02-30\n```\n"
+    assert ev.extract(bad_date, "절")[1] == "본문\n\n```synctx-html\nsrc: a.html\ntitle: 2026-02-30\n```"
+    hidden = '## 절\n\n<div class="commentary">\n\n```synctx-html\nsrc: a.html\n```\n\n</div>\n본문\n'
+    assert ev.extract(hidden, "절")[1] == "본문"
+
+def test_extract_html_embed_title_is_plain_text():
+    body = '```synctx-html\nsrc: a.html\ntitle: "<b>굵게</b> *별* _밑_ [x](y) `c` \\\\ &amp;\n  둘째 줄"\n```\n'
+    md = ev.extract(body, "")[1]
+    assert "\n" not in md
+    out = ev.sanitize_excerpt(renderer.render_markdown(md)["html"])
+    assert out == "<p>[인터랙티브 HTML: &lt;b&gt;굵게&lt;/b&gt; *별* _밑_ [x](y) `c` \\ &amp;amp; 둘째 줄]</p>"
+
+def test_extract_html_embed_cut_by_doc_start_limit_is_one_line():
+    body = "# 제목\n\n" + "줄\n" * 10 + "\n```synctx-html\nsrc: a.html\ntitle: 끝\nheight: 5\n```\n"
+    md = ev.extract(body, "")[1]
+    assert md.endswith("줄\n\n[인터랙티브 HTML: 끝]") and "src" not in md
+
 def test_extract_ignores_boundaries_inside_commentary():
     body = ('<a id="a1"></a>\n**제1조(목적)** 본문\n\n<div class="commentary">\n해설: 예를 들어\n\n'
             '**제2조(예시)** 인용\n</div>\n\n② 실제 적용 조건\n\n**제3조(다음)** 끝\n')

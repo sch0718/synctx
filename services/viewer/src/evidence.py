@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 import functools
 import html
 import re
@@ -10,9 +11,12 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import PurePosixPath
 from typing import Callable
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
+
+import yaml
 
 from synctx_common.frontmatter import parse_frontmatter
+from synctx_common.html_bundle import find_blocks
 
 from renderer import _heading_attrs, _is_external_link, _path_part, longest_prefix, map_href, render_markdown
 
@@ -23,6 +27,7 @@ EXCERPT_MAX_BYTES = 16 * 1024
 START_LINES = 14
 TRUNCATED_NOTE = "…(발췌가 길어 줄였습니다)"
 DOC_START = "문서 첫 부분"
+HTML_EMBED = "[인터랙티브 HTML: {}]"
 
 _ANCHOR = r"""<a\s+id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+)\s*>\s*</a>"""
 _ANCHOR_RE = re.compile(_ANCHOR, re.IGNORECASE)
@@ -46,6 +51,7 @@ _CLOSE_END_RE = re.compile(r"\s*>")
 _TAG_START_RE = re.compile(r"<[A-Za-z][A-Za-z0-9-]*(?=[\s/>])")
 _TAG_TEXT_RE = re.compile(r"[^>\"']*")
 _BACKTICKS_RE = re.compile(r"`+")
+_MD_PUNCT_RE = re.compile(r"([\\`*_{}\[\]()!])")
 
 
 def _split(md: str) -> list[str]:
@@ -293,8 +299,66 @@ def _commentary_mask(scan: _Lines) -> list[bool]:
     return mask
 
 
-def _finish_at(scan: _Lines, picked: list[int]) -> str:
-    return _finish([scan.lines[i] for i in picked], [scan.verbatim[i] for i in picked])
+def _finish_at(doc: Prepared, picked: list[int]) -> str:
+    """synctx-html 블록은 여는 줄이 들면 블록 전체를 안내 한 줄로 바꾼다(원문 그대로 둘 줄로 넘겨 정리에서 뺀다)."""
+    scan = doc.scan
+    lines: list[str] = []
+    code: list[bool] = []
+    skip_to = -1
+    for i in picked:
+        if i <= skip_to:
+            continue
+        embed = doc.embeds.get(i)
+        if embed:
+            skip_to, text = embed
+            lines.append(text)
+            code.append(True)
+        else:
+            lines.append(scan.lines[i])
+            code.append(scan.verbatim[i])
+    return _finish(lines, code)
+
+
+def _embed_name(body: str) -> str | None:
+    """블록의 title, 없으면 src 파일 이름. src가 없거나 YAML 객체가 아니면 None(블록 원문을 그대로 둔다)."""
+    try:
+        data = yaml.safe_load(body)
+    except (yaml.YAMLError, ValueError):
+        # 스칼라 변환 오류(예: 없는 날짜 2026-02-30)는 YAMLError가 아니라 ValueError다
+        return None
+    if not isinstance(data, dict):
+        return None
+    src = data.get("src")
+    if not isinstance(src, str) or not src.strip():
+        return None
+    title = data.get("title")
+    if isinstance(title, str) and title.split():
+        return " ".join(title.split())
+    try:
+        name = PurePosixPath(unquote(urlsplit(src.strip()).path)).name
+    except ValueError:
+        return None
+    return name or None
+
+
+def _embed_lines(lines: list[str]) -> dict[int, tuple[int, str]]:
+    """Viewer가 iframe으로 바꾸는 synctx-html 블록(html_bundle.find_blocks)의 여는 줄 → (닫는 줄, 안내 한 줄 md)."""
+    text = "\n".join(lines)
+    starts = [0]
+    for line in lines[:-1]:
+        starts.append(starts[-1] + len(line) + 1)
+    embeds = {}
+    for block in find_blocks(text):
+        first = bisect.bisect_right(starts, block.start) - 1
+        last = bisect.bisect_right(starts, block.end) - 1
+        # find_blocks와 줄 나누기가 어긋나 블록이 줄 중간에서 시작·끝나면 바꾸지 않는다
+        if starts[first] + len(block.indent) != block.start or starts[last] + len(lines[last]) != block.end:
+            continue
+        name = _embed_name(block.body)
+        if name is not None:
+            label = _MD_PUNCT_RE.sub(r"\\\1", html.escape(name, quote=False))
+            embeds[first] = (last, block.indent + HTML_EMBED.format(label))
+    return embeds
 
 
 def _body_start(scan: _Lines, heading: int) -> int:
@@ -320,7 +384,7 @@ def _doc_start(doc: Prepared) -> str:
         picked.append(i)
         if len(picked) >= START_LINES:
             break
-    return _finish_at(scan, picked)
+    return _finish_at(doc, picked)
 
 
 def _code_spans(line: str) -> list[tuple[int, int]]:
@@ -423,6 +487,7 @@ class Prepared:
                 self.anchors.setdefault(value, i)
         # 해설 블록 안 줄은 발췌 경계로 보지 않는다(해설은 정리 때 지워진다)
         self.commentary = _commentary_mask(self.scan)
+        self.embeds = _embed_lines(self.scan.lines)
 
 
 def _find_start(doc: Prepared, anchor: str, ids: Callable[[], list[tuple[int, str]]]) -> int | None:
@@ -474,7 +539,7 @@ def extract(
                     continue
             has_content = has_content or bool(lines[i].strip())
             body.append(i)
-        return scan.heading_text(start), _finish_at(scan, body)
+        return scan.heading_text(start), _finish_at(doc, body)
 
     if line.lstrip().startswith("|"):
         top = start
@@ -510,7 +575,7 @@ def extract(
                 break
         body.append(i)
     label = _plain(bold.group(1)) if bold else _plain(line)[:40]
-    return label, _finish_at(scan, body)
+    return label, _finish_at(doc, body)
 
 
 _ALLOWED_TAGS = frozenset(
