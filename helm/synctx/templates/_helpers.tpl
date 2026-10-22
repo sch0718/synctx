@@ -31,6 +31,13 @@ sprig default는 false도 빈 값으로 보므로 쓰지 않는다.
 {{- end }}
 
 {{/*
+Sync 메트릭을 Pushgateway로 보낼 때 "true". 누적값을 sync-state PVC에 두므로 PVC가 없으면 보내지 않는다.
+*/}}
+{{- define "synctx.syncMetricsPush" -}}
+{{- if and .Values.metrics.enabled (include "synctx.isEnabled" .Values.sync) .Values.sync.persistence.enabled }}true{{- end }}
+{{- end }}
+
+{{/*
 켜진 서비스를 정해진 순서대로 쉼표로 잇는다. Viewer의 SYNCTX_ENABLED_SERVICES 값이다.
 */}}
 {{- define "synctx.enabledServices" -}}

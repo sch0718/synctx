@@ -355,6 +355,7 @@ repositories:
 - 합본 실패는 `synctx_sync_failures_total{error_type="html_bundle"}`에도 센다. 이때 페이지 동기화 자체는 성공으로 처리한다.
 - Sync 실행 보고서(`SyncReport.summary()`)의 `html_errors`에 문서 경로·사유·메시지를 남긴다. 게시 성공·실패 수와는 따로 센다.
 - Alert: 저장소별 `disallowed_host` 또는 `too_large`가 1시간 안에 1건 이상이면 warning.
+- Sync 쪽 값은 CronJob이 저장소별 누적값을 Pushgateway로 보내 수집한다. 두 거부 사유는 처음 내보낼 때 0을 보내 첫 거부도 증가로 잡힌다(`production-service-design.md` 9.2).
 
 ## 11. 테스트
 

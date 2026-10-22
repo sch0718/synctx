@@ -1,4 +1,10 @@
 # Production values for synctx
+metrics:
+  pushgateway:
+    image:
+      repository: registry.internal/prom/pushgateway
+      tag: "v1.11.1"
+
 viewer:
   image:
     repository: registry.internal/synctx/viewer

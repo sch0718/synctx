@@ -24,6 +24,7 @@ if command -v docker &>/dev/null; then
         "registry.internal/nginx:1.25.4-alpine"
         "registry.internal/alpine/git:2.43.0"
         "registry.internal/jgraph/drawio:24.2.5"
+        "registry.internal/prom/pushgateway:v1.11.1"
     )
     for img in "${images[@]}"; do
         digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$img" 2>/dev/null || echo "NOT_AVAILABLE")

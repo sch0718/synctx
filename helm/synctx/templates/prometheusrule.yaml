@@ -35,7 +35,7 @@ spec:
 
         # 3. XWiki/OpenProject auth error 발생
         - alert: SynctxSyncAuthError
-          expr: increase(synctx_sync_failures_total{error_type="auth"}[10m]) > 0
+          expr: increase(synctx_sync_failures_total{error_type="auth_error"}[10m]) > 0
           for: 1m
           labels:
             severity: critical

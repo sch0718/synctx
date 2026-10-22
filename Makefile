@@ -34,6 +34,8 @@ save-images: build
 	docker save alpine/git:2.43.0 | gzip > dist/images/alpine-git-2.43.0.tar.gz 2>/dev/null || true
 	docker pull jgraph/drawio:24.2.5 2>/dev/null || true
 	docker save jgraph/drawio:24.2.5 | gzip > dist/images/drawio-24.2.5.tar.gz 2>/dev/null || true
+	docker pull prom/pushgateway:v1.11.1 2>/dev/null || true
+	docker save prom/pushgateway:v1.11.1 | gzip > dist/images/pushgateway-v1.11.1.tar.gz 2>/dev/null || true
 	@echo "All images saved to dist/images/"
 
 load-images:

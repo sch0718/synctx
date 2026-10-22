@@ -23,4 +23,14 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+    {{- if include "synctx.syncMetricsPush" . }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pushgateway
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - port: 9091
+          protocol: TCP
+    {{- end }}
 {{- end }}

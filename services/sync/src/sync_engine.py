@@ -18,6 +18,7 @@ from synctx_common.observability import (
 )
 from state import StateManager, RepoState, SyncedFileState
 from lease import LeaseLock, LeaseLostError, repo_lock
+from metrics_push import PUSHGATEWAY_URL_ENV, RepoMetrics, push_totals
 from targets.xwiki import XWikiClient
 from targets.openproject import OpenProjectClient
 from urllib.parse import quote
@@ -148,6 +149,42 @@ class SyncEngine:
         finally:
             self._lease = None
 
+    @contextmanager
+    def _recording_metrics(self, repo_id: str, lock: Optional[LeaseLock], dry_run: bool) -> Iterator[None]:
+        """lease를 쥔 실행의 메트릭 증가분을 누적값에 반영하고 Pushgateway로 보낸다."""
+        if lock is None or dry_run:
+            yield
+            return
+        metrics = RepoMetrics(str(self.state_manager.state_dir), repo_id)
+        try:
+            yield
+        finally:
+            self._publish_metrics(metrics, lock)
+
+    def _publish_metrics(self, metrics: RepoMetrics, lock: LeaseLock) -> None:
+        try:
+            lock.ensure_held()
+        except LeaseLostError:
+            logger.warning(f"Lease lost for {metrics.repo_id}, skipping sync metrics save.")
+            return
+        try:
+            totals = metrics.commit()
+        except Exception as e:
+            logger.error(f"Failed to save sync metrics for {metrics.repo_id}: {e}")
+            return
+        url = os.getenv(PUSHGATEWAY_URL_ENV)
+        if not url:
+            return
+        try:
+            push_totals(url, metrics.repo_id, totals)
+        except Exception as e:
+            logger.warning(f"Failed to push sync metrics for {metrics.repo_id} to Pushgateway: {e}")
+            return
+        try:
+            metrics.mark_pushed()
+        except Exception as e:
+            logger.error(f"Failed to record sync metrics push for {metrics.repo_id}: {e}")
+
     def _save_state(self, repo_id: str, state: RepoState) -> None:
         """lease를 잃었으면 다른 실행이 저장한 state를 덮어쓰지 않도록 저장 전에 중단한다."""
         if self._lease is not None:
@@ -159,7 +196,11 @@ class SyncEngine:
         identity = os.getenv("HOSTNAME", "sync-engine-local")
         run_id = time.strftime("%Y-%m-%dT%H-%M-%SZ", time.gmtime())
 
-        with repo_lock(self.config.sync.lease_namespace, repo.id, identity) as lock, self._holding(lock):
+        with (
+            repo_lock(self.config.sync.lease_namespace, repo.id, identity) as lock,
+            self._holding(lock),
+            self._recording_metrics(repo.id, lock, dry_run),
+        ):
             if lock is None:
                 logger.info(f"Could not acquire lock for {repo.id}, skipping sync.")
                 return None
@@ -189,6 +230,8 @@ class SyncEngine:
 
             if last_sha == head_sha and not index_missing and not policy_changed and not stale and not reclaim and not retry:
                 logger.info(f"Repo {repo.id} is up to date (SHA: {head_sha})")
+                if not dry_run:
+                    sync_last_success_timestamp.labels(repo_id=repo.id).set(time.time())
                 return None
 
             changes = [] if last_sha == head_sha else self._get_changes(git_manager, last_sha, repo)
@@ -202,6 +245,7 @@ class SyncEngine:
                     state.last_successful_sha = head_sha
                     self._mark_html_state(state, fingerprint)
                     self._save_state(repo.id, state)
+                    sync_last_success_timestamp.labels(repo_id=repo.id).set(time.time())
                 return None
 
             report = SyncReport()

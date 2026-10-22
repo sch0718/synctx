@@ -27,6 +27,10 @@ spec:
               imagePullPolicy: {{ .Values.sync.image.pullPolicy }}
               command: ["synctx-sync"]
               env:
+                {{- if include "synctx.syncMetricsPush" . }}
+                - name: SYNCTX_PUSHGATEWAY_URL
+                  value: "http://{{ include "synctx.fullname" . }}-pushgateway:9091"
+                {{- end }}
                 {{- if .Values.synctxConfig.create }}
                 - name: SYNCTX_CONFIG_PATH
                   value: /etc/synctx/.synctx.yaml

@@ -21,6 +21,7 @@ DEFAULT_RESOURCES = {
     ("Deployment", "synctx-cdn"),
     ("Deployment", "synctx-drawio"),
     ("Deployment", "synctx-marp"),
+    ("Deployment", "synctx-pushgateway"),
     ("Deployment", "synctx-slides"),
     ("Deployment", "synctx-viewer"),
     ("Ingress", "synctx"),
@@ -34,10 +35,12 @@ DEFAULT_RESOURCES = {
     ("Service", "synctx-cdn"),
     ("Service", "synctx-drawio"),
     ("Service", "synctx-marp"),
+    ("Service", "synctx-pushgateway"),
     ("Service", "synctx-slides"),
     ("Service", "synctx-viewer"),
     ("ServiceAccount", "synctx-sync"),
     ("ServiceMonitor", "synctx"),
+    ("ServiceMonitor", "synctx-pushgateway"),
 }
 # 서비스를 꺼도 PVC는 남긴다. Helm upgrade가 PVC를 지우면 reclaimPolicy: Delete에서 데이터가 사라진다.
 PVC_RESOURCES = {
@@ -171,6 +174,62 @@ def test_all_off_fails():
     )
     assert result.returncode != 0
     assert "켜진 서비스가 없습니다" in result.stderr
+
+
+PUSHGATEWAY_RESOURCES = {
+    ("Deployment", "synctx-pushgateway"),
+    ("Service", "synctx-pushgateway"),
+    ("ServiceMonitor", "synctx-pushgateway"),
+}
+
+
+def _sync_container(docs):
+    cron = next(d for d in docs if d["kind"] == "CronJob" and d["metadata"]["name"] == "synctx-sync")
+    return cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0]
+
+
+def _sync_egress_ports(docs):
+    policy = next(d for d in docs if d["kind"] == "NetworkPolicy")
+    return [p["port"] for rule in policy["spec"]["egress"] for p in rule["ports"]]
+
+
+def test_sync_pushes_metrics_to_pushgateway():
+    docs = _docs()
+    env = {e["name"]: e.get("value") for e in _sync_container(docs)["env"]}
+    assert env["SYNCTX_PUSHGATEWAY_URL"] == "http://synctx-pushgateway:9091"
+    assert 9091 in _sync_egress_ports(docs)
+    monitor = next(d for d in docs if d["kind"] == "ServiceMonitor" and d["metadata"]["name"] == "synctx-pushgateway")
+    assert monitor["spec"]["endpoints"][0]["honorLabels"] is True
+    assert monitor["spec"]["selector"]["matchLabels"]["app.kubernetes.io/name"] == "pushgateway"
+
+
+def test_pushgateway_needs_metrics_and_sync():
+    # sync-state가 없으면 실행마다 누적값이 사라져 Alert가 울리지 않으므로 Pushgateway 경로를 만들지 않는다
+    for flags in ["metrics.enabled=false", "sync.enabled=false", "sync.persistence.enabled=false"]:
+        docs = _docs("--set", flags)
+        assert not PUSHGATEWAY_RESOURCES & _names(docs)
+    for flags in ["metrics.enabled=false", "sync.persistence.enabled=false"]:
+        docs = _docs("--set", flags)
+        assert "SYNCTX_PUSHGATEWAY_URL" not in {e["name"] for e in _sync_container(docs).get("env") or []}
+        assert 9091 not in _sync_egress_ports(docs)
+    docs = _docs("--set", "metrics.enabled=false")
+    assert "SYNCTX_PUSHGATEWAY_URL" not in {e["name"] for e in _sync_container(docs).get("env") or []}
+    assert 9091 not in _sync_egress_ports(docs)
+
+
+def test_notes_warn_when_metrics_without_sync_state():
+    result = subprocess.run(
+        ["helm", "install", "synctx", str(CHART), "--dry-run=client", "--set", "sync.persistence.enabled=false"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Sync 메트릭을 수집하지 않습니다" in result.stdout
+
+
+def test_production_pushgateway_image_is_internal():
+    docs = _docs("-f", str(CHART / "values-production.yaml"))
+    dep = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "synctx-pushgateway")
+    assert dep["spec"]["template"]["spec"]["containers"][0]["image"] == "registry.internal/prom/pushgateway:v1.11.1"
 
 
 def test_disabled_services_keep_pvcs():

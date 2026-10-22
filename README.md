@@ -67,6 +67,8 @@ flowchart TB
         Slides["Slides Server"]
         SyncWebhook["Sync Webhook<br>Receiver"]
         Sync["Sync Engine<br>(CronJob)"]
+        Pushgateway["Pushgateway<br>(Sync 메트릭)"]
+        Prometheus[("Prometheus")]
         Feedback["Outbound Feedback<br>Exporter (optional)"]
         MailGateway[("Approved<br>Mail Gateway")]
 
@@ -96,6 +98,8 @@ flowchart TB
         SyncWebhook -- "K8s Job 즉시 생성" --> Sync
         Sync --> XWiki
         Sync --> OP
+        Sync -. "누적 메트릭 push" .-> Pushgateway
+        Prometheus -. "scrape" .-> Pushgateway
 
         OP -. "허용 필드 변경" .-> Feedback
         Feedback -. "redacted + signed email" .-> MailGateway
@@ -257,6 +261,7 @@ sequenceDiagram
 
 Git 저장소의 마크다운과 메타데이터를 내부 협업 도구에 자동 반영하는 서비스.
 기본적으로 5분 주기의 **CronJob**으로 동작하며, Git 커밋 시 즉각적인 반영을 위해 GitLab 웹훅을 수신하여 동기화를 즉시 트리거하는 **Webhook Receiver**가 함께 구성된다.
+실행이 끝나면 저장소별 누적 메트릭을 **Pushgateway**로 보내고 Prometheus가 이를 수집한다(`metrics.enabled`일 때).
 
 ### 동기화 대상
 
@@ -363,6 +368,7 @@ synctx/
 │   │   │   ├── harness_validator.py   # 하네스 검증 (synctx_common.harness 위임)
 │   │   │   ├── state.py               # state.json atomic read/write
 │   │   │   ├── lease.py               # 실행 잠금 (O_CREAT|O_EXCL)
+│   │   │   ├── metrics_push.py        # 저장소별 메트릭 누적 보존 + Pushgateway push
 │   │   │   ├── sync_converters/mermaid.py # Mermaid → SVG 변환
 │   │   │   └── targets/               # 동기화 대상
 │   │   │       ├── xwiki.py           # XWiki REST API 클라이언트
@@ -443,6 +449,7 @@ synctx/
 │           ├── slides-configmap.yaml
 │           ├── slides-pvc.yaml
 │           ├── servicemonitor.yaml
+│           ├── pushgateway.yaml       # Sync 메트릭용 Pushgateway + ServiceMonitor
 │           └── prometheusrule.yaml
 │
 ├── deploy/
@@ -510,6 +517,7 @@ workspace/
 | 컨테이너 | Docker |
 | 오케스트레이션 | Kubernetes + Helm Chart |
 | 동기화 실행 | K8s CronJob / GitLab CI pipeline |
+| 관측성 | Prometheus (ServiceMonitor·PrometheusRule), Sync CronJob 메트릭은 Pushgateway |
 
 ## 기존 자산 활용
 

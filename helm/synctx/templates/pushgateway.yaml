@@ -1,0 +1,78 @@
+{{- if include "synctx.syncMetricsPush" . }}
+# Sync CronJob은 실행 후 바로 끝나므로 누적 메트릭을 여기에 push하고 Prometheus가 수집한다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "synctx.fullname" . }}-pushgateway
+  labels:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pushgateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pushgateway
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: pushgateway
+          image: "{{ .Values.metrics.pushgateway.image.repository }}:{{ .Values.metrics.pushgateway.image.tag }}"
+          imagePullPolicy: {{ .Values.metrics.pushgateway.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 9091
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+          resources:
+            {{- toYaml .Values.metrics.pushgateway.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "synctx.fullname" . }}-pushgateway
+  labels:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: pushgateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 9091
+      targetPort: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "synctx.fullname" . }}-pushgateway
+  labels:
+    app.kubernetes.io/name: {{ include "synctx.fullname" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pushgateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      # push한 job·repo_id 라벨을 Pushgateway 대상 라벨로 덮어쓰지 않는다
+      honorLabels: true
+{{- end }}

@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 
 from synctx_common.config import load_config
 from synctx_common.logging import configure_logging
 
+from metrics_push import PUSHGATEWAY_URL_ENV, prune_removed_repos
 from sync_engine import SyncEngine
 
 
@@ -27,6 +29,7 @@ async def async_main() -> int:
     repos = [repo for repo in config.repositories if args.repo in (None, repo.id)]
     if not repos:
         logger.error("No repositories configured for sync")
+        _prune_removed_repos(config, args)
         return 1
 
     engine = SyncEngine(config)
@@ -47,7 +50,21 @@ async def async_main() -> int:
     finally:
         await engine.close()
 
+    _prune_removed_repos(config, args)
     return 1 if failures else 0
+
+
+def _prune_removed_repos(config, args) -> None:
+    """전체 저장소를 도는 실행에서만 설정에 없는 저장소의 Pushgateway 그룹을 지운다."""
+    url = os.getenv(PUSHGATEWAY_URL_ENV)
+    if not url or args.repo is not None or args.dry_run or config.sync.dry_run:
+        return
+    try:
+        removed = prune_removed_repos(url, [repo.id for repo in config.repositories])
+        if removed:
+            logger.info("Removed sync metrics of repositories no longer configured: %s", removed)
+    except Exception as e:
+        logger.warning("Failed to prune sync metrics of removed repositories: %s", e)
 
 
 def main() -> None:

@@ -5,6 +5,19 @@ podSecurityContext:
 
 metrics:
   enabled: true
+  # Sync CronJob 메트릭을 받아 두는 Pushgateway. metrics.enabled이고 sync가 켜졌을 때만 배포한다.
+  pushgateway:
+    image:
+      repository: prom/pushgateway
+      tag: "v1.11.1"
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
 
 synctxConfig:
   create: false

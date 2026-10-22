@@ -1,0 +1,87 @@
+# Sync Alert 규칙 단위 테스트. test_prometheus_rules.py가 렌더한 PrometheusRule을 rules.yaml로 두고 promtool로 돌린다.
+# 시계열은 Sync CronJob이 Pushgateway에 push하고 Prometheus가 honorLabels로 수집한 모양이다.
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # 저장소가 최신이어도 실행마다 마지막 성공 시각을 갱신하므로 울리지 않는다
+  - interval: 5m
+    input_series:
+      - series: 'synctx_sync_last_success_timestamp{job="synctx-sync",repo_id="ok"}'
+        values: '0+300x12'
+      - series: 'synctx_sync_last_success_timestamp{job="synctx-sync",repo_id="stuck"}'
+        values: '0x12'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SynctxSyncNoSuccess
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: SynctxSyncNoSuccess
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: synctx-sync
+              repo_id: stuck
+            exp_annotations:
+              summary: "Sync Engine 30분 이상 성공 없음"
+              description: "Sync Engine이 30분 넘게 성공적인 동기화를 완료하지 못했습니다."
+
+  # Sync가 0부터 둔 계열이 1로 오르면 첫 인증 오류도 증가로 잡힌다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_sync_failures_total{job="synctx-sync",repo_id="r",target="xwiki",error_type="auth_error"}'
+        values: '0 0 0 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SynctxSyncAuthError
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: SynctxSyncAuthError
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: synctx-sync
+              repo_id: r
+              target: xwiki
+              error_type: auth_error
+            exp_annotations:
+              summary: "Sync 인증 오류 발생"
+              description: "XWiki 또는 OpenProject 연동 시 인증 오류가 발생했습니다. Secret 만료 여부를 확인하세요."
+
+  - interval: 1m
+    input_series:
+      - series: 'synctx_sync_failures_total{job="synctx-sync",repo_id="r",target="xwiki",error_type="transient_error"}'
+        values: '0+1x20'
+      - series: 'synctx_sync_items_total{job="synctx-sync",repo_id="r",target="xwiki",action="M"}'
+        values: '0+2x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SynctxSyncHighFailureRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Sync 실패율 10% 초과"
+              description: "최근 15분간 Sync 항목 처리 실패율이 10%를 초과했습니다."
+
+  - interval: 1m
+    input_series:
+      - series: 'synctx_html_bundle_total{job="synctx-sync",repo_id="r",service="sync",result="too_large"}'
+        values: '0 0 1 1 1'
+      - series: 'synctx_html_bundle_total{job="synctx-sync",repo_id="r",service="sync",result="disallowed_host"}'
+        values: '0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: SynctxHtmlBundleRejected
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: SynctxHtmlBundleRejected
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              repo_id: r
+            exp_annotations:
+              summary: "synctx-html 합본 거부"
+              description: "synctx-html 블록이 허용되지 않은 외부 주소 또는 크기 상한 때문에 합본되지 않았습니다. 대상 저장소는 repo_id 라벨을 확인하세요."

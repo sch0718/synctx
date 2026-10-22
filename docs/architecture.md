@@ -30,6 +30,8 @@ flowchart TB
     Slides["Slides Server"]
     SyncWebhook["Sync Webhook<br>Receiver"]
     Sync["Sync Engine<br>(CronJob)"]
+    Pushgateway["Pushgateway<br>(Sync 메트릭)"]
+    Prometheus[("Prometheus")]
     Feedback["Outbound Feedback<br>Exporter (optional)"]
     MailGateway[("Approved<br>Mail Gateway")]
     ExternalInbox[("External Mailbox<br>/ Importer")]
@@ -62,6 +64,8 @@ flowchart TB
     SyncWebhook -- "K8s Job 즉시 생성" --> Sync
     Sync --> XWiki
     Sync --> OP
+    Sync -. "누적 메트릭 push" .-> Pushgateway
+    Prometheus -. "scrape" .-> Pushgateway
 
     OP -. "허용 필드 변경" .-> Feedback
     Feedback -. "redacted + signed email" .-> MailGateway
@@ -120,6 +124,7 @@ git diff --name-status -M <last-successful-sha>..HEAD -- <watch-paths>
 - Rename은 기존 리소스 마킹 후 새 리소스 upsert로 처리
 - 삭제 시 대상 도구 반영은 설정으로 제어 (기본: 마킹)
 - 부분 실패가 있으면 마지막 성공 SHA를 전진하지 않고 다음 실행에서 재시도
+- 실행마다 프로세스가 새로 뜨므로 메트릭은 저장소별 누적값을 sync-state의 `metrics/{repo_id}.json`에 두고, 실행이 끝날 때 Pushgateway로 push한다. Prometheus는 Pushgateway를 수집한다(상세: production-service-design.md 9.2)
 
 ### 2.4 목적 기반 지능형 라우팅 (OpenProject vs XWiki)
 
@@ -860,6 +865,7 @@ sync/src/
 ├── state.py            # state.json atomic read/write
 ├── embed_sync.py       # synctx-html 분석·합본 반영 해시·XWiki 매크로 변환
 ├── lease.py            # 실행 잠금 (O_CREAT|O_EXCL 기반)
+├── metrics_push.py     # 저장소별 메트릭 누적 보존 + Pushgateway push
 ├── sync_converters/
 │   └── mermaid.py      # Mermaid → SVG 변환
 └── targets/
@@ -922,6 +928,7 @@ helm/synctx/
     │
     ├── ingress.yaml                # 통합 Ingress
     ├── servicemonitor.yaml         # Prometheus ServiceMonitor
+    ├── pushgateway.yaml            # Sync 메트릭용 Pushgateway + ServiceMonitor (metrics.enabled·sync)
     └── prometheusrule.yaml         # Prometheus Alert Rule
 ```
 
@@ -965,6 +972,13 @@ marp:
   resources:
     requests: { cpu: 200m, memory: 512Mi }
     limits: { cpu: 1000m, memory: 1Gi }  # Chromium 사용으로 리소스 다소 필요
+
+metrics:
+  enabled: true                     # ServiceMonitor·PrometheusRule, Sync와 sync.persistence가 켜졌으면 Pushgateway
+  pushgateway:
+    image:
+      repository: prom/pushgateway
+      tag: "v1.11.1"
 
 sync:
   enabled: true
@@ -1278,7 +1292,7 @@ flowchart LR
 2. `synctx_common.html_bundle`: 블록 파싱, 합본, CSP meta, 이스케이프
 3. Viewer 렌더링·CSP·다운로드
 4. Sync Engine 변환과 다시 처리할 조건(역참조 색인, 합본 반영 해시, 정책 지문)
-5. 메트릭·Alert, 운영 문서
+5. 메트릭·Alert, 운영 문서 (Sync CronJob 메트릭은 Pushgateway로 수집)
 
 설계: `docs/html-embed-design.md`. Viewer(Phase 1)와 XWiki Sync(Phase 3)에 의존한다.
 

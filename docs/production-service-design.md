@@ -954,6 +954,7 @@ Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전
 | jgraph/drawio | 검증 완료한 명시 버전 |
 | nginx | 검증 완료한 명시 버전 |
 | alpine/git | 검증 완료한 명시 버전 (Docker Compose Slides sidecar) |
+| prom/pushgateway | 검증 완료한 명시 버전 (`v1.11.1`, Sync 메트릭 수집) |
 
 `npm install -g @marp-team/marp-cli`는 빌드 시 버전을 고정한다.
 외부에서 다운로드한 모든 JS/CSS/font/image tarball은 SHA-256 manifest에 기록한다.
@@ -1161,6 +1162,25 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `synctx_feedback_last_success_timestamp`
 - `synctx_html_bundle_total` (synctx-html 블록 처리 결과. `result`: `ok`, `disabled`, `missing_file`, `outside_repo`, `disallowed_host`, `too_large`, `invalid_block`, `unsupported`)
 
+수집 경로:
+
+| 출처 | 경로 |
+|------|------|
+| Viewer·CDN·Marp | `synctx/metrics: "true"` 라벨이 붙은 Service의 `/metrics`를 ServiceMonitor(`synctx`)가 수집한다 |
+| Sync Engine (CronJob) | 실행이 끝나면 저장소별 누적값을 Pushgateway(`synctx-pushgateway:9091`)에 push하고, ServiceMonitor(`synctx-pushgateway`, `honorLabels: true`)가 수집한다 |
+
+Sync CronJob은 실행마다 새 프로세스라 카운터가 0에서 시작한다. 그래서 다음처럼 누적값을 넘긴다.
+
+- 이번 실행의 증가분을 sync-state의 `metrics/{repo_id}.json`에 더해 둔다(상태 파일 `{repo_id}.json`과 이름이 겹치지 않게 하위 디렉터리에 둔다). 실패한 실행도 저장하고, 마지막 성공 시각은 그 실행이 갱신하지 않았으면 이전 값을 유지한다.
+- 저장과 push는 그 저장소의 Lease를 쥔 채로 한다. Webhook Job과 CronJob Job이 겹쳐도 같은 저장소의 누적값을 동시에 고치지 않는다. Lease를 잃었거나 `--dry-run`이면 저장·push하지 않는다.
+- push는 `job="synctx-sync"`, `repo_id` 그룹을 누적값으로 통째로 바꾼다(HTTP PUT, 5초 제한). push 실패는 로그(`Failed to push sync metrics`)만 남기고 동기화 결과에 영향을 주지 않는다. Pushgateway가 재시작되어 값을 잃어도 다음 실행이 누적값을 다시 채운다.
+- Alert가 `increase()`·`rate()`로 보는 계열(`synctx_sync_failures_total`의 대상·오류 분류 조합, `synctx_sync_items_total`의 대상·A/M/D 조합, Sync의 `synctx_html_bundle_total{result="disallowed_host"|"too_large"}`)은 처음 내보낼 때 0을 보낸다. 처음 생긴 계열은 이전 값이 없어 첫 발생이 증가로 잡히지 않기 때문이다. 그동안의 증가분은 메트릭 파일의 `pending`에 두고, 0을 담은 push가 처음 성공한 시각(`pushed_at`)에서 60초(수집 간격 15초의 여러 배)가 지난 뒤의 실행에서 더한다. 그래서 저장소의 첫 실행에서 난 오류는 다음 실행(기본 5분 뒤)에 Alert로 잡히고, push가 실패하는 동안이나 바로 이어진 재실행에서는 계속 보류된다. push 성공 기록을 저장하지 못하면 로그(`Failed to record sync metrics push`)만 남긴다. 실패와 처리 항목을 같이 보류하므로 실패율의 분모도 빠지지 않는다.
+- 한 번도 성공하지 못한 저장소는 감시를 시작한 실행의 시각을 `synctx_sync_last_success_timestamp`의 기준값으로 둔다. 첫 실행부터 계속 실패해도 30분 뒤 `SynctxSyncNoSuccess`가 울린다.
+- 저장소가 이미 최신이거나 바뀐 파일이 없는 실행도 성공으로 보고 `synctx_sync_last_success_timestamp`를 갱신한다.
+- `--repo` 없이 전체 저장소를 도는 실행(dry-run 제외)은 끝에 `.synctx.yaml`에 없는 `repo_id`의 그룹을 Pushgateway에서 지운다. 저장소를 빼거나 id를 바꾼 뒤 남은 그룹의 마지막 성공 시각이 멈춰 `SynctxSyncNoSuccess`가 계속 울리지 않게 하기 위해서다. 메트릭 파일은 지우지 않는다(다시 넣으면 누적값이 이어진다).
+- Pushgateway는 `metrics.enabled`이고 `sync`가 켜졌고 `sync.persistence.enabled`일 때만 배포한다. 누적값을 sync-state PVC에 두므로 PVC가 없으면 Sync 메트릭을 보내지 않고 Helm NOTES로 경고한다. Sync에는 `SYNCTX_PUSHGATEWAY_URL`이 들어가고, Sync NetworkPolicy가 Pushgateway Pod의 9091 포트로 나가는 것을 허용한다. 이 환경변수가 없으면 누적값만 저장하고 push하지 않는다.
+- Outbound Feedback CronJob 메트릭은 아직 이 경로로 보내지 않는다.
+
 ### 9.3 Alert
 
 초기 alert:
@@ -1175,6 +1195,8 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - PVC 사용량 80% 초과
 - readiness failure 5분 지속
 - synctx-html 합본이 허용되지 않은 외부 주소 또는 크기 초과로 거부됨 (`SynctxHtmlBundleRejected`, 저장소별 1시간 안에 1건 이상, warning)
+
+Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)는 Pushgateway로 수집한 시계열로 평가한다. `scripts/tests/test_prometheus_rules.py`가 Helm이 렌더한 PrometheusRule을 `promtool test rules`로 평가한다(`scripts/tests/prometheus/*.test.yaml`). promtool이 없으면 `PROMTOOL` 환경변수로 컨테이너 명령을 준다.
 
 ## 10. 테스트 전략
 
@@ -1193,6 +1215,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 | Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
 | Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·`synctx-html` 블록 한 줄 안내·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
+| Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync fake Pushgateway | Sync Alert 발생·미발생 시점, 실행 간 누적값, push 그룹 |
 
 ### 10.2 운영 전 수용 기준
 
@@ -1313,7 +1336,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - [x] Prometheus ServiceMonitor/PrometheusRule Helm 작성
 - [x] 이미지/벤더 artifact SHA-256 manifest 작성
 - [x] offline build 검증 (Makefile `build`/`save-images`/`load-images`)
-- [x] Prometheus metrics scrape 연동 검증 (smoke-test.sh에 metrics 검증 포함)
+- [x] Prometheus metrics scrape 연동 검증 (smoke-test.sh에 metrics 검증 포함. Viewer·CDN·Marp 대상이며, Sync CronJob은 Phase 9에서 Pushgateway 경로를 추가했다)
 - [x] 기본 alert rule 실환경 검증 (smoke-test.sh에 PrometheusRule 검증 포함)
 - [x] runbook 작성
 - [x] 백업/복구 절차 작성
@@ -1404,12 +1427,13 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - [x] `html_bundle` 합본·CSP meta·이스케이프
 - [x] Viewer 렌더링·CSP·다운로드
 - [x] Sync 변환과 다시 처리할 조건
-- [ ] 메트릭·Alert·Runbook
-  - 계측(`synctx_html_bundle_total`)·Alert(`SynctxHtmlBundleRejected`)·Runbook(12.6)은 있다. Sync CronJob은 메트릭을 노출·전송하지 않아 Sync에서 난 합본 거부는 수집되지 않는다(Viewer 쪽만 수집). 수집 경로를 정하고 Alert가 실제로 울리는지 확인한다.
+- [x] 메트릭·Alert·Runbook
+  - 계측(`synctx_html_bundle_total`)·Alert(`SynctxHtmlBundleRejected`)·Runbook(12.1, 12.6). Sync CronJob 메트릭은 저장소별 누적값을 Pushgateway로 push해 수집한다(9.2). Sync Alert는 promtool 규칙 테스트로 평가를 확인했다(9.3). 로컬 컨테이너(Pushgateway v1.11.1, Prometheus v2.39.1, `honor_labels: true` 정적 수집)에서 실제 Sync 실행 두 번(성공, XWiki 401·합본 크기 초과)으로 push → 수집 → 프로세스 간 누적 → `SynctxSyncAuthError`·`SynctxHtmlBundleRejected` firing까지 확인했다.
 - [ ] 운영 XWiki·실제 브라우저 확인
   - 운영 XWiki: `markdown/1.2` 확장 설치, 동기화 전용 계정과 대상 공간 `WebPreferences`의 그 계정 한정 script right, Helm `synctxConfig.create: true`와 `synctxConfig.data` 안의 최상위 `html_embed`·`repositories[].html_embed`(`enabled`, XWiki 대상이면 `xwiki_credential_env`), Secret `feedback.secrets.xwikiHtmlCredentialEnabled: true`(`existingSecret`을 쓰면 그 Secret에 `xwiki-html-credential` 키) 뒤 재생·토글 확인
   - 실제 Chrome·Edge에서 재생과 CSP meta 차단 비교 시험(meta 있음/없음)
   - 신뢰 해제·계정 교체 때 XWiki content author가 실제로 바뀌는지
+  - dev 클러스터에서 ServiceMonitor `synctx-pushgateway`(Prometheus Operator)로 `job="synctx-sync"` 계열이 수집되는지
 
 완료 기준:
 
@@ -1434,7 +1458,11 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 ### 12.1 Sync 실패
 
-1. `synctx_sync_last_success_timestamp` 확인
+1. `synctx_sync_last_success_timestamp` 확인. 계열이 없거나 모든 저장소가 함께 오래됐으면 수집 경로부터 본다.
+   - Pushgateway(`synctx-pushgateway:9091/metrics`)의 `push_time_seconds{job="synctx-sync"}`가 최근인지 확인한다. 오래됐으면 CronJob이 돌고 있는지(`kubectl get cronjob,job`)와 Sync 로그의 `Failed to push sync metrics` 줄을 본다.
+   - push 실패면 Pushgateway Pod 상태와 Sync NetworkPolicy의 9091 egress를 확인한다.
+   - Pushgateway에는 있는데 Prometheus에 없으면 ServiceMonitor `synctx-pushgateway`가 수집 대상에 잡혔는지 확인한다.
+   - 누적값은 sync-state의 `metrics/{repo_id}.json`에 있다. 파일이 깨지면 이번 실행 값부터 다시 쌓는다(Prometheus는 카운터 리셋으로 처리한다).
 2. 최근 run report 확인: `/data/sync-state/repos/{repo_id}/runs/`
 3. `auth_error`면 Secret 만료 여부 확인
 4. `mapping_error`면 `.synctx.yaml`의 map 또는 문서 front matter 수정
