@@ -12,7 +12,7 @@ scripts/
 ├── verify-authz.sh            # 권한 매핑 검증
 ├── smoke-test.sh              # 배포 후 smoke test
 ├── external_importer.py       # 외부 피드백 메일 수신 → PR 생성
-├── test-all.sh                # 서비스별 pytest 일괄 실행
+├── test-all.sh                # 전체 테스트(pytest + node --test), make test가 호출
 ├── tests/                     # 스크립트 테스트
 │   ├── test_external_importer.py
 │   ├── test_helm_options.py   # Helm 서비스 옵션 렌더
@@ -227,7 +227,7 @@ minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.loc
 ./scripts/local/steps/deploy-deps.sh
 ./scripts/local/steps/deploy-deps.sh --skip-xwiki     # XWiki 제외
 ./scripts/local/steps/deploy-deps.sh --skip-op        # OpenProject 제외
-./scripts/local/steps/deploy-deps.sh --skip-mailhog   # Mailpit 제외
+./scripts/local/steps/deploy-deps.sh --skip-mailpit   # Mailpit 제외 (예전 이름 --skip-mailhog도 동작)
 ./scripts/local/steps/deploy-deps.sh --skip-images    # 이미지 pull 건너뜀
 
 # synctx 배포만 (Helm)
@@ -270,6 +270,9 @@ synctx 서비스(Pod/CronJob), Certificate, 의존성 서비스, Monitoring, Ing
 ## 테스트
 
 ```bash
+# 전체 테스트: shared/*/tests, services/*/tests, scripts/tests의 pytest + Viewer JS(node --test)
+make test                      # = ./scripts/test-all.sh, 추가 인자는 pytest로 (예: ./scripts/test-all.sh -x)
+
 # external_importer 테스트
 uv run pytest scripts/tests/test_external_importer.py -v
 

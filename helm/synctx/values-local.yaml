@@ -67,7 +67,7 @@ drawio:
     pullPolicy: IfNotPresent
   replicaCount: 1
 
-# ── Feedback (로컬에서는 Mailhog 사용) ──
+# ── Feedback (로컬에서는 Mailpit 사용) ──
 feedback:
   enabled: true
   image:
@@ -79,7 +79,8 @@ feedback:
     create: true
     hmacKey: "local-dev-hmac-key-for-testing"
     hashSalt: "local-dev-hash-salt"
-    smtpCredential: "mailhog.synctx-deps.svc.cluster.local:1025"
+    # SMTP 로그인 비밀번호. 로컬 Mailpit은 어떤 값이든 받는다(deploy-deps.sh의 MP_SMTP_AUTH_ACCEPT_ANY)
+    smtpCredential: "local-mailpit-password"
     opApiKey: "local-openproject-api-key"
     xwikiCredential: "admin:admin"
 
@@ -225,7 +226,7 @@ synctxConfig:
     outbound_feedback:
       enabled: true
       outbound_mail:
-        smtp_host: "mailhog.synctx-deps.svc.cluster.local"
+        smtp_host: "mailpit.synctx-deps.svc.cluster.local"
         smtp_port: 1025
         from: "synctx@local.dev"
         to: "test@local.dev"

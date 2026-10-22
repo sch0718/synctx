@@ -54,7 +54,7 @@ brew install minikube helm kubectl docker mkcert node uv
 | docker | 24+ | 이미지 빌드 |
 | mkcert | 1.4+ | 로컬 CA 인증서 생성 (TLS) |
 | node | 18+ | 회의 모드 JS 단위 테스트 (`node --test`, `make test`) |
-| uv (Python 3.13+) | - | `run-viewer.sh`, 스크립트 테스트 (`uv run --frozen --all-packages pytest`) |
+| uv (Python 3.13+) | - | `run-viewer.sh`, 전체 테스트 (`make test` = `scripts/test-all.sh`, 내부에서 `uv run --frozen --all-packages pytest`) |
 
 minikube 리소스 권장: CPU 4코어, RAM 8GB, 디스크 30GB. `setup.sh`는 `MINIKUBE_CPUS`(기본 4)와 `MINIKUBE_MEMORY`(MB, 기본 8192)로 바꿀 수 있다.
 
@@ -165,7 +165,7 @@ minikube tunnel
 # 선택적 배포
 ./scripts/local/steps/deploy-deps.sh --skip-xwiki        # XWiki 제외
 ./scripts/local/steps/deploy-deps.sh --skip-op            # OpenProject 제외
-./scripts/local/steps/deploy-deps.sh --skip-mailhog       # Mailpit 제외 (옵션 이름은 Mailhog 시절 그대로)
+./scripts/local/steps/deploy-deps.sh --skip-mailpit       # Mailpit 제외 (예전 이름 --skip-mailhog도 경고와 함께 동작)
 ./scripts/local/steps/deploy-deps.sh --skip-images        # 이미지 pull 건너뜀
 ```
 
@@ -176,7 +176,7 @@ minikube tunnel
 | XWiki | `xwiki:16-postgres-tomcat` | https://xwiki.synctx.local | 초기 설정 위저드 |
 | PostgreSQL (XWiki용) | `postgres:16-alpine` | 클러스터 내부 전용 | xwiki / xwiki-local-password |
 | OpenProject | `openproject/openproject:15` | https://openproject.synctx.local | admin / admin |
-| Mailpit | `axllent/mailpit:latest` | https://mail.synctx.local | 없음 (SMTP: 1025) |
+| Mailpit | `axllent/mailpit:latest` | https://mail.synctx.local | 없음 (SMTP: `mailpit.synctx-deps.svc.cluster.local:1025`, 어떤 SMTP 로그인이든 허용) |
 
 ### 5.3 이미지 빌드
 

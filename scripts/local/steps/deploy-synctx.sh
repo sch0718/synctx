@@ -13,8 +13,8 @@ ensure_namespace "${NAMESPACE}"
 # values-local.yaml 존재 확인
 if [ ! -f "${VALUES_LOCAL_FILE}" ]; then
     print_error "values-local.yaml이 없습니다"
-    print_info "먼저 생성해주세요: ${VALUES_LOCAL_FILE}"
-    print_info "템플릿: scripts/local/values-deps.yaml 참고"
+    print_info "저장소에 포함된 파일이므로 git으로 복원해주세요: git restore helm/synctx/values-local.yaml"
+    print_info "설정 항목: helm/synctx/values.yaml(차트 기본값), docs/local-development.md 6절"
     exit 1
 fi
 

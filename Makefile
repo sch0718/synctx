@@ -47,16 +47,7 @@ load-images:
 # ──────────────────────────── Test ────────────────────────────
 
 test:
-	python -m pytest shared/synctx-common/tests/ \
-		services/feedback/tests/ \
-		services/marp/tests/ \
-		services/sync/tests/ \
-		services/slides/tests/ \
-		services/viewer/tests/ \
-		services/cdn/tests/ \
-		scripts/tests/ \
-		-q
-	node --test services/viewer/tests/js/*.test.mjs
+	bash scripts/test-all.sh
 
 # ──────────────────────────── Helm ────────────────────────────
 

@@ -525,7 +525,7 @@ synctx/
     ├── smoke-test.sh                  # 배포 후 smoke test
     ├── verify-authz.sh                # 권한 매핑 검증
     ├── external_importer.py           # External Mail Importer (Phase 7)
-    ├── test-all.sh                    # 서비스별 pytest 일괄 실행
+    ├── test-all.sh                    # 전체 테스트(pytest + node --test), make test가 호출
     ├── README.md                      # 스크립트 사용법
     └── tests/
         ├── test_external_importer.py  # Importer 단위 테스트

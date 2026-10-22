@@ -7,17 +7,20 @@ source "${SCRIPT_DIR}/../_common.sh"
 
 SKIP_XWIKI=false
 SKIP_OP=false
-SKIP_MAILHOG=false
+SKIP_MAILPIT=false
 SKIP_IMAGES=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --skip-xwiki)    SKIP_XWIKI=true; shift ;;
         --skip-op)       SKIP_OP=true; shift ;;
-        --skip-mailhog)  SKIP_MAILHOG=true; shift ;;
+        --skip-mailpit)  SKIP_MAILPIT=true; shift ;;
+        --skip-mailhog)
+            print_warning "--skip-mailhog는 --skip-mailpit으로 바뀌었습니다"
+            SKIP_MAILPIT=true; shift ;;
         --skip-images)   SKIP_IMAGES=true; shift ;;
         -h|--help)
-            echo "Usage: $0 [--skip-xwiki] [--skip-op] [--skip-mailhog] [--skip-images]"
+            echo "Usage: $0 [--skip-xwiki] [--skip-op] [--skip-mailpit] [--skip-images]"
             exit 0
             ;;
         *) print_error "알 수 없는 옵션: $1"; exit 1 ;;
@@ -305,7 +308,7 @@ fi
 # ============================================================
 # Mailpit (SMTP 테스트, Mailhog 후속 - ARM64 지원)
 # ============================================================
-if [ "$SKIP_MAILHOG" = false ]; then
+if [ "$SKIP_MAILPIT" = false ]; then
     print_header "Mailpit 배포"
 
     if [ "$SKIP_IMAGES" = false ]; then
@@ -338,6 +341,11 @@ spec:
               containerPort: 1025
             - name: http
               containerPort: 8025
+          env:
+            - name: MP_SMTP_AUTH_ACCEPT_ANY
+              value: "true"
+            - name: MP_SMTP_AUTH_ALLOW_INSECURE
+              value: "true"
           resources:
             requests:
               cpu: 50m
