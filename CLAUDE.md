@@ -14,6 +14,9 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 | `docs/production-service-design.md` | 운영 설계: 보안, .synctx.yaml 스키마, API 스펙, 배포, 관측성, Runbook, 체크리스트 |
 | `docs/reusable-assets.md` | 기존 저장소(markdown_converter, example_system 등)에서 재사용할 자산 목록 |
 | `docs/xwiki-api-reference.md` | XWiki REST API 레퍼런스 (Sync Engine 구현용) |
+| `docs/html-embed-design.md` | 인터랙티브 HTML 임베드(`synctx-html` 블록, Phase 9) 설계 |
+| `docs/viewer-index-design.md` | Viewer 인덱스 페이지(저장소 목록·파일 트리) 초기 설계 기록. 현행 화면은 architecture.md 3.6 |
+| `docs/local-development.md` | 로컬 개발 환경(minikube, Viewer 단독 실행) |
 
 ## 문서 검토 규칙
 
@@ -34,12 +37,14 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 
 - **단방향 동기화**: Git이 source of truth, XWiki/OpenProject는 파생 데이터
 - **폐쇄망 독립**: 모든 외부 의존성 vendoring, 런타임에 외부 네트워크 접근 없음
-- **이미지 태그**: SemVer `"0.1.0-<git-sha>"` 형식, `latest` 태그 사용 금지
+- **이미지 태그**: SemVer `"0.6.0-<git-sha>"` 형식, `latest` 태그 사용 금지
 - **Outbound Feedback**: Phase 7 선택 기능, 양방향 동기화가 아니라 서명된 메일 이벤트 반출 + 외부 PR 생성
 
 ## 서비스 목록 (6+1+1)
 
 Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, Outbound Feedback Exporter(선택)
+
+보조 구성요소: Pushgateway(`metrics.enabled`이고 `sync.persistence`가 켜졌으며 Sync 또는 Feedback이 켜졌을 때만 배포, Sync·Feedback CronJob 메트릭 수집)
 
 ## 설정 파일
 

@@ -2,6 +2,8 @@
 
 **sync + context** — 폐쇄망 환경에서 AI 기반 개발 컨텍스트를 동기화하는 마이크로서비스 플랫폼
 
+현재 버전 **0.6.0** · [버전별 주요 변경](#버전별-주요-변경) · [릴리스](https://github.com/sch0718/synctx/releases)
+
 ## 프로젝트 배경
 
 ### 문제
@@ -65,7 +67,7 @@ flowchart TB
         Drawio["Draw.io Service"]
         Marp["Marp Service"]
         Slides["Slides Server"]
-        SyncWebhook["Sync Webhook<br>Receiver"]
+        SyncWebhook["Sync Webhook<br>Receiver (미구현)"]
         Sync["Sync Engine<br>(CronJob)"]
         Pushgateway["Pushgateway<br>(CronJob 메트릭)"]
         Prometheus[("Prometheus")]
@@ -117,10 +119,10 @@ flowchart TB
 | **CDN Service** | 정적 라이브러리 서빙 + 파일 업로드 관리 | FastAPI + StaticFiles | Deployment + PVC |
 | **Marp Service** | 마크다운 → PDF/프레젠테이션 HTML 변환 + 출판 | FastAPI + @marp-team/marp-cli | Deployment |
 | **Draw.io Service** | 다이어그램 작성·편집 웹 도구 (셀프호스팅) | jgraph/drawio (Tomcat) | Deployment |
-| **Sync Webhook** | GitLab Push Event 수신 및 Sync Job 트리거 | Deployment |
+| **Sync Webhook** | GitLab Push Event 수신 및 Sync Job 트리거 (설계만 있고 아직 구현되지 않음) | — | Deployment |
 | **Sync Engine** | Git 변경 감지 → XWiki/OpenProject 동기화 | Python CLI + httpx | CronJob |
 | **Slides Server** | 출판된 프레젠테이션 HTML 정적 서빙 | Nginx | Deployment + PVC |
-| **Outbound Feedback Exporter** | OpenProject 제한 필드 변경 → 서명된 메일 이벤트 반출 (선택) | Python CLI + SMTP | CronJob 또는 Deployment |
+| **Outbound Feedback Exporter** | OpenProject 제한 필드 변경 → 서명된 메일 이벤트 반출 (선택) | Python CLI + SMTP | CronJob |
 
 ### 배포 방식
 
@@ -147,7 +149,7 @@ flowchart TB
 ```bash
 cp deploy/docker/synctx.env.example deploy/docker/synctx.env
 cp deploy/docker/secrets.env.example deploy/docker/secrets.env
-# synctx.env: SYNCTX_SERVICES, SYNCTX_IMAGE_TAG(0.1.0-<git-sha>), SYNCTX_SLIDES_REPO_URL 수정
+# synctx.env: SYNCTX_SERVICES, SYNCTX_IMAGE_TAG(0.6.0-<git-sha>), SYNCTX_SLIDES_REPO_URL 수정
 # secrets.env: GIT_READ_TOKEN, GIT_PUBLISH_TOKEN 입력
 # SYNCTX_CONFIG_FILE이 가리키는 .synctx.yaml 준비 (인증 프록시가 없으면 authz.enabled: false)
 
@@ -158,6 +160,10 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 
 운영 명령은 `scripts/docker/compose.sh -- ps`처럼 실행한다. 절차 전체는 [운영 서비스 설계](docs/production-service-design.md)의 Docker 배포 Runbook을 참조한다.
 
+### 로컬 실행
+
+문서 보기·회의 모드·Marp 미리보기만 필요하면 Docker·minikube 없이 `scripts/local/run-viewer.sh`로 Viewer·Marp·CDN 파일을 한 프로세스로 띄운다(http://127.0.0.1:18000/view/). minikube 전체 환경(`scripts/local/setup.sh`)은 [로컬 개발 환경](docs/local-development.md)을 참조한다.
+
 ## Viewer Service (마크다운 뷰어)
 
 기존 `markdown_converter`(md-preview)의 발전형. Git 저장소의 마크다운 문서를 웹에서 열람한다.
@@ -165,12 +171,16 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 ### 주요 기능
 
 - **Git 저장소 뷰어** — 다중 저장소 트리 탐색, 문서 열람, webhook/polling 동기화
+- **공통 화면 틀** — 상단 바·서랍·3단 문서 화면(파일 트리·본문·목차), 파일 찾기(⌘K)·최근 본 문서, 화면 경로 오류는 같은 틀의 안내 화면으로 표시
+- **저장소 본문 검색** — `/search` 화면과 `GET /api/search`, 여러 저장소를 `git grep`으로 찾는다
 - **마크다운 렌더링** — 서버사이드 렌더링 (python-markdown), 7개 테마 지원
 - **Mermaid 다이어그램** — 클라이언트 사이드 렌더링 (CDN Service에서 mermaid.js 로딩)
 - **코드 하이라이팅** — highlight.js 기반 190+ 언어 구문 강조
-- **HTML/PDF 다운로드** — 자체 완결형 HTML, Chrome CDP 기반 PDF
+- **HTML/PDF 다운로드** — 자체 완결형 HTML, PDF는 Marp Service로 변환
 - **완전 오프라인** — 모든 외부 라이브러리를 CDN Service에서 로딩
+- **스크럼 보드** — 이슈 마크다운 목록을 버전별 칸반 보드로 렌더링 (`/api/repos/{id}/board/{version}`)
 - **회의 모드** — 회의 문서(`synctx.type: meeting`)에서 메모·형광펜·회의 정리(결정·액션 아이템), `.md`·메모 포함 HTML(읽기 전용) 내보내기와 가져오기. 메모는 브라우저(localStorage)에만 저장 (Phase 8.1a)
+- **회의 정보 카드·발표 화면** — 회의 문서 머리의 일시·진행 상태·안건 카드, `?mode=present` 발표 화면, 회의 모드 첫 사용 안내
 - **근거 미리보기·근거 모음** — 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선으로 미리 보고, 문서 끝 근거 모음에서 발췌·인용한 곳·원문 열기로 확인. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리키며, 메모 포함 HTML에서도 동작 (Phase 8.1b)
 - **인터랙티브 HTML 임베드** — Markdown의 ` ```synctx-html ` 블록이 가리키는 저장소 HTML 묶음(모션 그래픽 등)을 한 파일로 합쳐 sandbox iframe으로 재생. 운영자가 지정한 신뢰 저장소에서만 동작 (Phase 9)
 
@@ -190,7 +200,7 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 | 라이브러리 | 버전 | 용도 |
 |-----------|------|------|
 | mermaid | 10.9.1 | 다이어그램 렌더링 |
-| highlight.js | — | 코드 구문 강조 |
+| highlight.js | 11.9.0 | 코드 구문 강조 |
 | Chart.js | 4.4.4 | 차트/그래프 |
 
 ## Marp Service (프레젠테이션)
@@ -201,7 +211,7 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 
 - **PDF 변환 + 다운로드** — Marp CLI로 마크다운 → 슬라이드 PDF 생성, 브라우저에서 다운로드
 - **프레젠테이션 HTML 출판** — 마크다운 → 자체 완결형 슬라이드 HTML 생성 → Git 저장소의 지정 경로에 커밋 → Slides Server에서 바로 열람
-- **Marp 테마 지원** — 기본 테마(default, gaia, uncover) + 커스텀 테마(CDN에서 CSS 로딩)
+- **Marp 테마 지원** — 기본 테마(default, gaia, uncover). CDN CSS 커스텀 테마는 아직 구현되지 않음
 - **실시간 미리보기** — 변환 전 슬라이드 미리보기
 
 ### Marp 마크다운 예시
@@ -216,15 +226,6 @@ paginate: true
 # 프로젝트 아키텍처
 
 synctx 시스템 설계 개요
-
----
-
-## 마이크로서비스 구성
-
-- Viewer Service
-- CDN Service
-- Marp Service
-- Sync Engine
 
 ---
 
@@ -255,13 +256,13 @@ sequenceDiagram
     Marp->>Git: 2. 출판 경로에 커밋 (_published/slides/...)
     Slides->>Git: 3. git pull (slides-sync sidecar)
     Marp-->>Viewer: Slides Server URL 반환
-    Viewer-->>User: 출판 완료 및 URL 제공 (https://slides.internal/...)
+    Viewer-->>User: 출판 완료 및 URL 제공 (/slides/{파일명}.html)
 ```
 
 ## Sync Engine (동기화 엔진)
 
 Git 저장소의 마크다운과 메타데이터를 내부 협업 도구에 자동 반영하는 서비스.
-기본적으로 5분 주기의 **CronJob**으로 동작하며, Git 커밋 시 즉각적인 반영을 위해 GitLab 웹훅을 수신하여 동기화를 즉시 트리거하는 **Webhook Receiver**가 함께 구성된다.
+기본적으로 5분 주기의 **CronJob**으로 동작한다. Git 커밋 시 즉각적인 반영을 위해 GitLab 웹훅을 수신하여 동기화를 즉시 트리거하는 **Webhook Receiver**는 설계만 있고 아직 구현되지 않았다.
 실행이 끝나면 저장소별 누적 메트릭을 **Pushgateway**로 보내고 Prometheus가 이를 수집한다(`metrics.enabled`일 때).
 
 ### 동기화 대상
@@ -272,7 +273,7 @@ Git 저장소의 마크다운과 메타데이터를 내부 협업 도구에 자�
 | 이슈/작업 | Markdown + Front Matter | OpenProject | REST API |
 | 요건 정의 | Markdown | XWiki / OpenProject | REST API |
 | 회의록/의사결정 | Markdown | XWiki | REST API |
-| 다이어그램 | Mermaid / draw.io | XWiki (첨부파일) | SVG 변환 → 첨부 API |
+| 다이어그램 | Mermaid | XWiki (첨부파일) | SVG 변환 → 첨부 API (draw.io 파일 변환은 미구현) |
 | 인터랙티브 HTML | Markdown의 `synctx-html` 블록 + 저장소 HTML 묶음 | XWiki / OpenProject | XWiki html 매크로 안 sandbox iframe, OpenProject는 Viewer 링크 (Phase 9) |
 
 ## Draw.io Service (다이어그램 편집기)
@@ -285,7 +286,7 @@ Git 저장소의 마크다운과 메타데이터를 내부 협업 도구에 자�
 - **완전 오프라인** — 외부 연결 없이 내부에서 독립 운영
 - **파일 저장** — 브라우저 로컬 저장 또는 `.drawio` 파일 다운로드, Git 저장소에 커밋하여 공유
 - **이미지 내보내기** — SVG, PNG, PDF 형태로 내보내기
-- **Viewer 연동** — Viewer에서 `.drawio` 파일을 감지하면 Draw.io Service로 열기 링크 제공
+- **Viewer 연동** — Viewer의 `.drawio` 문서 화면에 Draw.io 버튼을 두도록 했으나, `.drawio`는 Viewer 보기 대상 확장자가 아니어서(415) 지금은 버튼이 보이는 경로가 없음
 
 ### 배포
 
@@ -301,8 +302,8 @@ image: registry.internal/jgraph/drawio:<pinned-version>
 Marp Service가 출판한 프레젠테이션 HTML 파일을 정적으로 서빙하는 경량 서버.
 
 - Nginx 기반 정적 파일 서버
-- 출판된 HTML 파일을 PVC에서 읽어 서빙
-- URL 패턴: `https://slides.internal/{repo}/{path}/{제목}.html`
+- 출판된 HTML 파일을 PVC에서 읽어 서빙 (sync sidecar가 출판 저장소를 git pull하고 목록 페이지 `index.html`을 만든다)
+- URL 패턴: `/slides/{파일명}.html` (출판 저장소의 `_published/slides/` 아래 파일)
 
 ## 주요 개념 (Harness Engineering & OKF)
 
@@ -313,43 +314,60 @@ synctx는 단순한 동기화 도구를 넘어, **AI와 사람이 지식을 공�
 - **Context Routing**: 마크다운 파일의 메타데이터(Front Matter)를 분석하여, 이슈 트래킹 용도면 **OpenProject**로, 지식 공유 및 설계 용도면 **XWiki**로 자동 라우팅하여 동기화합니다.
 - **Harness Validator**: `.context/`, Front Matter, board/issue 관계, 문서 agent-readiness를 검사하여 AI가 만든 산출물이 사람과 내부 도구 모두에서 소비 가능한지 검증합니다.
 
-## 프로젝트 구조 (계획)
+## 프로젝트 구조
 
 ### synctx 구현 저장소
 
 ```
 synctx/
 ├── README.md
+├── AGENTS.md                          # AI 도구용 프로젝트 지침 (Codex 등)
+├── CLAUDE.md                          # Claude Code용 프로젝트 지침
 ├── Makefile                           # 빌드/테스트/배포 자동화
+├── pyproject.toml                     # uv workspace (shared·services 묶음)
+├── uv.lock
+├── synctx-sample.yaml                 # .synctx.yaml 예시
+├── .context/                          # 이 저장소의 하네스 컨텍스트
 ├── docs/                              # 프로젝트 참고 문서
 │   ├── architecture.md
 │   ├── production-service-design.md
+│   ├── local-development.md
+│   ├── html-embed-design.md
+│   ├── viewer-index-design.md
+│   ├── viewer-index-mockup.html
 │   ├── reusable-assets.md
-│   └── xwiki-api-reference.md
+│   ├── xwiki-api-reference.md
+│   └── presentations/                 # 발표 자료(Marp)
 │
 ├── services/                          # 마이크로서비스
 │   ├── viewer/                        # Viewer Service
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
-│   │   └── src/
-│   │       ├── app.py                 # FastAPI 서버 (라우트 통합, lifespan, 칸반)
-│   │       ├── renderer.py            # Markdown → HTML 렌더링
-│   │       ├── meeting.py             # 회의 모드 판단·설정 JSON·메모 포함 HTML 조립
-│   │       ├── viewer_ui.py           # 공통 화면 틀(상단 바·서랍·오류 화면)·검색 결과 페이지 마크업
-│   │       ├── meeting_card.py        # 회의 정보 카드의 한국 시간 일시·안건 가공
-│   │       ├── evidence.py            # 회의 문서의 근거 링크 판정·접두어 매핑·발췌·발췌 정화·근거 모음 데이터
-│   │       ├── search.py              # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
-│   │       ├── static/viewer.css      # 화면 틀·3단 배치·반응형
-│   │       ├── static/viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서·회의 진행 상태·안건 소속 절·발표 장 나누기와 키 판단 로직
-│   │       ├── static/viewer.js       # 상단 바·서랍·목차·안건 추적·회의 진행 상태 갱신·회의 모드 안내·발표 화면·알림·확인 창 동작
-│   │       ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·근거 말풍선 JS(evidence-core.js, evidence.js)·CSS
-│   │       └── static/style.css       # 사용하지 않는 이전 스타일시트
+│   │   ├── src/
+│   │   │   ├── app.py                 # FastAPI 서버 (라우트 통합, lifespan, 칸반)
+│   │   │   ├── renderer.py            # Markdown → HTML 렌더링
+│   │   │   ├── linear_inline.py       # Markdown 인라인 처리를 입력 길이에 선형으로 바꿔 끼움
+│   │   │   ├── embed_view.py          # synctx-html 자리표시·iframe 채우기·PDF 치환
+│   │   │   ├── meeting.py             # 회의 모드 판단·설정 JSON·메모 포함 HTML 조립
+│   │   │   ├── viewer_ui.py           # 공통 화면 틀(상단 바·서랍·오류 화면)·검색 결과 페이지 마크업
+│   │   │   ├── meeting_card.py        # 회의 정보 카드의 한국 시간 일시·안건 가공
+│   │   │   ├── evidence.py            # 회의 문서의 근거 링크 판정·접두어 매핑·발췌·발췌 정화·근거 모음 데이터
+│   │   │   ├── search.py              # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
+│   │   │   ├── static/viewer.css      # 화면 틀·3단 배치·반응형
+│   │   │   ├── static/viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서·회의 진행 상태·안건 소속 절·발표 장 나누기와 키 판단 로직
+│   │   │   ├── static/viewer.js       # 상단 바·서랍·목차·안건 추적·회의 진행 상태 갱신·회의 모드 안내·발표 화면·알림·확인 창 동작
+│   │   │   ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·근거 말풍선 JS(evidence-core.js, evidence.js)·CSS
+│   │   │   ├── static/vendor/         # 내려받기 HTML에 넣는 highlight.js·mermaid 사본
+│   │   │   └── static/style.css       # 사용하지 않는 이전 스타일시트
+│   │   └── tests/                     # pytest 단위·API 테스트, js/(node --test)
 │   │
 │   ├── cdn/                           # CDN Service
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
-│   │   └── src/
-│   │       └── app.py                 # FastAPI 서버 (업로드/서빙/관리 통합)
+│   │   ├── src/
+│   │   │   └── app.py                 # FastAPI 서버 (업로드/서빙/관리 통합)
+│   │   └── tests/
+│   │       └── test_cdn_api.py        # API 테스트
 │   │
 │   ├── marp/                          # Marp Service
 │   │   ├── Dockerfile                 # multi-stage (node + python)
@@ -366,9 +384,10 @@ synctx/
 │   │   ├── src/
 │   │   │   ├── sync_cli.py            # CLI 엔트리포인트 (synctx-sync)
 │   │   │   ├── sync_engine.py         # 동기화 오케스트레이션 + retry
+│   │   │   ├── embed_sync.py          # synctx-html 블록 합본·XWiki/OpenProject 본문 변환
 │   │   │   ├── harness_validator.py   # 하네스 검증 (synctx_common.harness 위임)
 │   │   │   ├── state.py               # state.json atomic read/write
-│   │   │   ├── lease.py               # 실행 잠금 (O_CREAT|O_EXCL)
+│   │   │   ├── lease.py               # 저장소별 실행 잠금 (K8s Lease, 클러스터 밖에서는 O_CREAT|O_EXCL 파일 잠금)
 │   │   │   ├── metrics_push.py        # 저장소별 메트릭 누적 보존 + Pushgateway push
 │   │   │   ├── sync_converters/mermaid.py # Mermaid → SVG 변환
 │   │   │   └── targets/               # 동기화 대상
@@ -376,7 +395,10 @@ synctx/
 │   │   │       └── openproject.py     # OpenProject REST API 클라이언트
 │   │   └── tests/                     # 단위/통합 테스트
 │   │       ├── test_state.py
+│   │       ├── test_lease.py
 │   │       ├── test_sync_engine.py
+│   │       ├── test_embed_sync.py
+│   │       ├── test_metrics_push.py
 │   │       ├── test_xwiki_client.py
 │   │       └── test_op_client.py
 │   │
@@ -398,20 +420,28 @@ synctx/
 │   │       ├── test_event_store.py
 │   │       └── test_feedback_metrics.py
 │   │
-│   ├── drawio/                        # Draw.io Service (외부 이미지)
-│   │
-│   └── slides/                        # Slides Server (Nginx)
+│   └── slides/                        # Slides Server (Nginx). Draw.io는 외부 이미지라 디렉터리가 없다
 │       ├── nginx.conf
-│       └── sync-sidecar.sh
+│       ├── sync-sidecar.sh            # 출판 저장소 git pull
+│       ├── generate-index.sh          # 출판 HTML 목록 index.html 생성
+│       ├── refresh-server.sh          # 즉시 pull 요청을 받는 refresh 서버
+│       └── tests/
+│           └── test_slides_scripts.py
 │
 ├── shared/                            # 서비스 간 공유 라이브러리
 │   └── synctx-common/
 │       ├── pyproject.toml
 │       ├── tests/                     # 단위 테스트
 │       │   ├── test_auth.py
+│       │   ├── test_config_collab.py
+│       │   ├── test_config_html_embed.py
+│       │   ├── test_cumulative_metrics.py
 │       │   ├── test_frontmatter.py
 │       │   ├── test_git_manager.py
 │       │   ├── test_harness.py
+│       │   ├── test_html_bundle.py
+│       │   ├── test_html_bundle_blocks.py
+│       │   ├── test_logging.py
 │       │   └── test_observability.py
 │       └── src/synctx_common/
 │           ├── config.py              # 공통 설정 스키마 (Pydantic)
@@ -419,6 +449,8 @@ synctx/
 │           ├── auth.py                # 공통 인증 헬퍼
 │           ├── frontmatter.py         # Front matter 파서 + 검증
 │           ├── observability.py       # healthz/readyz/version/metrics
+│           ├── logging.py             # 구조화 JSON 로그 (인증정보 가림)
+│           ├── html_bundle.py         # synctx-html 블록: HTML 묶음 합본 + sandbox iframe
 │           ├── metrics_push.py        # CronJob 메트릭 실행 간 누적 + Pushgateway push (Sync·Feedback 공용)
 │           ├── harness.py             # Harness Validator 로직
 │           └── cli.py                 # CLI 엔트리포인트
@@ -428,16 +460,19 @@ synctx/
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       ├── values-production.yaml
+│       ├── values-local.yaml          # 로컬 minikube (run-viewer.sh 설정의 원본)
 │       ├── files/
 │       │   ├── nginx.conf             # Slides Nginx 설정
-│       │   └── sync-sidecar.sh        # Slides sync sidecar 스크립트
+│       │   ├── sync-sidecar.sh        # Slides sync sidecar 스크립트
+│       │   └── generate-index.sh      # Slides 목록 페이지 생성
 │       └── templates/
 │           ├── _helpers.tpl
 │           ├── validate.yaml          # 서비스 옵션 의존성 검사 (synctx.validate)
 │           ├── NOTES.txt              # 켜진 서비스 요약과 의존성 경고
 │           ├── services.yaml          # 전 서비스 Service 리소스
 │           ├── configmap.yaml         # .synctx.yaml ConfigMap
-│           ├── secret.yaml            # Feedback HMAC/salt/SMTP
+│           ├── secret.yaml            # Feedback HMAC/salt/SMTP, OpenProject·XWiki 자격증명
+│           ├── git-secret.yaml        # Git 읽기·출판 토큰
 │           ├── ingress.yaml
 │           ├── viewer-deployment.yaml
 │           ├── cdn-deployment.yaml
@@ -466,23 +501,40 @@ synctx/
 │
 ├── cdn-data/                          # CDN 초기 벤더 파일
 │   ├── mermaid/10.9.1/
-│   ├── highlight.js/
-│   └── ...
+│   ├── highlight.js/11.9.0/
+│   └── chart.js/4.4.4/
 │
 └── scripts/
     ├── docker/                        # Docker Compose 배포 스크립트
     │   ├── deploy.sh                  # 검사 → 게이트웨이 설정 생성 → up → 꺼진 서비스 정리 → CDN 채우기
     │   ├── down.sh                    # 중지 (--volumes일 때만 볼륨 삭제)
     │   ├── compose.sh                 # 배포와 같은 인자로 docker compose 명령 실행
-    │   └── seed_cdn.py                # cdn 컨테이너 안에서 vendor 파일 채우기
+    │   ├── seed_cdn.py                # cdn 컨테이너 안에서 vendor 파일 채우기
+    │   └── _common.sh                 # 공통 함수
+    ├── local/                         # 로컬 개발 (minikube, Viewer 단독 실행)
+    │   ├── run-viewer.sh              # Docker·minikube 없이 Viewer+Marp+CDN 파일을 한 프로세스로 실행
+    │   ├── run_viewer.py              # run-viewer.sh가 실행하는 묶음 앱(/view, /marp, /cdn)
+    │   ├── setup.sh                   # minikube 전체 설치 (steps/ 순서 실행)
+    │   ├── verify.sh                  # 환경 검증
+    │   ├── cleanup.sh                 # 환경 정리
+    │   ├── _common.sh
+    │   └── steps/                     # infra.sh, build.sh, deploy-deps.sh, deploy-synctx.sh
     ├── download-cdn-vendor.sh         # CDN 벤더 파일 다운로드
     ├── generate-manifest.sh           # SHA-256 artifact manifest 생성
     ├── backup-restore.sh              # PVC 백업/복구
     ├── smoke-test.sh                  # 배포 후 smoke test
     ├── verify-authz.sh                # 권한 매핑 검증
     ├── external_importer.py           # External Mail Importer (Phase 7)
+    ├── test-all.sh                    # 서비스별 pytest 일괄 실행
+    ├── README.md                      # 스크립트 사용법
     └── tests/
-        └── test_external_importer.py  # Importer 단위 테스트
+        ├── test_external_importer.py  # Importer 단위 테스트
+        ├── test_helm_options.py       # Helm 서비스 옵션 렌더
+        ├── test_docker_deploy.py      # Docker 배포 검사·게이트웨이 설정
+        ├── test_seed_cdn.py
+        ├── test_run_viewer.py
+        ├── test_prometheus_rules.py   # PrometheusRule promtool 평가
+        └── prometheus/                # Sync·Feedback Alert 평가 케이스
 ```
 
 ### 사용자 workspace 하네스 규격
@@ -515,10 +567,10 @@ workspace/
 | HTTP 클라이언트 | `httpx` (비동기 지원) |
 | 설정 | YAML (`pyyaml`) |
 | Mermaid 변환 | `@mermaid-js/mermaid-cli` (mmdc) |
-| PDF 변환 | Marp CLI (슬라이드), Chrome CDP (문서) |
+| PDF 변환 | Marp CLI (슬라이드, Viewer 문서 PDF도 Marp Service 경유) |
 | CDN 파일 관리 | FastAPI + `aiofiles` |
 | 정적 서빙 | Nginx (Slides Server) |
-| 컨테이너 | Docker |
+| 컨테이너 | Docker, Docker Compose (K8s 없는 서버 배포) |
 | 오케스트레이션 | Kubernetes + Helm Chart |
 | 동기화 실행 | K8s CronJob / GitLab CI pipeline |
 | 관측성 | Prometheus (ServiceMonitor·PrometheusRule), Sync·Feedback CronJob 메트릭은 Pushgateway |
@@ -533,11 +585,27 @@ workspace/
 
 상세 자산 목록은 [docs/reusable-assets.md](docs/reusable-assets.md) 참조.
 
+## 버전별 주요 변경
+
+버전 체계는 0.6.0부터 도입했고, 그 이전 버전 태그는 주요 기능이 들어간 커밋에 나중에 붙였다(그 커밋들의 Chart·패키지 버전 표기는 `0.1.0`). 버전마다 바뀐 PR 목록과 전체 비교는 각 릴리스에 있다.
+
+| 버전 | 날짜 | 주요 변경 |
+|------|------|-----------|
+| [0.6.0](https://github.com/sch0718/synctx/releases/tag/v0.6.0) | 2026-10-22 | **Phase 8.1b 회의 근거와 CronJob 메트릭.** 회의 문서의 근거 링크에 원문 발췌 말풍선과 근거 모음(`synctx.meeting.references`), Sync·Feedback CronJob 메트릭을 Pushgateway로 수집해 Alert를 실제로 평가, Helm 의존성 규칙 D8(메트릭을 켰는데 sync-state PVC가 없으면 렌더 실패), Markdown 인라인 렌더 선형화, 문서 전체를 코드와 맞춤 |
+| [0.5.0](https://github.com/sch0718/synctx/releases/tag/v0.5.0) | 2026-10-22 | **Viewer UX 개편.** 상단 바·서랍·3단 문서 화면의 공통 틀, 파일 찾기·최근 문서, 저장소 본문 검색(`git grep`), `run-viewer.sh`로 Docker 없이 Viewer 실행, 회의 정보 카드·발표 화면·첫 사용 안내, Git 토큰이 오류 응답에 새지 않게 수정 |
+| [0.4.0](https://github.com/sch0718/synctx/releases/tag/v0.4.0) | 2026-10-16 | **Phase 9 인터랙티브 HTML 임베드와 배포 옵션.** `synctx-html` 블록을 한 파일로 합쳐 Viewer sandbox iframe과 XWiki html 매크로로 보여 줌, 서비스별 배포 옵션·Docker Compose 배포, 문서 파일 트리, Sync lease 강화, Python 3.13 |
+| [0.3.0](https://github.com/sch0718/synctx/releases/tag/v0.3.0) | 2026-10-03 | **Phase 8.1a 회의 모드.** 회의 Front Matter(`synctx.meeting`), 메모·형광펜·패널, 메모 내보내기·가져오기, 메모 포함 오프라인 HTML, XSS 수정, 모든 테마 글자 대비 4.5:1 이상 |
+| [0.2.0](https://github.com/sch0718/synctx/releases/tag/v0.2.0) | 2026-10-03 | **운영 준비.** 로컬 minikube 시뮬레이션, Prometheus 실계측·Alert, CDN 업로드, Viewer 인덱스·브랜치 선택, Marp Mermaid·미리보기, Slides 인덱스 |
+| [0.1.0](https://github.com/sch0718/synctx/releases/tag/v0.1.0) | 2026-06-20 | **Phase 1–7 핵심 구현.** 공통 라이브러리, Viewer·CDN·Marp·Slides·Draw.io, Sync Engine(XWiki·OpenProject), 관측성, Harness Validator, Outbound Feedback |
+
 ## 문서
 
 | 문서 | 설명 |
 |------|------|
 | [아키텍처 설계](docs/architecture.md) | 마이크로서비스 설계, Marp, CDN, Helm Chart, 설정 체계 |
 | [운영 서비스 설계](docs/production-service-design.md) | 실제 서비스 운영을 위한 보안, 상태 관리, 배포, 체크리스트 |
+| [로컬 개발 환경](docs/local-development.md) | Viewer 단독 실행(`run-viewer.sh`)과 minikube 로컬 환경 |
+| [인터랙티브 HTML 임베드 설계](docs/html-embed-design.md) | Phase 9 `synctx-html` 블록 설계 기록 |
+| [Viewer Index Page 설계](docs/viewer-index-design.md) | 저장소 목록·파일 트리 화면 초기 설계 기록 (현행 화면은 아키텍처 설계 3.6) |
 | [재활용 자산 목록](docs/reusable-assets.md) | 기존 저장소에서 가져올 코드와 활용 방안 |
 | [XWiki API 레퍼런스](docs/xwiki-api-reference.md) | XWiki REST API 사용법과 제약 사항 |

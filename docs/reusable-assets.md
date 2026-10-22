@@ -2,6 +2,8 @@
 
 기존 저장소에서 synctx 마이크로서비스에 가져올 수 있는 코드와 자산을 정리한 문서.
 
+> 상태: 1장의 코드·자산은 반입을 마쳤다. 반입 뒤 달라진 곳(만들지 않은 모듈, 이름이 바뀐 클래스, 제거한 자산)은 각 항목의 `상태`에 적었다. 3장은 반입 시점의 개발 계획이다.
+
 ## 소스 저장소
 
 | 저장소 | 경로 | 설명 |
@@ -52,6 +54,7 @@
   - `diff_since(sha)` — 특정 커밋 이후 변경된 파일 목록 반환 (Added/Modified/Deleted 구분)
   - `changed_files()` — 변경된 .md 파일만 필터링
   - `commit_and_push()` — Marp Service 출판 시 Git 커밋+푸시
+- **상태**: `diff_since()`·`commit_and_push()`(Marp `app.py`가 호출)는 `shared/synctx-common/src/synctx_common/git_manager.py`에 추가됐다. `changed_files()`는 만들지 않고 Sync Engine이 `diff_since()` 결과를 `_should_process`로 거른다. 이후 `grep()`(Viewer 본문 검색), `resolve_ref()`·`read_resolved()`·`file_paths()` 등이 더해졌다
 
 ### 1.3 config.py → shared/synctx-common `config.py`
 
@@ -68,6 +71,7 @@
   - `MarpConfig` — Marp 설정 (publish_repo, themes 등)
   - `CdnConfig` — CDN 설정 (storage_path, allowed_extensions 등)
   - `MappingRule`, `SyncConfig` — 경로 매핑, 동기화 옵션
+- **상태**: 위 모델은 모두 `shared/synctx-common/src/synctx_common/config.py`에 있다. `AuthConfig`는 `RepoAuthConfig`로, `RepoProfile`은 `HtmlEmbedConfig`·`CollabRepoConfig` 등을 더해 확장됐고, `WebhookConfig`는 클래스로 두지 않았다. `load_config()`는 그대로 있다
 
 ### 1.4 mermaid_to_svg.py → Sync Engine `sync_converters/mermaid.py`
 
@@ -82,6 +86,7 @@
 - **수정 필요 사항**:
   - CLI argparse 제거, 함수형 API로 리팩토링
   - `extract_mermaid_blocks(md_text) → list[MermaidBlock]` 형태로 단순화
+- **상태**: `services/sync/src/sync_converters/mermaid.py`에 함수형 API `convert_mermaid_to_svg(code) → bytes`를 더해 Sync Engine(`_process_mermaid_blocks`)이 쓴다. `extract_mermaid_blocks`는 만들지 않았고 CLI(`parse_args`·`main`)는 남아 있다
 
 ### 1.5 convert_md_to_html.py (참고)
 
@@ -100,7 +105,7 @@
   - `build_print_html()` — 인쇄용 HTML 조합
 - **대상 서비스**: Viewer Service (문서 PDF 다운로드용. Marp PDF는 Marp CLI가 처리)
 - **비고**: `markdown_converter/src/md_preview/pdf_converter.py`에 더 발전된 버전(Remote CDP 지원)이 있음
-- **상태**: 한 번 반입했으나 호출하는 곳이 없어 제거함. 문서 PDF 다운로드를 구현할 때 다시 반입
+- **상태**: 한 번 반입했으나 호출하는 곳이 없어 제거함. 이후 Viewer의 문서 PDF 다운로드(`download?format=pdf`)는 이 모듈을 다시 반입하지 않고 Marp Service의 `/api/marp/convert`를 호출해 구현했다(`services/viewer/src/app.py` `download_file`)
 
 ### 1.7 테마 CSS (7종)
 
@@ -139,6 +144,7 @@
 - **활용**: `cdn-data/{library}/{version}/` 구조에 맞게 재배치. 단, **docsify 관련 파일은 synctx가 서버사이드 렌더링을 사용하므로 기본 반입 대상에서 제외**한다.
 - **관련 스크립트**: `20. Helm/scripts/download-cdn-vendor.sh` → `scripts/download-cdn-vendor.sh`
 - **추가 필요 라이브러리**: highlight.js (코드 구문 강조) — 기존 CDN에 미포함이므로 다운로드 스크립트에 추가 필요
+- **상태**: `cdn-data/`에 mermaid 10.9.1, chart.js 4.4.4, highlight.js 11.9.0이 `{library}/{version}/`과 `latest/`로 있고, `scripts/download-cdn-vendor.sh`가 highlight.js까지 내려받는다
 
 ### 1.11 Nginx 설정 + Helm Chart
 
@@ -148,6 +154,7 @@
   - `20. Helm/docs-site/` — Helm Chart (deployment, service, ingress)
 - **대상 서비스**: Slides Server (Nginx 설정, Dockerfile 참고), Helm Chart 전체 구조 참고
 - **수정 필요 사항**: Docsify 전용 설정을 synctx Slides Server에 맞게 수정
+- **상태**: `services/slides/nginx.conf`로 반입했다. 별도 Dockerfile은 만들지 않고 공식 `nginx` 이미지에 ConfigMap으로 설정을 마운트하며(`helm/synctx/templates/slides-deployment.yaml`), Git 동기화는 `sync-sidecar.sh` 사이드카가 맡는다
 
 ---
 
@@ -182,7 +189,7 @@ git diff --name-status <last-sync-sha>..HEAD -- '*.md'
 - CDN 파일과 출판 HTML은 PVC로 영속화
 - `pull-and-save-images.sh` 패턴으로 이미지 tar 반입
 - Helm Chart 기반 K8s 배포
-- 내부 레지스트리(`registry.internal`)에 이미지 push 후 배포
+- 내부 레지스트리(`registry.local:5000`)에 이미지 push 후 배포
 
 ---
 
@@ -193,7 +200,7 @@ git diff --name-status <last-sync-sha>..HEAD -- '*.md'
 | 모듈 | 설명 | 복잡도 |
 |------|------|--------|
 | `app.py` | FastAPI 서버 (라우터 등록) | 낮음 |
-| `repo_routes.py` | 저장소 API (기존 md-preview 기반이나 구조 변경) | 중 |
+| `repo_routes.py` | 저장소 API (기존 md-preview 기반이나 구조 변경). 별도 모듈 없이 `app.py`에 구현 | 중 |
 | Marp 연동 UI | PDF 다운로드/출판 버튼 + Marp Service API 호출 | 중 |
 | Draw.io 연동 | `.drawio` 파일 감지 → Draw.io Service 열기 링크 | 낮음 |
 
@@ -202,7 +209,7 @@ git diff --name-status <last-sync-sha>..HEAD -- '*.md'
 | 모듈 | 설명 | 복잡도 |
 |------|------|--------|
 | `app.py` | FastAPI 서버 + StaticFiles 마운트 | 낮음 |
-| `cdn_routes.py` | 파일 업로드 API + 관리 웹 UI | 중 |
+| `cdn_routes.py` | 파일 업로드 API + 관리 웹 UI. 별도 모듈 없이 `app.py`에 구현 | 중 |
 
 ### Marp Service
 
@@ -232,7 +239,7 @@ git diff --name-status <last-sync-sha>..HEAD -- '*.md'
 | 모듈 | 설명 | 복잡도 |
 |------|------|--------|
 | `nginx.conf` | 정적 파일 서빙 설정 | 낮음 |
-| `Dockerfile` | Nginx + 설정 번들 | 낮음 |
+| `Dockerfile` | Nginx + 설정 번들. 만들지 않고 공식 `nginx` 이미지에 ConfigMap으로 설정 마운트 | 낮음 |
 
 ### 공통
 
@@ -240,7 +247,7 @@ git diff --name-status <last-sync-sha>..HEAD -- '*.md'
 |------|------|--------|
 | `shared/synctx-common` | 공통 라이브러리 패키지 | 중 |
 | `helm/synctx/` | Helm Chart 전체 | 중 |
-| `scripts/pull-and-save-images.sh` | Docker 이미지 오프라인 반입 스크립트 (`jgraph/drawio` 포함) | 낮음 |
+| `scripts/pull-and-save-images.sh` | Docker 이미지 오프라인 반입 스크립트 (`jgraph/drawio` 포함). 이 저장소에는 없고 기존 인프라 저장소의 스크립트 흐름을 따른다 | 낮음 |
 
 ---
 

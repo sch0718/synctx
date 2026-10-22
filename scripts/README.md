@@ -12,11 +12,15 @@ scripts/
 ├── verify-authz.sh            # 권한 매핑 검증
 ├── smoke-test.sh              # 배포 후 smoke test
 ├── external_importer.py       # 외부 피드백 메일 수신 → PR 생성
+├── test-all.sh                # 서비스별 pytest 일괄 실행
 ├── tests/                     # 스크립트 테스트
 │   ├── test_external_importer.py
 │   ├── test_helm_options.py   # Helm 서비스 옵션 렌더
 │   ├── test_docker_deploy.py  # Docker 배포 검사·게이트웨이 설정
-│   └── test_seed_cdn.py       # CDN 채우기
+│   ├── test_seed_cdn.py       # CDN 채우기
+│   ├── test_run_viewer.py     # run-viewer.sh의 로컬 설정 생성·묶음 앱
+│   ├── test_prometheus_rules.py  # 렌더한 PrometheusRule을 promtool로 평가
+│   └── prometheus/            # Sync·Feedback Alert 평가 케이스 (*.test.yaml)
 ├── docker/                    # Docker Compose 배포 (K8s 없는 서버)
 │   ├── deploy.sh              # 검사 → 게이트웨이 설정 → compose up → CDN 채우기
 │   ├── down.sh                # 중지 (--volumes일 때만 볼륨 삭제)
@@ -131,7 +135,7 @@ cat email_body.json | python scripts/external_importer.py
 
 ## Docker Compose 배포 (docker/)
 
-K8s 클러스터가 없는 Docker 서버에 synctx를 배포한다. 옵션 파일 `deploy/docker/synctx.env`(`synctx.env.example`을 복사)의 `SYNCTX_SERVICES`로 켤 서비스(`viewer, cdn, marp, slides, drawio`)를 고른다. 옵션과 절차는 `docs/production-service-design.md` 8.6, Runbook은 12.7을 따른다.
+K8s 클러스터가 없는 Docker 서버에 synctx를 배포한다. 옵션 파일 `deploy/docker/synctx.env`(`synctx.env.example`을 복사)의 `SYNCTX_SERVICES`로 켤 서비스(`viewer, cdn, marp, slides, drawio`)를 고른다. Sync·Feedback은 아직 지원하지 않는다. 옵션과 절차는 `docs/production-service-design.md` 8.6, Runbook은 12.7을 따른다.
 
 ### deploy.sh — 배포
 
@@ -149,7 +153,7 @@ K8s 클러스터가 없는 Docker 서버에 synctx를 배포한다. 옵션 파�
 
 ```bash
 ./scripts/docker/down.sh                         # 컨테이너·네트워크 제거 (볼륨 유지)
-./scripts/docker/down.sh --volumes               # 볼륨도 삭제 (CDN 파일, 저장소 캐시, Slides worktree)
+./scripts/docker/down.sh --volumes               # 볼륨도 삭제 (CDN 파일, 저장소 캐시, Marp 작업 디렉터리, Slides worktree)
 ```
 
 ### compose.sh — compose 명령 실행
@@ -176,16 +180,17 @@ minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.loc
 ./scripts/local/run-viewer.sh                    # http://127.0.0.1:18000/view/
 ./scripts/local/run-viewer.sh --port 18100       # 포트 변경
 ./scripts/local/run-viewer.sh --config my.yaml   # 다른 .synctx.yaml 사용
+./scripts/local/run-viewer.sh --values my-values.yaml --cache-dir /tmp/synctx-cache   # values 파일·캐시 위치 변경
 ```
 
-Docker·minikube 없이 uvicorn 하나로 `/view`(Viewer), `/marp`(Marp), `/cdn`(`cdn-data/`)을 띄운다. 설정은 `helm/synctx/values-local.yaml`의 `synctxConfig.data`에서 `~/.cache/synctx/synctx.local.yaml`을 만들어 쓰고, 토큰은 `GIT_READ_TOKEN` 또는 `values-local.secret.yaml`에서 실행 시점에만 읽는다. Marp에는 `marp`·`mmdc`(npm)와 Chrome이 필요하며, 없으면 Marp를 끈 채 실행한다. 자세한 내용은 [docs/local-development.md](../docs/local-development.md) 0절.
+`uv`(Python 3.13 이상)로 실행하며, Docker·minikube 없이 uvicorn 하나로 `/view`(Viewer), `/marp`(Marp), `/cdn`(`cdn-data/`)을 띄운다. 설정은 `helm/synctx/values-local.yaml`의 `synctxConfig.data`에서 `~/.cache/synctx/synctx.local.yaml`을 만들어 쓰고, 토큰은 `GIT_READ_TOKEN` 또는 `values-local.secret.yaml`에서 실행 시점에만 읽는다. Marp에는 `marp`·`mmdc`(npm)와 Chrome이 필요하며, 없으면 Marp를 끈 채 실행한다. 자세한 내용은 [docs/local-development.md](../docs/local-development.md) 0절.
 
 ### 사전 요구사항
 
 - [minikube](https://minikube.sigs.k8s.io/)
 - [Docker](https://www.docker.com/)
 - [Helm](https://helm.sh/)
-- [mkcert](https://github.com/FiloSofia92/mkcert) (로컬 TLS 인증서)
+- [mkcert](https://github.com/FiloSottile/mkcert) (로컬 TLS 인증서)
 
 ### setup.sh — 전체 설치
 
@@ -198,6 +203,8 @@ Docker·minikube 없이 uvicorn 하나로 `/view`(Viewer), `/marp`(Marp), `/cdn`
 ./scripts/local/setup.sh --skip-build   # 이미지 빌드 건너뜀
 ./scripts/local/setup.sh --skip-deploy  # 배포 건너뜀
 ```
+
+환경변수 `MINIKUBE_CPUS`(기본 4), `MINIKUBE_MEMORY`(MB, 기본 8192)로 minikube 크기를 바꾼다.
 
 설치 완료 후 별도 터미널에서 `minikube tunnel`을 실행해야 접속 가능하다.
 
@@ -213,8 +220,8 @@ Docker·minikube 없이 uvicorn 하나로 `/view`(Viewer), `/marp`(Marp), `/cdn`
 ./scripts/local/steps/build.sh                        # 전체 빌드
 ./scripts/local/steps/build.sh --only viewer,cdn,marp # 특정 서비스만
 ./scripts/local/steps/build.sh --skip feedback        # 특정 서비스 제외
-./scripts/local/steps/build.sh --tag 0.1.0-$(git rev-parse --short HEAD)  # 태그 지정 (기본 latest)
-./scripts/local/steps/build.sh --no-load --tag 0.1.0-$(git rev-parse --short HEAD)  # minikube에 올리지 않고 호스트 Docker에만 (Docker 배포 확인용)
+./scripts/local/steps/build.sh --tag 0.6.0-$(git rev-parse --short HEAD)  # 태그 지정 (기본 latest)
+./scripts/local/steps/build.sh --no-load --tag 0.6.0-$(git rev-parse --short HEAD)  # minikube에 올리지 않고 호스트 Docker에만 (Docker 배포 확인용)
 
 # 의존성 배포만 (XWiki, OpenProject, Mailpit)
 ./scripts/local/steps/deploy-deps.sh
@@ -266,6 +273,6 @@ synctx 서비스(Pod/CronJob), Certificate, 의존성 서비스, Monitoring, Ing
 # external_importer 테스트
 uv run pytest scripts/tests/test_external_importer.py -v
 
-# 스크립트 테스트 전체 (helm이나 docker가 없으면 해당 테스트는 건너뜀)
+# 스크립트 테스트 전체 (helm, docker, promtool이 없으면 해당 테스트는 건너뜀)
 uv run --frozen --all-packages pytest scripts/tests -q
 ```

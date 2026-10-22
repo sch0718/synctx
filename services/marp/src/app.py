@@ -18,7 +18,7 @@ from synctx_common.git_manager import GitRepoManager
 from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"
 configure_logging(service_name="marp")
 logger = logging.getLogger(__name__)
 

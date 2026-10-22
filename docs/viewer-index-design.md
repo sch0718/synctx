@@ -1,5 +1,7 @@
 # Viewer Index Page 설계
 
+> 상태: 구현됐지만 이 문서의 초기 설계와 다르다. 저장소 목록(`/`)과 저장소 화면(`/{repo_id}`)은 구현됐으나, 파일 트리는 `@webreflection/file-tree`·CDN 업로드·Jinja2 템플릿 없이 `app.py`(`view_index`, `view_repo`)와 `viewer_ui.py`가 서버에서 그리고 `static/viewer.css`·`viewer.js`로 동작한다. 이후 Viewer UX 개편으로 화면은 공통 틀(상단 바·서랍·3단 문서 화면), 파일 찾기·최근 문서, 저장소 본문 검색(`/search`)으로 바뀌었다. 4장 화면 구성, 6장 디자인 토큰, 7·8장 계획과 파일 목록은 설계 당시 기록이며 현행 구조는 `docs/architecture.md` 3.6 화면 구성에 있다.
+
 ## 1. 개요
 
 Viewer 서비스의 `/view` 진입점에 **저장소 목록 + 파일 트리** 인덱스 페이지를 추가한다.

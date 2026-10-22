@@ -1,5 +1,7 @@
 # 인터랙티브 HTML 임베드 설계
 
+> 상태: Phase 9로 구현됐다(PR #27 이후 보강 포함). 이 문서는 설계 기록이며, 현행 구조 요약은 `docs/architecture.md` Phase 9, 설정·보안·운영 절차는 `docs/production-service-design.md`에 있다. 아래 `지금`·`기존`은 구현 전을 기준으로 쓴 표현이다.
+
 ## 1. 개요
 
 Markdown 문서 안에 저장소의 HTML 묶음(모션 그래픽처럼 JS로 움직이는 HTML 파일과 그 CSS·JS)을 넣는다. 넣은 HTML은 Viewer와 XWiki 양쪽에서 **조작 가능한 상태로** 보이게 한다.
@@ -52,10 +54,10 @@ flowchart LR
 
 | 구성 요소 | 위치 | 역할 |
 |---|---|---|
-| `html_bundle` | `shared/synctx-common/src/synctx_common/html_bundle.py` (신규) | 블록 파싱, 묶음을 한 파일로 합치기, iframe 감싸기 |
+| `html_bundle` | `shared/synctx-common/src/synctx_common/html_bundle.py` | 블록 파싱, 묶음을 한 파일로 합치기, iframe 감싸기 |
 | `HtmlEmbedConfig` | `shared/synctx-common/src/synctx_common/config.py` | `RepoProfile.html_embed` (신뢰 저장소 지정) |
-| Viewer | `services/viewer/src/renderer.py`, `app.py` | 블록을 자리표시로 바꾸고, sanitizer를 거친 뒤 iframe으로 바꾸기 |
-| Sync Engine | `services/sync/src/sync_engine.py` | `_process_html_blocks`, 묶음 파일 변경 시 다시 동기화 |
+| Viewer | `services/viewer/src/embed_view.py`, `app.py` | 블록을 자리표시로 바꾸고, sanitizer를 거친 뒤 iframe으로 바꾸기 |
+| Sync Engine | `services/sync/src/embed_sync.py`, `sync_engine.py` | 블록 분석·XWiki 매크로 변환(`analyze`, `render_for_xwiki`), 묶음 파일 변경 시 다시 동기화 |
 
 새 외부 의존성은 없다. HTML 해석은 표준 라이브러리 `html.parser`로 한다.
 
@@ -95,6 +97,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 - `sha256`
 - `size`
 - `files`: 합본에 쓴 저장소 경로 목록
+- `title`: 진입 HTML의 `<title>`
 
 합본에 실패하면 `BundleError`를 던진다. 여기에는 사유와 함께 다음이 들어 있다.
 
@@ -181,7 +184,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 ## 6. Viewer
 
 1. `embed_view.prepare`가 렌더링 전에 ` ```synctx-html ` 블록을 `<div class="synctx-html-slot" data-slot="N"></div>`로 바꾸고, 블록 내용은 따로 넘긴다.
-2. `app._render_file_response`가 `_sanitize_html`을 **거친 뒤** 각 자리표시를 `to_iframe` 결과로 바꾼다. sanitizer는 그대로 두므로 Markdown 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지워진다.
+2. `app._render_file_response`가 `_sanitize_html`을 **거친 뒤** `embed_view.fill`로 각 자리표시를 `to_iframe` 결과로 바꾼다. sanitizer는 그대로 두므로 Markdown 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지워진다.
 3. `html_embed.enabled=false`인 저장소에서는 자리표시를 안내 상자로 바꾼다. 안내 상자에는 "이 저장소는 HTML 실행이 허용되지 않음"과 `src` 소스 보기 링크를 넣는다.
 4. 합본에 실패하면 자리표시를 오류 상자로 바꾼다. 오류 상자에는 사유와 `src` 경로를 넣는다. 페이지의 나머지는 그대로 렌더링한다.
 5. CSP(`csp_middleware`)를 두 군데 바꾼다.
@@ -202,7 +205,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 
 ### 7.1 블록 변환
 
-`_process_html_blocks(repo, md_path, body, ref) -> str`를 `_process_mermaid_blocks` 바로 앞에서 호출한다(xwiki, both 경로 모두). 블록은 다음으로 바꾼다.
+`embed_sync.analyze`로 블록을 분석하고 `render_for_xwiki`로 바꾼다. `SyncEngine._render_html_blocks_for_xwiki`가 XWiki 게시 전에 호출하며(xwiki, both 경로 모두) mermaid 변환(`_process_mermaid_blocks`)은 그 뒤 게시 단계에서 돈다. 블록은 다음으로 바꾼다.
 
 ```
 {{html clean="false"}}<iframe class="synctx-html" sandbox="allow-scripts" …></iframe>{{/html}}
@@ -221,7 +224,7 @@ def to_iframe(result: BundleResult, aspect: str | None, height: int | None, titl
 
 ### 7.3 다시 처리할 조건
 
-지금의 `run_sync`에는 다시 처리를 막는 관문이 세 군데 있다.
+구현 전의 `run_sync`에는 다시 처리를 막는 관문이 세 군데 있었다.
 
 | 관문 | 위치 | 문제 |
 |---|---|---|
@@ -361,15 +364,15 @@ repositories:
 
 | 수준 | 대상 | 내용 |
 |---|---|---|
-| 단위 | `html_bundle` | CSS·JS 넣기, `</script` 이스케이프, 이미지 `data:` 변환, 외부 CSS 안 `url()`을 CSS 파일 기준으로 푸는지(하위 폴더 CSS + 상위 폴더 이미지), 저장소 밖 경로 거부, 허용 목록 밖 출처 거부(같은 호스트의 다른 포트, `http://`, `//` 포함), `@import`·상대 module import·`async` 오류, `defer` 스크립트를 순서대로 `<body>` 끝으로 옮기는지, `defer`와 `module`이 함께 있으면 오류인지, 글꼴 `data:` 변환, CSP meta가 `<head>` 첫 자식이고 `allowed_origins`가 `https://` 출처 그대로 반영되며 `blob:`·`media-src`가 없는지, 실패 시 `BundleError.files`·`missing`, 크기 상한, 같은 입력·같은 출력 |
+| 단위 | `html_bundle` (`test_html_bundle.py`, `test_html_bundle_blocks.py`) | CSS·JS 넣기, `</script` 이스케이프, 이미지 `data:` 변환, 외부 CSS 안 `url()`을 CSS 파일 기준으로 푸는지(하위 폴더 CSS + 상위 폴더 이미지), 저장소 밖 경로 거부, 허용 목록 밖 출처 거부(같은 호스트의 다른 포트, `http://`, `//` 포함), `@import`·상대 module import·`async` 오류, `defer` 스크립트를 순서대로 `<body>` 끝으로 옮기는지, `defer`와 `module`이 함께 있으면 오류인지, 글꼴 `data:` 변환, CSP meta가 `<head>` 첫 자식이고 `allowed_origins`가 `https://` 출처 그대로 반영되며 `blob:`·`media-src`가 없는지, 실패 시 `BundleError.files`·`missing`, 크기 상한, 같은 입력·같은 출력 |
 | 단위 | `to_iframe` | 속성 이스케이프(`"`, `&`, `<`, `{`, `}`), 합본·`title`에 `{{/html}}{{velocity}}`를 넣어도 출력에 `{{`가 없는지, sandbox 값이 정확히 `allow-scripts`인지 |
-| Viewer | `test_viewer_api.py` | 블록이 iframe이 되는지, 본문에 직접 쓴 iframe은 여전히 지워지는지, 비신뢰 저장소의 안내 상자, 합본 실패 시 오류 상자, CSP 헤더에 `font-src data:`와 공통 `allowed_origins`가 더해진 것 외에 변화 없음, `allowed_origins`가 비어 있지 않은 저장소의 다운로드 안내(정적 외부 참조가 없어도 붙는지) |
-| Sync | `test_sync_engine.py` | 블록을 html 매크로로 바꾸는지, `motion.js`만 바뀌어도 md를 다시 동기화하는지(본문 SHA 같음), HEAD가 같아도 `enabled`·`allowed_origins` 변경 시 색인의 md를 다시 처리하는지, 색인이 없는 기존 상태에서 전체 스캔, `motion.js`가 빠져 실패한 뒤 그 파일만 추가해도 md를 다시 처리해 복구하는지, 비신뢰 저장소, 경로·오류 사유에 `{{/html}}`·`}}}`가 들어가도 안내 매크로 본문에 중괄호가 없는지, 내용이 같은 `a.js`에서 `b.js`로 참조만 바꾼 뒤 `b.js`를 고치면 다시 처리하는지(색인이 게시 생략과 무관하게 갱신되는지), OP 대상 링크 문구 |
-| 단위 | 설정 모델 | `allowed_origins` 형식 검사(스킴 `https`만, 소문자, 443 생략, 경로·와일드카드·끝 `/` 거부), 저장소 목록이 공통 목록의 부분집합이 아니면 오류 |
+| Viewer | `test_embed_view.py` | 블록이 iframe이 되는지, 본문에 직접 쓴 iframe은 여전히 지워지는지, 비신뢰 저장소의 안내 상자, 합본 실패 시 오류 상자, CSP 헤더에 `font-src data:`와 공통 `allowed_origins`가 더해진 것 외에 변화 없음, `allowed_origins`가 비어 있지 않은 저장소의 다운로드 안내(정적 외부 참조가 없어도 붙는지) |
+| Sync | `test_embed_sync.py`, `test_sync_engine.py` | 블록을 html 매크로로 바꾸는지, `motion.js`만 바뀌어도 md를 다시 동기화하는지(본문 SHA 같음), HEAD가 같아도 `enabled`·`allowed_origins` 변경 시 색인의 md를 다시 처리하는지, 색인이 없는 기존 상태에서 전체 스캔, `motion.js`가 빠져 실패한 뒤 그 파일만 추가해도 md를 다시 처리해 복구하는지, 비신뢰 저장소, 경로·오류 사유에 `{{/html}}`·`}}}`가 들어가도 안내 매크로 본문에 중괄호가 없는지, 내용이 같은 `a.js`에서 `b.js`로 참조만 바꾼 뒤 `b.js`를 고치면 다시 처리하는지(색인이 게시 생략과 무관하게 갱신되는지), OP 대상 링크 문구 |
+| 단위 | 설정 모델 (`test_config_html_embed.py`) | `allowed_origins` 형식 검사(스킴 `https`만, 소문자, 443 생략, 경로·와일드카드·끝 `/` 거부), 저장소 목록이 공통 목록의 부분집합이 아니면 오류 |
 | 수동 | 로컬 XWiki | `markdown/1.2` 안 `{{html}}` 매크로 실행 여부(7.2), 공간 한정 스크립트 권한 계정으로 재생, `{{/html}}`이 든 합본이 매크로 밖으로 새지 않는지 |
 | 수동 | 운영 XWiki | 운영 버전에서 2장 결과 재확인, 실제 Chrome·Edge에서 재생과 CSP meta 차단(비교용 시험 포함) |
 
-테스트 픽스처로 작은 모션 HTML 묶음(CSS 1, JS 1, 이미지 1)을 `services/*/tests/fixtures/`에 둔다.
+테스트 입력(작은 모션 HTML 묶음)은 별도 픽스처 디렉터리 없이 각 테스트 파일 안에 문자열로 둔다.
 
 ## 12. 문서 반영 (CLAUDE.md 일관성 규칙)
 
@@ -380,7 +383,7 @@ repositories:
 | `docs/production-service-design.md` | 3장 보안(sandbox, CSP meta 주입, 매크로 경계 이스케이프, 신뢰 저장소, 잔여 위험: iframe 자체 이동·WebRTC), 설정 스키마(최상위·저장소별 `html_embed`, 출처 형식과 부분집합 검사), 7.2 Viewer 보안 문구와 CSP(`font-src data:`), 메트릭·Alert, 테스트, Runbook(합본 실패·XWiki 스크립트 권한 부여 절차), Phase 체크리스트 |
 | `CLAUDE.md` | Phase 순서 문구 |
 
-**Phase(검토 필요):** 기존 Phase 번호를 바꾸지 않으려고 **Phase 9 "인터랙티브 HTML 임베드"** 를 새로 둔다. Viewer(Phase 1)와 XWiki Sync(Phase 3)에 의존한다.
+**Phase:** 기존 Phase 번호를 바꾸지 않으려고 **Phase 9 "인터랙티브 HTML 임베드"** 를 새로 뒀다(3개 문서와 `CLAUDE.md`에 반영됨). Viewer(Phase 1)와 XWiki Sync(Phase 3)에 의존한다.
 
 ## 13. 구현 순서
 

@@ -11,12 +11,14 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 ## 서비스 구성
 | 서비스 | 역할 |
 |--------|------|
-| Viewer | 마크다운 렌더링 + 칸반 보드 |
+| Viewer | 마크다운 렌더링, 파일 찾기·본문 검색, 칸반 보드, 회의 모드, 인터랙티브 HTML 임베드 |
 | CDN | 정적 자산 서빙 (vendor 라이브러리) |
 | Marp | 프레젠테이션 변환/출판 |
+| Draw.io | 다이어그램 작성·편집 (셀프호스팅) |
 | Sync Engine | Git → XWiki/OpenProject 동기화 |
 | Slides Server | 출판된 슬라이드 서빙 |
 | Feedback Exporter | 외부 피드백 서명 발송 (선택) |
+| Pushgateway | Sync·Feedback CronJob 메트릭 수집 (메트릭 켜짐 시) |
 
 ## 문서 라우팅
 Front matter의 `synctx.type`과 `synctx.route`로 동기화 대상 결정:

@@ -13,10 +13,10 @@ synctx는 마이크로서비스 아키텍처로 구성되며, K8s 클러스터�
 | **CDN Service** | 정적 라이브러리 서빙 + 파일 업로드 | Deployment + PVC |
 | **Marp Service** | 마크다운 → PDF/슬라이드 HTML 변환 + 출판 | Deployment |
 | **Draw.io Service** | 다이어그램 작성·편집 (셀프호스팅) | Deployment |
-| **Sync Webhook** | GitLab Push Event 수신 및 Sync Job 트리거 | Deployment |
-| **Sync Engine** | Git → XWiki/OpenProject 동기화 | CronJob |
+| **Sync Webhook** | GitLab Push Event 수신 및 Sync Job 트리거 (설계만 있음. 코드와 Helm 리소스는 아직 없다) | Deployment |
+| **Sync Engine** | Git → XWiki/OpenProject 동기화 | CronJob + PVC |
 | **Slides Server** | 출판된 프레젠테이션 HTML 서빙 | Deployment + PVC |
-| **Outbound Feedback Exporter** | OpenProject 제한 필드 변경을 서명된 메일 이벤트로 반출 (선택 기능) | CronJob 또는 Deployment |
+| **Outbound Feedback Exporter** | OpenProject 제한 필드 변경을 서명된 메일 이벤트로 반출 (선택 기능) | CronJob |
 
 ```mermaid
 flowchart TB
@@ -28,7 +28,7 @@ flowchart TB
     Drawio["Draw.io Service"]
     Marp["Marp Service"]
     Slides["Slides Server"]
-    SyncWebhook["Sync Webhook<br>Receiver"]
+    SyncWebhook["Sync Webhook<br>Receiver (미구현)"]
     Sync["Sync Engine<br>(CronJob)"]
     Pushgateway["Pushgateway<br>(CronJob 메트릭)"]
     Prometheus[("Prometheus")]
@@ -84,12 +84,12 @@ flowchart TB
 
 - **독립 배포**: 각 서비스를 개별적으로 업데이트·롤백
 - **독립 확장**: 뷰어 트래픽이 많으면 Viewer만 스케일 아웃
-- **기술 다양성**: Viewer/CDN은 Python, Marp는 Node.js, Slides는 Nginx
+- **기술 다양성**: Viewer/CDN은 Python, Marp는 Python(FastAPI) + Node.js(Marp CLI), Slides는 Nginx
 - **장애 격리**: Marp Service 장애가 Viewer에 영향을 주지 않음
 
 서비스 간 통신은 K8s 내부 Service DNS를 사용한다:
-- `http://cdn-service:8000/cdn/mermaid/10.9.1/mermaid.min.js`
-- `http://marp-service:8000/api/marp/convert`
+- `http://synctx-cdn/mermaid/10.9.1/mermaid.min.js` (CDN Service 포트 80, 앱은 `/`에 마운트하고 Ingress가 `/cdn`을 떼어 넘긴다)
+- `http://synctx-marp:8000/api/marp/convert` (Viewer → Marp PDF 변환, `viewer.marp_service_url` 기본값)
 
 ### 2.2 단방향 동기화 (외부→내부)
 
@@ -130,7 +130,7 @@ git diff --name-status -M <last-successful-sha>..HEAD -- <watch-paths>
 
 ### 2.4 목적 기반 지능형 라우팅 (OpenProject vs XWiki)
 
-마크다운 파일의 용도에 따라 동기화 대상이 자동으로 결정됩니다. 이는 파일 경로 또는 Front Matter의 `type` 속성으로 구분됩니다.
+마크다운 파일의 용도에 따라 동기화 대상이 자동으로 결정됩니다. 이는 파일 경로(`mappings`) 또는 Front Matter의 `synctx.target` 속성(`xwiki`·`openproject`·`both`)으로 구분됩니다.
 
 - **프로젝트 관리 및 이슈 트래킹 (OpenProject)**: 요건, 버그, 태스크 등 진행 상태 트래킹이 필요한 문서. 외부망에서는 이를 모아 **마크다운 기반 스크럼 보드(Kanban)** 로 활용합니다.
 - **지식 공유 및 설계 (XWiki)**: 아키텍처 설계, API 규격, 회의록 등 영구적인 지식 자산.
@@ -240,7 +240,7 @@ reports/harness/
 ├── latest.json                 # 기계 처리용 결과
 ├── latest.md                   # 사람 검토용 요약
 └── fixes/
-    └── suggested-patches.md    # AI 또는 사람이 적용할 수정 제안
+    └── suggested-patches.md    # AI 또는 사람이 적용할 수정 제안 (미구현: 현재 latest.json·latest.md만 만든다)
 ```
 
 ### 2.6 내부 CDN을 통한 라이브러리 서빙
@@ -339,12 +339,15 @@ flowchart TD
 
 ```
 GET /api/repos                      저장소 목록
+GET /api/repos/{id}/branches        브랜치 목록
 GET /api/repos/{id}/tree            트리 탐색
 GET /api/repos/{id}/files           볼 수 있는 파일 경로 목록(파일 찾기용)
 GET /api/search                     본문 검색(q·repo·ref). repo가 없으면 모든 저장소
 GET /api/repos/{id}/render          마크다운 렌더링
 GET /api/repos/{id}/download        HTML/PDF 다운로드
 GET /api/repos/{id}/meeting-export  회의 메모 포함 HTML 틀(오프라인, 메모 없음)
+GET /api/repos/{id}/board/{version} 스크럼 보드(칸반) HTML
+GET /raw/{id}/{path}                원본 파일(이미지 등 본문이 참조하는 파일)
 POST /api/repos/{id}/webhook        Git push 알림
 ```
 
@@ -359,7 +362,7 @@ POST /api/repos/{id}/webhook        Git push 알림
 | Mermaid | 클라이언트 사이드 렌더링 | CDN 방식으로 변경 |
 | 코드 하이라이팅 | highlight.js 구문 강조 | CDN 방식으로 변경 |
 | HTML 다운로드 | 자체 완결형 HTML 생성 | 있음 (재활용) |
-| PDF 다운로드 | Chrome CDP 기반 | 있음 (재활용) |
+| PDF 다운로드 | Marp Service(`/api/marp/convert`)로 변환 | Marp 방식으로 변경 |
 | Marp 연동 | "PDF 변환" / "출판" 버튼 | **신규** |
 | 회의 모드 | `?mode=meeting`: 메모·형광펜·회의 정리, `.md`·메모 포함 HTML 내보내기/가져오기. 서버 판단은 `meeting.py`, 화면은 `static/meeting/`. 회의 문서는 정보 카드(`meeting_card.py`)와 발표 화면 `?mode=present`도 쓰고, 회의 모드 화면은 첫 사용 안내를 보인다(3.6) | **신규 (Phase 8.1a)** |
 | 근거 미리보기·근거 모음 | 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선(미리보기)과 문서 끝 근거 모음으로 보임. 서버 판단은 `evidence.py`, 화면은 `static/meeting/evidence*.js·css`. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리킴(3.6) | **신규 (Phase 8.1b)** |
@@ -370,8 +373,9 @@ POST /api/repos/{id}/webhook        Git push 알림
 
 Viewer에서 마크다운 파일을 열람할 때, `marp: true` front matter가 감지되면 추가 UI를 표시한다:
 
-- **PDF 다운로드 버튼** → Marp Service의 변환 API 호출 → PDF 다운로드
-- **출판 버튼** → Marp Service의 출판 API 호출 → Git에 HTML 커밋 → Slides Server URL 반환
+- **슬라이드 미리보기 버튼** → Marp Service의 미리보기 API 호출 → 슬라이드 HTML 표시
+- **PDF 만들기 버튼** → Marp Service의 변환 API 호출 → PDF 다운로드
+- **출판 버튼** → Marp Service의 출판 API 호출 → Git에 HTML 커밋 → Slides Server URL 반환 (`marp.publish_repo`가 설정됐을 때만 표시)
 
 ### 3.5 UI/UX 및 디자인 시스템
 
@@ -422,7 +426,9 @@ cdn-data/
 GET    /cdn/{path}                  정적 파일 서빙
 POST   /api/cdn/upload              단일/다중 파일 업로드
 GET    /api/cdn/list                전체 라이브러리 목록
-GET    /api/cdn/list/{library}      특정 라이브러리의 버전·파일 목록
+GET    /api/cdn/list/{library}      특정 라이브러리의 버전 목록(버전별 파일 수)
+GET    /api/cdn/manifest            라이브러리 manifest
+POST   /api/cdn/scan                저장소에 있는데 manifest에 없는 파일 등록
 DELETE /api/cdn/{path}              파일 삭제
 GET    /api/cdn/admin               업로드 관리 웹 UI
 ```
@@ -431,12 +437,12 @@ GET    /api/cdn/admin               업로드 관리 웹 UI
 
 ```bash
 # 단일 파일
-curl -X POST "http://cdn-service:8000/api/cdn/upload" \
+curl -X POST "http://synctx-cdn/api/cdn/upload" \
   -F "file=@mermaid.min.js" \
   -F "path=mermaid/11.0.0/mermaid.min.js"
 
 # 다중 파일
-curl -X POST "http://cdn-service:8000/api/cdn/upload" \
+curl -X POST "http://synctx-cdn/api/cdn/upload" \
   -F "files=@github.min.css" \
   -F "files=@github-dark.min.css" \
   -F "base_path=highlight.js/11.9.0/styles/"
@@ -447,7 +453,7 @@ curl -X POST "http://cdn-service:8000/api/cdn/upload" \
 버전이 URL에 포함되므로 영구 캐시 가능:
 
 ```
-Cache-Control: max-age=31536000, immutable
+Cache-Control: public, max-age=31536000, immutable
 ```
 
 ## 5. Marp Service 설계
@@ -471,24 +477,24 @@ POST /api/marp/convert              PDF/HTML 변환 + 다운로드
 POST /api/marp/publish              HTML 생성 → Git 커밋 → URL 반환
 POST /api/marp/preview              슬라이드 미리보기 HTML 반환
 GET  /api/marp/themes               사용 가능한 테마 목록
+GET  /api/marp/published            출판된 슬라이드 목록
+DELETE /api/marp/published/{filename} 출판 취소(파일 삭제 + 커밋)
 ```
 
 ### 5.4 PDF 변환 흐름
 
 ```
 POST /api/marp/convert
-  Body: { repo_id, file_path, ref, format: "pdf" }
+  Body: { markdown, format: "pdf" }   # Viewer가 Git에서 읽은 마크다운을 넘긴다
 
-  1. Git 저장소에서 .md 파일 읽기
-  2. marp --pdf --allow-local-files input.md -o output.pdf
+  1. Mermaid 코드 블록을 mmdc로 SVG로 바꿔 인라인으로 넣기
+  2. marp input.md --html --allow-local-files --pdf -o output.pdf
   3. PDF 파일을 응답으로 반환 (Content-Disposition: attachment)
 ```
 
 ```bash
-# Marp CLI 명령어
-marp --pdf --allow-local-files --html \
-  --theme-set /themes/custom.css \
-  input.md -o output.pdf
+# Marp CLI 명령어 (변환 제한 marp.conversion_timeout_seconds, 기본 120초)
+marp input.md --html --allow-local-files --pdf -o output.pdf
 ```
 
 ### 5.5 HTML 출판 흐름
@@ -507,7 +513,7 @@ sequenceDiagram
     Marp->>Git: 2. 출판 경로에 커밋 (_published/slides/...)
     Slides->>Git: 3. git pull (slides-sync sidecar)
     Marp-->>Viewer: Slides Server URL 반환
-    Viewer-->>User: 출판 완료 및 URL 제공 (https://slides.internal/...)
+    Viewer-->>User: 출판 완료 및 URL 제공 (/slides/<파일>.html)
 ```
 
 ### 5.6 Git 출판 기능 (`marp/src/app.py`)
@@ -529,40 +535,42 @@ Slides Server는 PVC에 직접 쓰지 않고, `slides-sync` sidecar가 `publish_
 
 ### 5.7 Marp 테마
 
-기본 테마 외에 커스텀 테마를 CDN Service에서 관리할 수 있다:
+`GET /api/marp/themes`는 Marp 내장 테마(`default`, `gaia`, `uncover`)를 돌려준다. 문서는 front matter `theme:`으로 고른다.
 
-```yaml
-# .synctx.yaml
-marp:
-  themes:
-    - default
-    - gaia
-    - uncover
-  custom_themes:                     # CDN에서 로딩
-    - name: corporate
-      css_url: "/cdn/marp-themes/corporate.css"
-```
+CDN Service에 둔 커스텀 테마를 쓰는 설정(`marp.themes`·`marp.custom_themes`)은 아직 없다. 설정 모델(`MarpConfig`)에 이 키가 없어 `.synctx.yaml`에 적어도 무시된다.
 
 ### 5.8 Dockerfile
 
-Marp CLI는 Node.js 기반이므로 Python + Node.js 멀티 런타임 이미지를 사용한다.
+Marp CLI는 Node.js 기반이므로 Python + Node.js 멀티 런타임 이미지를 사용한다. Node 단계에서 Marp CLI와 Mermaid CLI(`mmdc`)를 설치하고 Python 이미지로 복사한다(`services/marp/Dockerfile`, 저장소 루트에서 빌드).
 
 ```dockerfile
-FROM python:3.13.16-slim-trixie
+ARG NODE_IMAGE=node:20-slim
+ARG PYTHON_IMAGE=python:3.13.16-slim-trixie
 
-# Node.js 설치 (Marp CLI 실행용)
-RUN apt-get update && apt-get install -y nodejs npm chromium \
-    && npm install -g @marp-team/marp-cli \
-    && apt-get clean
+FROM ${NODE_IMAGE} AS node-env
+RUN npm install -g @marp-team/marp-cli @mermaid-js/mermaid-cli
 
-# Chromium 경로 설정 (Marp PDF 변환용)
+FROM ${PYTHON_IMAGE}
+WORKDIR /app
+
+# Chromium(Marp PDF·mmdc용)과 한글 글꼴
+RUN apt-get update && apt-get install -y --no-install-recommends git chromium fonts-noto-cjk && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=node-env /usr/local/bin/node /usr/local/bin/
+COPY --from=node-env /usr/local/lib/node_modules /usr/local/lib/node_modules
+# marp·mmdc·npm 심볼릭 링크 생략
+
 ENV CHROME_PATH=/usr/bin/chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-COPY . /app
-WORKDIR /app
-RUN pip install -e .
+COPY shared/synctx-common /app/shared/synctx-common
+COPY services/marp /app/services/marp
+COPY pyproject.toml /app/
+RUN pip install --no-cache-dir uv && \
+    uv pip install --system -e shared/synctx-common -e services/marp
 
+ENV PYTHONPATH=/app/services/marp/src
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
@@ -575,21 +583,26 @@ Marp Service가 출판한 프레젠테이션 HTML을 정적으로 서빙하는 �
 
 ### 6.2 Nginx 설정
 
+원본은 `helm/synctx/files/nginx.conf`(Helm ConfigMap과 Docker Compose가 같은 파일을 쓴다). 핵심 부분:
+
 ```nginx
 server {
-    listen 80;
-    server_name slides.internal;
+    listen       80;
+    server_name  localhost;
 
-    root /data/published;
+    # slides-sync sidecar가 받은 출판 저장소 working tree
+    root   /data/slides/worktree/_published/slides;
+    index  index.html;   # 목록은 sidecar가 generate-index.sh로 만든다(autoindex 미사용)
 
     location / {
-        autoindex on;
         try_files $uri $uri/ =404;
-    }
+        add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-Content-Type-Options "nosniff";
 
-    # 캐시 설정 (출판물은 변경될 수 있으므로 짧은 캐시)
-    location ~* \.html$ {
-        add_header Cache-Control "no-cache, must-revalidate";
+        # 출판물은 바뀔 수 있으므로 HTML은 항상 재검증
+        if ($request_filename ~* \.(html|htm)$) {
+            add_header Cache-Control "no-cache, no-store, must-revalidate";
+        }
     }
 }
 ```
@@ -606,13 +619,13 @@ sequenceDiagram
     Marp->>Git: 2. Git 저장소에 커밋
     loop 주기적 동기화
         Slides->>Git: 3. git pull (또는 internal refresh trigger 수신 시)
-        Slides->>Slides: /data/published/ 갱신
+        Slides->>Slides: /data/slides/worktree 갱신
     end
-    Note over Slides: 4. 정적 서빙 (repo-a/slides/아키텍처.html 등)
+    Note over Slides: 4. 정적 서빙 (/slides/아키텍처.html, 목록 /slides/index.html)
 ```
 
-Slides Server는 `slides-sync` sidecar를 통해 출판 저장소를 주기적으로 `git pull`한다.
-Marp Service는 push 성공 후 내부 refresh API를 호출하며, refresh 실패 시에도 polling으로 최종 반영된다.
+Slides Server는 `slides-sync` sidecar를 통해 출판 저장소를 주기적으로(`slides.pollingIntervalSeconds`, 기본 60초) `git pull`한다.
+sidecar는 SIGUSR1을 받으면 바로 pull하지만, 현재 Marp Service는 push 뒤 refresh를 부르지 않고 Helm·Docker Compose도 refresh 서버(`services/slides/refresh-server.sh`)를 띄우지 않으므로 출판물은 polling으로 반영된다.
 
 ## 7. Draw.io Service 설계
 
@@ -648,7 +661,7 @@ docker push registry.internal/jgraph/drawio:<pinned-version>
 
 ### 7.4 환경 변수 설정
 
-draw.io 컨테이너의 주요 설정:
+draw.io 컨테이너의 주요 설정(설계 값). 현재 Helm 차트(`drawio-deployment.yaml`)와 Docker Compose는 이 환경 변수를 넣지 않고 이미지 기본값으로 띄운다:
 
 ```yaml
 env:
@@ -677,25 +690,33 @@ sequenceDiagram
 ```
 
 `.drawio` 파일은 XML 기반이므로 Viewer에서 직접 렌더링하지 않고, Draw.io Service로 안내한다.
+다만 지금은 `.drawio`가 Viewer 보기 대상 확장자(`CODE_LANGUAGE_MAP`)에 없어 415가 나므로 이 링크가 실제로 표시되는 경로가 없다(2.7 알려진 한계).
 향후 서버사이드에서 `.drawio` → SVG/PNG 변환 기능을 추가하면 Viewer 인라인 미리보기도 가능하다.
 
 ### 7.6 XWiki 연동
 
 Sync Engine이 `.drawio` 파일을 감지하면 SVG로 변환하여 XWiki 첨부파일로 업로드할 수 있다.
-draw.io CLI(`draw.io --export`)를 사용하거나, draw.io의 XML을 파싱하여 처리한다.
+draw.io CLI(`draw.io --export`)를 사용하거나, draw.io의 XML을 파싱하여 처리한다. (미구현: 현재 Sync Engine은 `.md` 파일만 처리한다.)
 
 ## 8. 설정 체계
 
 ### 8.1 통합 설정 (`.synctx.yaml`)
 
-모든 서비스의 설정을 하나의 ConfigMap으로 관리한다.
+모든 서비스의 설정을 하나의 ConfigMap으로 관리한다(Helm `synctxConfig.create: true`이면 `synctxConfig.data`로 차트가 만들고, 아니면 외부 ConfigMap을 쓴다). 설정 모델은 `shared/synctx-common/src/synctx_common/config.py`의 `SynctxConfig`이고, 최상위 `synctx:`에는 `version`만 둔다. 나머지 키는 최상위에 둔다. 전체 스키마는 [production-service-design.md](production-service-design.md) 4장을 따른다.
 
 ```yaml
 synctx:
   version: "1"
 
-  # Git 설정
-  git:
+# 저장소별 Git 설정 (감시·제외 경로는 저장소마다 둔다)
+repositories:
+  - id: project-docs
+    name: "Team Docs"
+    url: "https://gitlab.internal/team/docs.git"
+    default_ref: main
+    auth:
+      type: token
+      credential_env: GIT_READ_TOKEN
     watch_paths:
       - "docs/**/*.md"
       - "issues/**/*.md"
@@ -703,71 +724,69 @@ synctx:
     ignore_paths:
       - "docs/drafts/**"
       - "_published/**"
-      - "**/README.md"
 
-  # 디렉토리 → 대상 매핑
-  mappings:
-    - path: "docs/"
-      target: xwiki
+# 디렉토리 → 대상 매핑
+mappings:
+  - match:
+      path_prefix: "docs/"
+      extensions: [".md"]
+    target: xwiki
+    xwiki:
       space_from: directory
-    - path: "issues/"
-      target: openproject
+      page_from: filename
+  - match:
+      path_prefix: "issues/"
+      extensions: [".md"]
+    target: openproject
+    openproject:
       project: example-project
 
-  # 동기화 대상
-  targets:
-    xwiki:
-      base_url: "https://wiki.internal"
-      wiki: xwiki
-      auth:
-        type: basic
-        credential_env: XWIKI_TOKEN
-    openproject:
-      base_url: "https://op.internal"
-      auth:
-        type: token
-        credential_env: OP_API_KEY
+# 동기화 대상
+targets:
+  xwiki:
+    base_url: "https://wiki.internal"
+    wiki: xwiki
+    auth:
+      type: basic
+      credential_env: XWIKI_CREDENTIAL
+  openproject:
+    base_url: "https://op.internal"
+    auth:
+      type: token
+      credential_env: OPENPROJECT_API_KEY
 
-  # Viewer 설정
-  viewer:
-    host: "0.0.0.0"
-    port: 8000
-    cdn_base_url: "http://cdn-service:8000/cdn"
-    themes: [github-light, github-dark, cayman]
-    default_theme: github-light
+# Viewer 설정
+viewer:
+  repo_cache_path: "/data/repos"
+  cdn_base_url: "/cdn"
+  marp_service_url: "http://synctx-marp:8000"
 
-  # CDN 설정
-  cdn:
-    storage_path: "/data/cdn"
-    max_upload_size: 50_000_000
-    allowed_extensions: [.js, .css, .woff, .woff2, .ttf, .svg, .png, .map]
-    upload_auth:
-      enabled: true
-      required_role: cdn-admin
+# CDN 설정
+cdn:
+  storage_path: "/data/cdn"
+  max_upload_size_bytes: 50000000
+  allowed_extensions: [".js", ".css", ".woff", ".woff2", ".ttf", ".svg", ".png", ".map"]
+  upload_auth:
+    enabled: true
+    required_role: cdn-admin
 
-  # Marp 설정
-  marp:
-    publish_repo: "https://gitlab.internal/team/published-slides.git"
-    publish_branch: main
-    publish_base_path: "_published/slides"
-    themes: [default, gaia, uncover]
-    custom_themes: []
-    chrome_path: "/usr/bin/chromium"
+# Marp 설정
+marp:
+  publish_repo: "https://gitlab.internal/team/published-slides.git"
+  publish_branch: main
+  publish_base_path: "_published/slides"
+  worktree_path: "/data/marp/publish-worktree"
+  conversion_timeout_seconds: 120
 
-  # Sync 설정
-  sync:
-    on_delete: mark
-    dry_run: false
-    state_path: /data/sync-state
-    lease_namespace: synctx
-
-  # 변환 설정
-  converters:
-    mermaid:
-      enabled: true
-      output_format: svg
-      theme: default
+# Sync 설정
+sync:
+  on_delete: mark
+  dry_run: false
+  state_path: /data/sync-state
+  lease_namespace: synctx
 ```
+
+이 밖에 `runtime`, `authz`, `slides`, `harness`, `outbound_feedback`, `html_embed`(Phase 9) 블록이 있다. Viewer 테마는 설정이 아니라 화면에서 고른다(7개 테마 내장). Sync의 Mermaid → SVG 변환은 XWiki에 게시할 때 별도 설정 없이 항상 한다.
 
 ### 8.2 상태 파일
 
@@ -799,11 +818,13 @@ synctx:
 서비스 간 공유하는 공통 라이브러리. 각 서비스가 pip dependency로 참조한다.
 
 ```
-synctx-common/
+synctx-common/src/synctx_common/
 ├── config.py          # 공통 설정 스키마 (Pydantic model)
 ├── git_manager.py     # Git 저장소 관리 (clone, fetch, tree, read, diff)
 ├── auth.py            # 인증 헬퍼 (credential_env → header 변환)
 ├── frontmatter.py     # YAML front matter 파서 및 Pydantic 검증
+├── html_bundle.py     # synctx-html 블록 파싱·HTML 묶음 합본·CSP meta·sandbox iframe (Phase 9)
+├── logging.py         # 구조화 JSON 로그 설정
 ├── observability.py   # healthz/readyz/version/metrics 공통 라우트
 ├── metrics_push.py    # CronJob 메트릭 실행 간 누적(0 기준값·보류분) + Pushgateway push (Sync·Feedback 공용)
 ├── harness.py         # Harness Validator 로직 (context schema, agent-readiness)
@@ -819,8 +840,10 @@ viewer/src/
 │   ├── render_markdown()
 │   ├── rewrite_links()
 │   └── extract_title()
+├── linear_inline.py    # Python-Markdown 인라인 처리 선형화(긴 입력에서 제곱 이상 느려지는 패턴 교체)
 ├── embed_view.py       # synctx-html 자리표시·iframe 채우기·PDF 치환
 ├── viewer_ui.py        # 공통 화면 틀(상단 바·서랍·오류 화면)·검색 결과 페이지 마크업
+├── meeting.py          # 회의 모드 판단·설정 JSON·템플릿 조각·메모 포함 HTML 내보내기
 ├── meeting_card.py     # 회의 정보 카드의 한국 시간 일시·안건 가공
 ├── evidence.py         # 회의 문서의 근거 링크 판정·접두어 매핑·발췌·발췌 정화·근거 모음 데이터
 ├── search.py           # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
@@ -829,7 +852,11 @@ viewer/src/
     ├── viewer.css      # 화면 틀·3단 배치·반응형
     ├── viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서·회의 진행 상태·안건 소속 절·발표 장 나누기와 키 판단·회의 모드 안내 표시 판단 로직
     ├── viewer.js       # 상단 바·서랍·목차·안건 추적·회의 진행 상태 갱신·회의 모드 안내·발표 화면·알림·확인 창 동작
+    ├── vendor/         # 다운로드 HTML에 인라인으로 넣는 highlight.js·mermaid.js
     └── meeting/
+        ├── memo-core.js      # 회의 모드 메모 로직(DOM 무관)
+        ├── meeting.js        # 회의 모드 화면(메모 버튼·형광펜·패널·저장)
+        ├── meeting.css       # 회의 모드 스타일
         ├── evidence-core.js  # 근거 말풍선 위치 계산·수정 키 판정(DOM 무관)
         ├── evidence.js       # 근거 말풍선·근거 모음으로 이동·Esc 처리
         └── evidence.css      # 말풍선·근거 모음·발표 화면·인쇄 스타일
@@ -840,7 +867,9 @@ viewer/src/
 ```
 cdn/src/
 └── app.py              # FastAPI 앱 + StaticFiles 마운트
-    ├── upload_file()       # 업로드 + MIME 검증 + manifest
+    ├── upload()            # 업로드 + MIME 검증 + manifest
+    ├── get_manifest_api()
+    ├── scan_filesystem()   # 저장소 파일을 manifest에 등록
     ├── list_libraries()
     ├── list_library_versions()
     ├── cdn_admin()         # 관리 웹 UI (HTML)
@@ -852,9 +881,10 @@ cdn/src/
 ```
 marp/src/
 └── app.py              # FastAPI 앱 (라우트 통합)
-    ├── convert()           # PDF/HTML 변환 + 다운로드
-    ├── publish()           # HTML 출판 (Git 커밋, O_CREAT|O_EXCL lock)
-    ├── preview()           # 슬라이드 미리보기
+    ├── convert_presentation()  # PDF/HTML 변환 + 다운로드
+    ├── publish_html()      # HTML 출판 (Git 커밋, O_CREAT|O_EXCL lock)
+    ├── preview_html()      # 슬라이드 미리보기
+    ├── list_themes()       # 내장 테마 목록
     ├── list_published()    # 출판된 슬라이드 목록
     └── unpublish()         # 슬라이드 삭제
 ```
@@ -868,7 +898,7 @@ sync/src/
 ├── harness_validator.py # synctx validate-harness (synctx_common.harness 위임)
 ├── state.py            # state.json atomic read/write
 ├── embed_sync.py       # synctx-html 분석·합본 반영 해시·XWiki 매크로 변환
-├── lease.py            # 실행 잠금 (O_CREAT|O_EXCL 기반)
+├── lease.py            # 저장소별 실행 잠금 (K8s Lease, 클러스터 밖에서는 /tmp 파일 O_CREAT|O_EXCL)
 ├── metrics_push.py     # 저장소별 메트릭 누적 보존 + Pushgateway push (synctx_common.metrics_push 사용)
 ├── sync_converters/
 │   └── mermaid.py      # Mermaid → SVG 변환
@@ -900,15 +930,18 @@ helm/synctx/
 ├── Chart.yaml
 ├── values.yaml
 ├── values-production.yaml          # 운영 환경 오버라이드
+├── values-local.yaml               # 로컬 minikube 오버라이드
 ├── files/
 │   ├── nginx.conf                  # Slides Nginx 설정
-│   └── sync-sidecar.sh             # Slides sync sidecar 스크립트
+│   ├── sync-sidecar.sh             # Slides sync sidecar 스크립트
+│   └── generate-index.sh           # Slides 목록 index.html 생성 (sidecar가 호출)
 └── templates/
     ├── _helpers.tpl                # 서비스 옵션 검사(synctx.validate) 포함
     ├── validate.yaml               # D1·D2·D8 의존성 검사 (fail)
     ├── NOTES.txt                   # 켜진 서비스 요약, D3 경고
     ├── configmap.yaml              # .synctx.yaml → ConfigMap
-    ├── secret.yaml                 # Feedback HMAC/salt/SMTP Secret
+    ├── secret.yaml                 # Feedback HMAC/salt/SMTP, OpenProject·XWiki 자격 증명 Secret (feedback.secrets.create)
+    ├── git-secret.yaml             # Git 읽기·출판 토큰 Secret (git.secrets.create)
     ├── services.yaml               # 전 서비스 Service 리소스 (통합)
     │
     ├── viewer-deployment.yaml
@@ -928,8 +961,8 @@ helm/synctx/
     ├── feedback-cronjob.yaml       # Phase 7 선택: Outbound Feedback Exporter
     │
     ├── slides-deployment.yaml
-    ├── slides-configmap.yaml       # Nginx 설정
-    ├── slides-pvc.yaml             # 출판된 HTML 저장소
+    ├── slides-configmap.yaml       # Nginx 설정 + sidecar 스크립트 (ConfigMap 2개)
+    ├── slides-pvc.yaml             # 출판 저장소 working tree (slides-worktree)
     │
     ├── ingress.yaml                # 통합 Ingress
     ├── servicemonitor.yaml         # Prometheus ServiceMonitor
@@ -939,44 +972,11 @@ helm/synctx/
 
 ### 10.2 values.yaml 핵심 설정
 
+`helm/synctx/values.yaml`의 기본값에서 핵심만 줄여 옮긴다(`pullPolicy`·`resources` 일부 생략). 이미지 태그 기본값은 `"0.6.0"`이고 아래 예시는 배포할 때 고정하는 `"0.6.0-<git-sha>"` 형식으로 적었다. 운영 레지스트리 주소는 `values-production.yaml`이 `repository`에 접두사(`registry.internal/...`)로 붙인다.
+
 ```yaml
-global:
-  imageRegistry: "registry.internal"
-  imagePullSecrets:
-    - name: registry-secret
-
-viewer:
-  enabled: true
-  replicaCount: 2
-  image:
-    repository: synctx/viewer
-    tag: "0.1.0-<git-sha>"
-  resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: 500m, memory: 512Mi }
-
-cdn:
-  enabled: true
-  replicaCount: 1
-  image:
-    repository: synctx/cdn
-    tag: "0.1.0-<git-sha>"
-  persistence:
-    enabled: true
-    size: 10Gi
-    storageClassName: nfs
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
-
-marp:
-  enabled: true
-  replicaCount: 1
-  image:
-    repository: synctx/marp
-    tag: "0.1.0-<git-sha>"
-  resources:
-    requests: { cpu: 200m, memory: 512Mi }
-    limits: { cpu: 1000m, memory: 1Gi }  # Chromium 사용으로 리소스 다소 필요
+podSecurityContext:
+  runAsNonRoot: true
 
 metrics:
   enabled: true                     # ServiceMonitor·PrometheusRule, sync.persistence와 Sync 또는 Feedback이 켜졌으면 Pushgateway
@@ -985,113 +985,163 @@ metrics:
       repository: prom/pushgateway
       tag: "v1.11.1"
 
+synctxConfig:
+  create: false                     # true면 data를 .synctx.yaml ConfigMap으로 만든다
+  data: ""
+
+viewer:
+  enabled: true
+  replicaCount: 1                   # 운영 values는 2
+  image:
+    repository: synctx/viewer
+    tag: "0.6.0-<git-sha>"
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 1000m, memory: 1Gi }
+
+cdn:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: synctx/cdn
+    tag: "0.6.0-<git-sha>"
+  persistence:
+    enabled: true
+    size: 10Gi
+    accessMode: ReadWriteMany
+    storageClass: ""
+
 sync:
   enabled: true
   schedule: "*/5 * * * *"
   image:
     repository: synctx/sync
-    tag: "0.1.0-<git-sha>"
-  resources:
-    requests: { cpu: 50m, memory: 128Mi }
+    tag: "0.6.0-<git-sha>"
+  persistence:                      # sync-state PVC (state.json, 메트릭 누적값)
+    enabled: true
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
 
-drawio:
+feedback:
+  enabled: false                    # Phase 7 선택
+  schedule: "*/5 * * * *"
+  image:
+    repository: synctx/feedback
+    tag: "0.6.0-<git-sha>"
+  secrets:                          # HMAC·salt·SMTP + OpenProject·XWiki 자격 증명 (Sync도 사용)
+    create: false
+    existingSecret: ""
+
+marp:
   enabled: true
   replicaCount: 1
   image:
-    repository: jgraph/drawio
-    tag: "<pinned-version>"
-  env:
-    DRAWIO_SELF_CONTAINED: "1"
+    repository: synctx/marp
+    tag: "0.6.0-<git-sha>"
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { cpu: 500m, memory: 512Mi }
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: 1000m, memory: 2Gi }  # Chromium 사용으로 리소스 다소 필요
 
 slides:
   enabled: true
   replicaCount: 1
   image:
     repository: nginx
-    tag: "1.25-alpine"
+    tag: "1.25.4-alpine"
+  sidecar:
+    image:
+      repository: alpine/git
+      tag: "2.43.0"
+  publishRepoUrl: "https://gitlab.internal/team/published-slides.git"
+  pollingIntervalSeconds: "60"
   persistence:
     enabled: true
     size: 5Gi
-    storageClassName: nfs
+    accessMode: ReadWriteMany
+    storageClass: ""
+
+drawio:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: jgraph/drawio
+    tag: "24.2.5"
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: 1000m, memory: 1Gi }
 
 ingress:
   enabled: true
   className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"   # CDN 업로드
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
   hosts:
     - host: synctx.internal
       paths:
-        - path: /view
+        - path: /view(/(.*))?
+          pathType: ImplementationSpecific
           backend: viewer
-        - path: /cdn
+        - path: /cdn(/(.*))?
+          pathType: ImplementationSpecific
           backend: cdn
-        - path: /marp
+        - path: /marp(/(.*))?
+          pathType: ImplementationSpecific
           backend: marp
-        - path: /drawio
-          backend: drawio
-        - path: /slides
+        - path: /slides(/(.*))?
+          pathType: ImplementationSpecific
           backend: slides
-  tls: []
+        - path: /drawio(/(.*))?
+          pathType: ImplementationSpecific
+          backend: drawio
 
-config:
-  # .synctx.yaml 내용이 ConfigMap으로 주입됨
+git:
+  secrets:                          # Git 읽기(read-token)·출판(publish-token) 토큰
+    create: false
+    existingSecret: ""
 ```
 
 ### 10.3 Ingress 라우팅
 
+`templates/ingress.yaml`이 `ingress.hosts[].paths`를 켜진 서비스만 골라 렌더링한다. 기본 values로 렌더링한 결과(일부):
+
 ```yaml
-# templates/ingress.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "synctx.fullname" . }}
+  name: synctx
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"  # CDN 업로드
+    nginx.ingress.kubernetes.io/rewrite-target: /$2     # /view/a → 서비스에는 /a
 spec:
   ingressClassName: nginx
   rules:
     - host: synctx.internal
       http:
         paths:
-          - path: /view
-            pathType: Prefix
+          - path: /view(/(.*))?
+            pathType: ImplementationSpecific
             backend:
               service:
-                name: {{ include "synctx.fullname" . }}-viewer
-                port: { number: 8000 }
-          - path: /cdn
-            pathType: Prefix
+                name: synctx-viewer
+                port:
+                  name: http
+          - path: /cdn(/(.*))?
+            pathType: ImplementationSpecific
             backend:
               service:
-                name: {{ include "synctx.fullname" . }}-cdn
-                port: { number: 8000 }
-          - path: /marp
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "synctx.fullname" . }}-marp
-                port: { number: 8000 }
-          - path: /drawio
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "synctx.fullname" . }}-drawio
-                port: { number: 8080 }
-          - path: /slides
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "synctx.fullname" . }}-slides
-                port: { number: 80 }
+                name: synctx-cdn
+                port:
+                  name: http
+          # /marp, /slides, /drawio도 같은 모양 (Service 포트: viewer·cdn·slides 80, marp 8000, drawio 8080)
 ```
 
 서비스를 끄면 그 서비스를 가리키는 경로는 Ingress에서 빠지고, 경로가 하나도 남지 않으면 Ingress를 만들지 않는다. `ingress.hosts[].paths[].backend`가 values에 없는 서비스이면 `fail`로 알린다.
 
 ### 10.4 PVC (Persistent Volume Claim)
 
-CDN 파일과 출판된 HTML은 PVC로 영속화한다:
+CDN 파일, Slides가 서빙하는 출판 저장소 working tree, Sync 상태는 PVC로 영속화한다(`cdn-pvc.yaml`, `slides-pvc.yaml`, `sync-state-pvc.yaml`). 각 `<서비스>.persistence.enabled`가 꺼지면 만들지 않고, CDN·Slides는 `emptyDir`을 쓰며 Sync는 상태 볼륨 없이 돈다.
 
 ```yaml
 # CDN PVC
@@ -1100,23 +1150,38 @@ kind: PersistentVolumeClaim
 metadata:
   name: {{ include "synctx.fullname" . }}-cdn-data
 spec:
-  accessModes: [ReadWriteMany]   # CDN Service + 초기 데이터 로딩
-  storageClassName: nfs
+  accessModes:
+    - {{ .Values.cdn.persistence.accessMode | default "ReadWriteMany" }}
+  storageClassName: {{ .Values.cdn.persistence.storageClass | default "" | quote }}
   resources:
     requests:
-      storage: {{ .Values.cdn.persistence.size }}
+      storage: {{ .Values.cdn.persistence.size | default "10Gi" }}
 
-# Slides PVC
+# Slides PVC (slides-sync sidecar가 쓰고 nginx가 읽음)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "synctx.fullname" . }}-slides-data
+  name: {{ include "synctx.fullname" . }}-slides-worktree
 spec:
-  accessModes: [ReadWriteMany]   # Marp Service (쓰기) + Slides Server (읽기)
-  storageClassName: nfs
+  accessModes:
+    - {{ .Values.slides.persistence.accessMode | default "ReadWriteMany" }}
+  storageClassName: {{ .Values.slides.persistence.storageClass | default "" | quote }}
   resources:
     requests:
-      storage: {{ .Values.slides.persistence.size }}
+      storage: {{ .Values.slides.persistence.size | default "5Gi" }}
+
+# Sync 상태 PVC (state.json, Sync·Feedback 메트릭 누적값)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "synctx.fullname" . }}-sync-state
+spec:
+  accessModes:
+    - {{ .Values.sync.persistence.accessMode | default "ReadWriteOnce" }}
+  storageClassName: {{ .Values.sync.persistence.storageClass | default "" | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.sync.persistence.size | default "1Gi" }}
 ```
 
 ### 10.5 배포 명령
@@ -1137,7 +1202,7 @@ helm upgrade synctx ./helm/synctx \
 helm upgrade synctx ./helm/synctx \
   --namespace synctx \
   -f values-production.yaml \
-  --set marp.image.tag=v1.2.0
+  --set marp.image.tag=0.6.0-<git-sha>
 
 # 서비스 끄기 (예: Draw.io 제외)
 helm upgrade synctx ./helm/synctx \
@@ -1216,12 +1281,12 @@ flowchart LR
 | 외부 이미지 레지스트리 | 불가 | `pull-and-save-images.sh`로 tar 반입 |
 | Marp CLI Chromium | 필요 | Marp PDF 변환 시 headless Chromium 사용, 이미지에 번들 |
 | XWiki Incoming Webhook | 미제공 | pull 모델(CronJob) 사용 |
-| XWiki 배치 API | 미제공 | 단건 PUT 병렬 실행 (`asyncio` + `httpx`) |
+| XWiki 배치 API | 미제공 | 파일마다 단건 PUT을 차례로 실행 (`httpx.AsyncClient`). `targets.xwiki.concurrency` 설정은 아직 쓰지 않음 |
 | 양방향 동기화 | 미지원 | 단, 승인된 메일 게이트웨이를 통한 allowlist 기반 Outbound Feedback 이벤트 반출은 선택 기능으로 허용 가능 |
 | 한글 파일명 | 지원 | `git -c core.quotepath=false` |
 | 삭제 동기화 | 선택적 | 기본: 마킹 |
 | CDN/Slides 영속성 | PVC 필수 | NFS StorageClass 권장 (ReadWriteMany) |
-| Draw.io 외부 연결 | 차단 | `DRAWIO_SELF_CONTAINED=1`로 완전 오프라인 동작 |
+| Draw.io 외부 연결 | 차단 | 폐쇄망이라 외부 연결 불가. `DRAWIO_SELF_CONTAINED=1` 등은 설계 값이며 차트·Compose에는 아직 넣지 않음(7.4) |
 | Draw.io 파일 저장 | 브라우저 로컬 | 서버사이드 저장소 미제공, Git 커밋으로 공유 |
 
 ## 12. 구현 우선순위

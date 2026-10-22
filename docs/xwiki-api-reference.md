@@ -2,6 +2,8 @@
 
 synctx의 XWiki 동기화 클라이언트 구현 시 참고할 API 레퍼런스.
 
+> 상태: XWiki 일반 레퍼런스이며 구현 범위와 다른 곳이 있다. 구현은 `services/sync/src/targets/xwiki.py`(`XWikiClient`: 페이지 조회·upsert·삭제, 첨부 조회·업로드)다. 미구현·차이는 2장(token 인증), 3장(스페이스 이름), 7장(Pandoc), 8장(병렬 호출·이미지)에 적었다. `{{html}}` 매크로로 HTML을 임베드하는 방법은 `docs/html-embed-design.md`에 있다.
+
 ## 1. 개요
 
 XWiki는 페이지 CRUD를 위한 REST API를 제공한다.
@@ -49,6 +51,8 @@ targets:
       # token: 토큰 문자열
 ```
 
+설정 모델은 `token`도 받지만 `XWikiClient`는 `basic`만 처리한다(`token`이면 인증 헤더를 붙이지 않는다). 운영 설정은 `basic`을 쓴다.
+
 ## 3. URL 구조
 
 ```
@@ -72,12 +76,15 @@ XWiki는 중첩 스페이스를 지원한다. URL에서 `/spaces/{name}`을 반�
 /rest/wikis/xwiki/spaces/아키텍처/spaces/백엔드/pages/시스템-설계
 ```
 
-synctx에서 디렉토리 깊이가 2 이상이면 중첩 스페이스로 매핑:
+synctx에서 디렉토리 깊이가 2 이상이면 중첩 스페이스로 매핑하는 것을 구상했으나, 구현(`SyncEngine._derive_xwiki_target`)은 디렉터리를 `.`로 이은 하나의 스페이스 이름을 쓴다:
 
 ```
 docs/아키텍처/백엔드/설계.md
-  → spaces/아키텍처/spaces/백엔드/pages/설계
+  → space="docs.아키텍처.백엔드", page="설계"
+  → spaces/docs.아키텍처.백엔드/pages/설계
 ```
+
+저장소 루트의 파일은 저장소 id가 스페이스 이름이다.
 
 ## 4. 페이지 API
 
@@ -244,14 +251,14 @@ pandoc -f markdown -t xwiki input.md -o output.xwiki
 ### synctx 기본 전략
 
 **방법 A를 기본으로 사용한다.** 마크다운 원본을 유지하면 외부에서의 편집과 동기화가 간편하다.
-방법 B는 Markdown 확장 설치가 불가능한 환경을 위한 대안으로 지원한다.
+방법 B는 Markdown 확장 설치가 불가능한 환경을 위한 대안이지만 아직 구현하지 않았다. 운영은 방법 A(`markdown/1.2`)만 쓴다.
 
 ```yaml
 # .synctx.yaml
 targets:
   xwiki:
     syntax: markdown/1.2    # markdown/1.2 | xwiki/2.1
-    # xwiki/2.1 선택 시 pandoc 변환을 자동 수행
+    # xwiki/2.1 선택 시 pandoc 변환은 구현되지 않았다(본문을 변환 없이 보낸다)
 ```
 
 ## 8. synctx 구현 시 고려 사항
@@ -286,6 +293,8 @@ async def sync_all(pages: list[SyncItem]):
 
 동시 요청 수를 제한하여 XWiki 서버 부하를 방지한다 (`asyncio.Semaphore`).
 
+구현은 이 방식이 아니다. `SyncEngine`은 문서를 하나씩 순서대로 게시하며, `targets.xwiki.concurrency` 설정은 아직 쓰이지 않는다.
+
 ### 8.3 마크다운 내 이미지 경로 처리
 
 마크다운 문서에 상대 경로로 참조된 이미지는 XWiki 첨부파일로 업로드한 뒤,
@@ -300,12 +309,14 @@ async def sync_all(pages: list[SyncItem]):
 # → 같은 페이지에 첨부된 파일을 참조
 ```
 
+구현 범위: Mermaid 변환 SVG(8.4)만 첨부로 올린다. 본문의 상대 경로 이미지를 첨부로 올리고 경로를 바꾸는 처리는 구현되어 있지 않다.
+
 ### 8.4 Mermaid 다이어그램 처리
 
 XWiki의 Markdown 확장은 Mermaid 코드 블록을 자체적으로 렌더링하지 못한다.
 두 가지 방법:
 
-1. **SVG 변환 후 첨부** (권장): mermaid_to_svg.py로 SVG 생성 → 첨부파일 업로드 → 이미지 링크로 교체
+1. **SVG 변환 후 첨부** (권장, 구현됨): `sync_converters/mermaid.py`로 SVG 생성 → 첨부파일 업로드 → 이미지 링크로 교체
 2. **XWiki Mermaid 매크로**: XWiki에 Mermaid 매크로를 별도 설치하면 코드 블록 그대로 저장 가능 (단, 추가 확장 설치 필요)
 
 ### 8.5 한글 URL 인코딩

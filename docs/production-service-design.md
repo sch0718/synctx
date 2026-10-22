@@ -39,7 +39,7 @@
 - Marp Service는 HTML 생성 후 `publish_repo`에 커밋하고 push한다.
 - Slides Server는 PVC에 직접 쓰지 않는다.
 - Slides Server는 `slides-sync` sidecar가 `publish_repo`를 pull한 working tree를 읽기 전용으로 서빙한다.
-- Marp Service는 push 성공 후 내부 refresh API를 호출한다. refresh 실패 시에도 sidecar의 polling이 최종 반영한다.
+- 설계는 Marp Service가 push 성공 후 내부 refresh API를 호출하는 것이지만, 지금은 호출하지 않고 refresh 서버도 배포하지 않는다. 출판물은 sidecar의 polling으로 반영된다.
 
 이 결정으로 Git 이력과 서빙 상태의 기준이 분리되지 않는다.
 
@@ -49,16 +49,16 @@ Sync Engine 상태는 내부 PVC에 저장한다.
 
 ```
 /data/sync-state/
-├── repos/
-│   └── {repo_id}/
-│       ├── state.json
-│       ├── state.json.bak
-│       ├── runs/
-│       │   └── 2026-06-19T10-30-00Z.json
-│       └── failures/
-│           └── {run_id}.json
-└── locks/
+├── {repo_id}.json            # 저장소별 상태
+├── {repo_id}.bak             # 직전 상태
+├── metrics/
+│   └── {repo_id}.json        # Sync 메트릭 누적값 (9.2)
+├── feedback_state.json       # Outbound Feedback 마지막 처리 시각
+├── feedback_events.json      # Outbound Feedback event store
+└── feedback_metrics.json     # Outbound Feedback 메트릭 누적값 (9.2)
 ```
+
+실행 기록은 따로 파일로 남기지 않는다. 최근 실행 id는 상태의 `last_run_id`, 실패는 `pending_failures`와 Job 로그로 본다. Lease를 쓸 수 없을 때의 파일 lock은 `/tmp/synctx-sync-{repo_id}.lock`이다.
 
 상태 파일은 Git 저장소에 커밋하지 않는다. 내부 동기화 상태는 운영 파생 데이터이며 외부 반출 대상이 아니다.
 
@@ -224,7 +224,7 @@ authz:
 내부 API는 별도 service token을 요구한다.
 
 - `POST /api/repos/{id}/webhook`
-- `POST /internal/slides/refresh`
+- `POST /internal/slides/refresh` (설계. 지금은 배포하지 않는다)
 
 토큰은 K8s Secret에서 주입하며, ConfigMap에 저장하지 않는다.
 
@@ -232,16 +232,16 @@ authz:
 
 | Secret | 사용처 | 권한 |
 |--------|--------|------|
-| `GIT_READ_TOKEN` | Viewer, Sync Engine, Marp | source repo read |
-| `GIT_PUBLISH_TOKEN` | Marp, slides-sync | publish repo write/read |
+| `GIT_READ_TOKEN` | Viewer, Sync Engine, Marp, slides-sync | source repo read, slides-sync의 publish repo pull |
+| `GIT_PUBLISH_TOKEN` | Marp | publish repo write/read |
 | `GITLAB_WEBHOOK_SECRET` | Sync Webhook Receiver | GitLab push event 검증 |
 | `XWIKI_CREDENTIAL` | Sync Engine | page/attachment write |
 | `XWIKI_HTML_CREDENTIAL` | Sync Engine | `html_embed.enabled` 저장소 전용 XWiki 계정. page/attachment write + 대상 공간 한정 script right (`XWIKI_CREDENTIAL`과 다른 계정) |
-| `OPENPROJECT_API_KEY` | Sync Engine | work package write |
+| `OPENPROJECT_API_KEY` | Sync Engine, Outbound Feedback Exporter | work package write (Exporter는 read) |
 | `OUTBOUND_SMTP_CREDENTIAL` | Outbound Feedback Exporter | approved mail gateway send |
 | `OUTBOUND_FEEDBACK_HMAC_KEY` | Outbound Feedback Exporter, External Importer | event signature |
 | `OUTBOUND_FEEDBACK_HASH_SALT` | Outbound Feedback Exporter | changed_by pseudonymization |
-| `SYNCTX_SERVICE_TOKEN` | internal API | service-to-service |
+| `SYNCTX_SERVICE_TOKEN` | internal API | service-to-service. 값이 있을 때만 Viewer webhook이 `X-Service-Token` 헤더를 검사한다(현재 Helm·Compose는 주입하지 않음) |
 
 모든 Secret은 env 또는 mounted file로만 전달한다. 로그에는 credential 값과 credential이 포함된 URL을 출력하지 않는다.
 
@@ -310,6 +310,7 @@ repositories:
       - "docs/drafts/**"
       - "_published/**"
       - ".context/**"
+    storage_mode: full   # full | shallow | blobless | treeless (shallow는 shallow_depth, blobless·treeless는 본문 검색 제외)
     collab:
       enabled: false   # 모든 Viewer 사용자에게 공개 가능한 저장소에만 true (회의 모드·협업 연동 대상)
     html_embed:
@@ -353,6 +354,8 @@ targets:
       credential_env: OPENPROJECT_API_KEY
     external_key_custom_field: synctx_external_key
     protected_fields: ["assignee"]
+    assignee_map:
+      hong.gildong: 5
     type_map:
       task: 1
       bug: 2
@@ -372,6 +375,7 @@ viewer:
   repo_cache_path: "/data/repos"
   max_render_size_bytes: 5242880
   cdn_base_url: "https://synctx.internal/cdn"
+  marp_service_url: "http://synctx-marp:8000"   # PDF 다운로드 때 Viewer가 부르는 Marp 내부 주소
 
 cdn:
   storage_path: "/data/cdn"
@@ -553,7 +557,7 @@ synctx:
 | `subject` | 선택 | 없으면 첫 번째 H1, 없으면 파일명 |
 | `status` | 선택 | 없으면 `open` |
 | `priority` | 선택 | 없으면 `normal` |
-| `assignee` | 선택 | 사용자 매핑 테이블 또는 login/email로 해석 |
+| `assignee` | 선택 | `targets.openproject.assignee_map`(이름 → 사용자 id)으로 해석. 표에 없으면 경고만 남기고 담당자를 넣지 않는다 |
 | `version` | 선택 | version name 또는 id |
 | `due_date` | 선택 | ISO date |
 
@@ -651,7 +655,7 @@ git diff --name-status -M <last_successful_sha>..HEAD -- <watch_paths>
 | `A` | 새 target resource 생성 |
 | `M` | 기존 target resource 업데이트 |
 | `D` | delete policy에 따라 mark/delete/ignore (아래 참고) |
-| `R` | old resource mark 후 new resource upsert. target key가 동일하면 update |
+| `R` | old path `D`와 new path `A`로 나눠 처리한다(old 쪽은 delete policy를 따른다) |
 
 **delete policy 대상별 동작:**
 
@@ -719,14 +723,13 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 
 상태 파일은 atomic write로 갱신한다.
 
-1. 기존 `state.json`을 `state.json.bak`으로 복사한다.
-2. 새 상태를 같은 디렉토리의 임시 파일 `state.json.tmp.{pid}`에 쓴다.
-3. 파일 내용을 `fsync`한다.
-4. 부모 디렉토리를 `fsync`한다.
-5. `os.replace(tmp, state.json)`로 rename한다.
-6. rename 후 부모 디렉토리를 다시 `fsync`한다.
+1. 새 상태를 같은 디렉토리의 임시 파일 `{repo_id}.tmp.{pid}`에 쓴다.
+2. 파일 내용을 `fsync`한다.
+3. 기존 `{repo_id}.json`이 있으면 `{repo_id}.bak`으로 rename한다.
+4. 임시 파일을 `{repo_id}.json`으로 rename한다.
+5. rename 후 부모 디렉토리를 `fsync`한다.
 
-읽기 시 `state.json`이 JSON 파싱에 실패하면 `state.json.bak`을 읽고 `state_recovered_from_backup` 이벤트를 남긴다.
+읽기 시 `{repo_id}.json`이 없거나 JSON 파싱에 실패하면 `{repo_id}.bak`을 읽고 `state_recovered_from_backup` 로그를 남긴다.
 
 ```json
 {
@@ -763,24 +766,27 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | Endpoint | 용도 |
 |----------|------|
 | `GET /healthz` | 프로세스 생존 확인 |
-| `GET /readyz` | 설정, 필수 의존성, 저장소 접근 준비 확인 |
+| `GET /readyz` | 트래픽 받을 준비 확인. 준비 전에는 503(Viewer는 시작 때 저장소 clone·fetch가 끝나야 ready) |
 | `GET /metrics` | Prometheus metrics |
-| `GET /version` | git sha, build time, dependency manifest |
+| `GET /version` | 서비스 버전(`{"version": "0.6.0"}`) |
 
 ### 7.2 Viewer Service
 
 | Method | Path | 권한 | 설명 |
 |--------|------|------|------|
 | GET | `/api/repos` | viewer | 접근 가능한 repo 목록 |
+| GET | `/api/repos/{repo_id}/branches` | viewer | 브랜치 목록과 기본 브랜치(`{"branches", "default"}`) |
 | GET | `/api/repos/{repo_id}/tree?ref=&path=` | viewer | Git tree 조회 |
 | GET | `/api/repos/{repo_id}/files?ref=` | viewer | 볼 수 있는 파일 경로 목록(`{"files": [...]}`, 파일 찾기용). 조회 실패 502 |
 | GET | `/api/search?q=&repo=&ref=` | viewer | 본문 검색(`{"query", "repos": [{"id", "name", "status", "truncated", "matches": [{"path", "line", "before", "match", "after"}]}]}`). `repo`가 없으면 모든 저장소. 검색어 2~100글자·줄바꿈 없음, `ref`는 `repo`와 함께만 쓰며 어기면 400, 모르는 저장소 404 |
 | GET | `/search?q=&repo=&ref=&ref_repo=` | viewer | 본문 검색 결과 HTML 페이지(`search`는 예약 경로) |
-| GET | `/api/repos/{repo_id}/render?ref=&path=` | viewer | Markdown HTML 렌더링 |
-| GET | `/api/repos/{repo_id}/raw?ref=&path=` | viewer | 원본 파일 다운로드 |
-| GET | `/api/repos/{repo_id}/download?format=html|pdf` | viewer | 변환 다운로드 |
+| GET | `/api/repos/{repo_id}/render?ref=&path=&theme=&mode=` | viewer | Markdown HTML 렌더링 |
+| GET | `/raw/{repo_id}/{path}?ref=` | viewer | 원본 파일 |
+| GET | `/api/repos/{repo_id}/download?path=&format=raw\|html\|pdf&ref=` | viewer | 원본·변환 다운로드(기본 `raw`, `pdf`는 Marp 호출) |
 | GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음, 근거 모음·말풍선 포함). 회의 모드 조건 불충족 404 |
-| POST | `/api/repos/{repo_id}/webhook` | service | Git push 알림 |
+| GET | `/api/repos/{repo_id}/board/{version}` | viewer | 스크럼 보드 HTML |
+| GET | `/`, `/{repo_id}?ref=&path=`, `/{repo_id}/{path}?ref=&theme=&mode=` | viewer | 화면 경로: 저장소 목록, 폴더 화면, 문서 화면(`mode=meeting` 회의 모드, `mode=present` 발표 화면) |
+| POST | `/api/repos/{repo_id}/webhook` | viewer + service token | Git push 알림(저장소 fetch). `SYNCTX_SERVICE_TOKEN`이 있으면 `X-Service-Token`이 같아야 한다 |
 
 보안:
 
@@ -798,17 +804,22 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 
 | Method | Path | 권한 | 설명 |
 |--------|------|------|------|
-| GET | `/cdn/{path}` | viewer | 정적 파일 서빙 |
-| GET | `/api/cdn/manifest` | viewer | 라이브러리 manifest |
-| POST | `/api/cdn/upload?force=false` | cdn-admin | 파일 업로드. 기존 파일 교체는 `force=true` 필요 |
-| DELETE | `/api/cdn/{path}` | cdn-admin | 파일 삭제 또는 disable |
+| GET | `/cdn/{path}` | - | 정적 파일 서빙 |
+| GET | `/api/cdn/manifest` | - | 라이브러리 manifest |
+| GET | `/api/cdn/list`, `/api/cdn/list/{library}` | - | 라이브러리 목록, 라이브러리의 version별 파일 수 |
+| GET | `/api/cdn/admin` | - | 업로드·삭제 관리 화면(동작은 아래 cdn-admin API를 부른다) |
+| POST | `/api/cdn/upload?force=false` | cdn-admin | 파일 업로드(`file`+`path` 한 개 또는 `files`+`base_path` 여러 개). 기존 파일 교체는 `force=true` 필요 |
+| POST | `/api/cdn/scan` | cdn-admin | 저장소에 직접 놓인 파일을 manifest에 등록 |
+| DELETE | `/api/cdn/{path}` | cdn-admin | 파일 삭제 |
+
+조회 경로(`-`)는 CDN 앱이 역할을 검사하지 않는다. cdn-admin 검사는 `authz.enabled`와 `cdn.upload_auth.enabled`가 모두 켜졌을 때만 하고, `cdn_admin`·`platform_admin` 그룹을 받는다.
 
 운영 기본값:
 
 - version path는 immutable이다.
 - 기존 파일이 있고 `force=false`이면 409를 반환한다.
 - `force=true`는 `cdn-admin` 권한, 변경 사유, audit log를 요구한다.
-- 삭제는 실제 파일 삭제 대신 manifest에서 disabled 처리한다.
+- 삭제는 파일을 지우고 manifest 항목에 `disabled: true`와 `deleted_at`을 남긴다(audit log 포함).
 - `/cdn/latest` alias는 운영 사용을 금지하고 개발 환경에서만 허용한다.
 - 업로드 크기 제한: 기본 50 MB (`max_upload_size_bytes: 50000000`).
 
@@ -841,15 +852,17 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 
 | Method | Path | 권한 | 설명 |
 |--------|------|------|------|
-| POST | `/api/marp/convert` | publisher | PDF/HTML 변환 |
-| POST | `/api/marp/publish` | publisher | HTML 생성 후 publish repo push |
-| GET | `/api/marp/themes` | viewer | 사용 가능 테마 |
+| POST | `/api/marp/convert` | publisher | PDF/HTML 변환(`{"markdown", "format": "pdf"\|"html"}`) |
+| POST | `/api/marp/preview` | publisher | HTML 미리보기 |
+| POST | `/api/marp/publish` | publisher | HTML 생성 후 publish repo push(`{"markdown", "filename"}`) |
+| GET | `/api/marp/published` | publisher | 출판된 HTML 목록 |
+| DELETE | `/api/marp/published/{filename}` | publisher | 출판 취소(파일 삭제 커밋 후 push) |
+| GET | `/api/marp/themes` | - | 사용 가능 테마(앱이 역할을 검사하지 않는다) |
 
 출판 규칙:
 
-- publish 작업은 repo별 Kubernetes Lease lock을 획득한다. Lease 이름은 `synctx-marp-publish-{repo_id}`다.
-- 로컬 개발 환경에서는 publish worktree 안의 `.synctx-publish.lock` 파일 lock으로 fallback한다.
-- push 실패가 non-fast-forward이면 fetch/rebase 후 1회 재시도한다.
+- publish·출판 취소는 `marp.worktree_path` 안의 `.publish.lock` 파일 lock(`O_CREAT|O_EXCL`)을 잡는다. 이미 진행 중이면 409를 돌려준다. Kubernetes Lease lock은 아직 쓰지 않는다.
+- 커밋한 뒤 `pull --rebase`로 원격 변경을 받고 push한다.
 - 같은 `publish_path`는 새 commit으로 갱신한다.
 - 응답 `url`은 `/slides/<이름>.html`이다. 받은 `filename`에 `.html`이 없으면 붙이고, 저장 경로·커밋 메시지·`url`에 같은 이름을 쓴다.
 
@@ -870,6 +883,8 @@ Webhook Receiver 정책:
 
 수동 실행이 필요하면 `kubectl create job --from=cronjob/synctx-sync`를 사용한다.
 운영 UI/API는 Phase 4 이후 추가한다.
+
+구현 상태: Webhook Receiver 서비스와 Helm 리소스(Deployment·ServiceAccount·Ingress 경로)는 아직 없다. 지금은 CronJob과 위 수동 Job으로만 동기화한다.
 
 ### 7.6 Outbound Feedback Exporter
 
@@ -951,10 +966,13 @@ Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전
 | synctx/cdn | SemVer + git sha |
 | synctx/marp | SemVer + git sha |
 | synctx/sync | SemVer + git sha |
+| synctx/feedback | SemVer + git sha |
 | jgraph/drawio | 검증 완료한 명시 버전 |
 | nginx | 검증 완료한 명시 버전 |
-| alpine/git | 검증 완료한 명시 버전 (Docker Compose Slides sidecar) |
+| alpine/git | 검증 완료한 명시 버전 (Slides sidecar, K8s·Docker Compose 공통) |
 | prom/pushgateway | 검증 완료한 명시 버전 (`v1.11.1`, Sync·Feedback 메트릭 수집) |
+
+자체 이미지 5개(viewer·cdn·marp·sync·feedback)의 Python 베이스는 `python:3.13.16-slim-trixie`(Debian 13, Alpine 미사용)로 패치 버전·배포판까지 고정한다. 올릴 때는 Dockerfile 5개와 `requires-python`을 함께 바꾼다.
 
 `npm install -g @marp-team/marp-cli`는 빌드 시 버전을 고정한다.
 외부에서 다운로드한 모든 JS/CSS/font/image tarball은 SHA-256 manifest에 기록한다.
@@ -992,11 +1010,11 @@ resources:
 
 | PVC | 접근 | 사용처 |
 |-----|------|--------|
-| `repo-cache` | RWO/RWX | Viewer, Sync, Marp의 clone cache. 서비스별 분리 권장 |
+| `repo-cache` | RWO/RWX | Viewer, Sync, Marp의 clone cache. 서비스별 분리 권장 (현재 차트에는 PVC가 없고 컨테이너 파일시스템을 쓴다) |
 | `cdn-data` | RWX | CDN 정적 파일 |
-| `sync-state` | RWO | Sync Engine 상태 |
-| `slides-worktree` | RWO | `/data/slides/worktree`에 mount되는 slides-sync working tree |
-| `marp-work` | RWO | Marp 변환 임시 작업 |
+| `sync-state` | RWO | Sync Engine 상태, Sync·Feedback 메트릭 누적값, Feedback 상태·event store (2.2) |
+| `slides-worktree` | RWX(차트 기본값) | `/data/slides/worktree`에 mount되는 slides-sync working tree |
+| `marp-work` | RWO | Marp 변환 임시 작업 (현재 차트는 PVC가 아니라 `emptyDir`) |
 
 가능하면 서비스별 PVC를 분리한다. 공유 PVC는 locking과 권한 문제가 커진다.
 
@@ -1017,7 +1035,7 @@ resources:
 
 ### 8.5 서비스 옵션
 
-서비스마다 켜고 끌 수 있다. 서비스 이름과 순서는 `viewer, cdn, marp, slides, drawio, sync, feedback`이고, 의존성 규칙 D1~D7과 알려진 한계는 `docs/architecture.md`의 "서비스 옵션과 의존성"을 따른다.
+서비스마다 켜고 끌 수 있다. 서비스 이름과 순서는 `viewer, cdn, marp, slides, drawio, sync, feedback`이고, 의존성 규칙 D1~D8과 알려진 한계는 `docs/architecture.md`의 "서비스 옵션과 의존성"을 따른다.
 
 K8s(Helm)는 `<서비스>.enabled`로 설정한다(`feedback`만 기본 끔).
 
@@ -1053,7 +1071,7 @@ K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성�
 - Docker Compose v2.17 이상(`up --wait --wait-timeout` 사용), amd64
 - 운영 서버는 폐쇄망 레지스트리(`registry.local:5000`)에서 이미지를 받는다. 반입 절차는 기존 `pull-and-save-images.sh` 흐름(외부에서 pull → tar 저장 → 폐쇄망 반입 → registry push)을 따른다.
 - 서버에는 저장소 체크아웃(또는 아래 디렉터리 묶음)이 같은 상대 위치로 있어야 한다. `compose.yaml`이 `../../helm/synctx/files`(Slides nginx 설정·스크립트)와 `../../cdn-data`(CDN vendor 파일)를 마운트하고, 배포는 `scripts/docker/*.sh`로 한다. 폐쇄망에는 이미지와 함께 `deploy/docker`, `scripts/docker`, `helm/synctx/files`, `cdn-data`를 저장소와 같은 구조로 묶어(예: `git archive HEAD deploy/docker scripts/docker helm/synctx/files cdn-data`) 반입한다. 이미지 태그의 `<git-sha>`와 같은 커밋에서 묶는다.
-- 레지스트리에 있어야 하는 이미지(켠 서비스만 필요하다. synctx 이미지 태그는 `0.1.0-<git-sha>`)
+- 레지스트리에 있어야 하는 이미지(켠 서비스만 필요하다. synctx 이미지 태그는 `0.6.0-<git-sha>`)
 
 | 이미지 | 용도 |
 |--------|------|
@@ -1080,7 +1098,7 @@ K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성�
 |------|--------|------|
 | `SYNCTX_SERVICES` | `viewer,cdn,marp,slides` | 켤 서비스(필수) |
 | `SYNCTX_IMAGE_PREFIX` | `registry.local:5000/` | 이미지 접두사. 로컬에서는 빈 값 |
-| `SYNCTX_IMAGE_TAG` | 없음(필수) | `0.1.0-<git-sha>`. `latest`는 거부 |
+| `SYNCTX_IMAGE_TAG` | 없음(필수) | `0.6.0-<git-sha>`. `latest`는 거부 |
 | `SYNCTX_CONFIG_FILE` | `./synctx.yaml` | 모든 서비스가 읽는 `.synctx.yaml` |
 | `SYNCTX_SLIDES_REPO_URL` | 없음 | Slides 게시 저장소(slides를 켜면 필수) |
 | `SYNCTX_SLIDES_BRANCH` / `SYNCTX_SLIDES_POLL_SECONDS` | `main` / `60` | 게시 브랜치, 폴링 간격 |
@@ -1148,14 +1166,14 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 
 - `synctx_http_requests_total`
 - `synctx_http_request_duration_seconds`
-- `synctx_render_requests_total`
-- `synctx_marp_convert_total`
-- `synctx_marp_publish_total`
+- `synctx_render_requests_total` (정의만 있고 아직 올리는 곳이 없다)
+- `synctx_marp_convert_total` (정의만 있고 아직 올리는 곳이 없다)
+- `synctx_marp_publish_total` (정의만 있고 아직 올리는 곳이 없다)
 - `synctx_sync_runs_total`
 - `synctx_sync_items_total`
 - `synctx_sync_failures_total`
 - `synctx_sync_last_success_timestamp`
-- `synctx_cdn_bytes_served_total`
+- `synctx_cdn_bytes_served_total` (정의만 있고 아직 올리는 곳이 없다)
 - `synctx_feedback_events_total` (`result`: `sent`, `skipped`(외부 키 없음·이미 보낸 이벤트), `mail_error`, `redaction_error`)
 - `synctx_feedback_redacted_fields_total` (반출 이벤트에서 뺀 필드 수, 이벤트의 `ignored_fields` 개수 합)
 - `synctx_feedback_mail_failures_total`
@@ -1195,15 +1213,16 @@ Outbound Feedback CronJob도 실행마다 새 프로세스이므로 같은 방�
 
 초기 alert:
 
-- Sync가 30분 이상 성공하지 못함
-- Sync failure ratio가 최근 3회 평균 10% 초과
-- XWiki/OpenProject auth error 발생
-- Marp publish push 실패
-- Slides Server sidecar pull 실패 또는 worktree 손상
-- Outbound Feedback mail send failure 3회 이상
-- Outbound Feedback redaction failure 발생
-- PVC 사용량 80% 초과
-- readiness failure 5분 지속
+- Sync가 30분 이상 성공하지 못함 (`SynctxSyncNoSuccess`)
+- Sync 항목 실패율이 최근 15분 10% 초과 (`SynctxSyncHighFailureRate`)
+- XWiki/OpenProject auth error 발생 (`SynctxSyncAuthError`)
+- Marp publish push 실패 (`SynctxMarpPublishFailed`. `synctx_marp_publish_total`을 아직 올리지 않아 지금은 울리지 않는다)
+- Slides Server sidecar 컨테이너 재시작 3회 초과 (`SynctxSlidesSidecarFailed`)
+- Outbound Feedback mail send failure 30분 안에 3회 이상 (`SynctxFeedbackMailFailure`)
+- Outbound Feedback redaction failure 발생 (`SynctxFeedbackRedactionFailure`)
+- PVC 사용량 80% 초과 (`SynctxPVCUsageHigh`)
+- readiness failure 5분 지속 (`SynctxReadinessFailure`)
+- Viewer 5xx 응답 비율 5분간 5% 초과 (`SynctxViewerHighErrorRate`)
 - synctx-html 합본이 허용되지 않은 외부 주소 또는 크기 초과로 거부됨 (`SynctxHtmlBundleRejected`, 저장소별 1시간 안에 1건 이상, warning)
 
 Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound Feedback Alert(메일 발송 실패, redaction 실패)는 Pushgateway로 수집한 시계열로 평가한다. `scripts/tests/test_prometheus_rules.py`가 Helm이 렌더한 PrometheusRule을 `promtool test rules`로 평가한다(`scripts/tests/prometheus/*.test.yaml`). promtool이 없으면 `PROMTOOL` 환경변수로 컨테이너 명령을 준다.
@@ -1226,6 +1245,8 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 | Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·`synctx-html` 블록 한 줄 안내·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
 | Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync·Feedback fake Pushgateway | Sync·Feedback Alert 발생·미발생 시점, 실행 간 누적값, 0 기준값, push 그룹 |
+| Viewer 화면·검색 | pytest(`viewer_ui`·`search`·`linear_inline` 단위, Viewer TestClient) + `node --test`(viewer-core.js) | 상단 바·서랍·오류 안내 화면 이스케이프, 본문 검색 기한·동시 실행 제한·상태, 파일 찾기·최근 문서, Markdown 인라인 렌더 결과가 python-markdown과 같음, 오류 `detail` 고정 문구·git 인증정보 가림 |
+| 배포 옵션 | pytest(`scripts/tests`: `helm template`, `deploy.sh`·`compose.sh`, `run-viewer.sh`, `seed_cdn.py`) | 서비스 옵션과 D1·D2·D8 렌더 실패, Pushgateway 배포 조건, 게이트웨이 설정·`nginx -t`·TLS·신뢰 프록시 검사, 로컬 Viewer 설정 생성, CDN 시드 |
 
 ### 10.2 운영 전 수용 기준
 
@@ -1408,6 +1429,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 - [x] `repositories[].collab.enabled`
 - [x] 회의 모드 메모·형광펜·회의 정리
 - [x] `.md`·메모 포함 HTML 내보내기/가져오기
+- [x] 회의 정보 카드·발표 화면(`?mode=present`)·회의 모드 첫 사용 안내
 - [x] 8.1b 근거 미리보기·근거 모음
   - [x] front matter `synctx.meeting.references`(접두어 매핑) 검증과 저장소 간 링크 해석
   - [x] 근거 링크 판정과 발췌 규칙(앵커·제목 slug·표 행·조문 경계·해설 블록 제거·`synctx-html` 블록 한 줄 안내·상한)
@@ -1457,7 +1479,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 서비스 옵션과 Docker Compose 배포는 새 Phase가 아니다. Phase 번호 체계(1-9)는 그대로다.
 
 - [ ] 옵션 검사: `scripts/docker/deploy.sh --check`가 통과하고 켜진 서비스가 의도와 같다
-- [ ] 이미지 반입: 켠 서비스의 이미지가 `registry.local:5000`에 있고 `SYNCTX_IMAGE_TAG`가 `0.1.0-<git-sha>` 형식이다(`latest` 아님)
+- [ ] 이미지 반입: 켠 서비스의 이미지가 `registry.local:5000`에 있고 `SYNCTX_IMAGE_TAG`가 `0.6.0-<git-sha>` 형식이다(`latest` 아님)
 - [ ] `.synctx.yaml` 준비: 인증 프록시가 없으면 `authz.enabled: false`, CDN을 끄면 `viewer.cdn_base_url`이 절대 주소다
 - [ ] TLS: 인증서를 `tls/`에 두고 HTTPS 200, HTTP 301을 확인한다
 - [ ] 헤더 제거 확인: 위조한 `X-Forwarded-Groups`로 직접 요청해도 권한이 올라가지 않는다(신뢰 모드면 허용 목록 밖 출발지는 403)
@@ -1474,7 +1496,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
    - push 실패면 Pushgateway Pod 상태와 Sync NetworkPolicy의 9091 egress를 확인한다.
    - Pushgateway에는 있는데 Prometheus에 없으면 ServiceMonitor `synctx-pushgateway`가 수집 대상에 잡혔는지 확인한다.
    - 누적값은 sync-state의 `metrics/{repo_id}.json`에 있다. 파일이 깨지면 이번 실행 값부터 다시 쌓는다(Prometheus는 카운터 리셋으로 처리한다).
-2. 최근 run report 확인: `/data/sync-state/repos/{repo_id}/runs/`
+2. 최근 실행 확인: Sync Job 로그와 상태 파일 `/data/sync-state/{repo_id}.json`의 `last_run_id`·`pending_failures`
 3. `auth_error`면 Secret 만료 여부 확인
 4. `mapping_error`면 `.synctx.yaml`의 map 또는 문서 front matter 수정
 5. `transient_error`면 대상 서비스 상태 확인 후 Job 재실행
@@ -1483,7 +1505,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 
 1. Marp Service log에서 `publish_path`, `repo_id`, `commit_sha` 확인
 2. publish repo non-fast-forward 여부 확인
-3. worktree lock stale 여부 확인
+3. worktree lock(`marp.worktree_path`의 `.publish.lock`) stale 여부 확인. 남아 있으면 publish가 계속 409다
 4. 재시도해도 실패하면 publish repo 권한과 branch protection 확인
 
 ### 12.3 CDN 파일 교체
@@ -1497,7 +1519,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 
 1. Slides Server readiness와 Nginx access/error log 확인
 2. `slides-sync` sidecar log에서 최근 pull 시각과 commit sha 확인
-3. publish repo 접근 권한과 `GIT_PUBLISH_TOKEN` 만료 여부 확인
+3. publish repo 접근 권한과 slides-sync가 쓰는 `GIT_READ_TOKEN` 만료 여부 확인
 4. worktree 손상이 의심되면 pod를 재시작하여 clean clone으로 복구
 5. 특정 publish path만 404이면 Marp publish commit에 해당 파일이 포함되었는지 확인
 
@@ -1542,7 +1564,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 
 1. `helm upgrade ... --set <서비스>.enabled=false`로 서비스를 끄면 Deployment·Service·Ingress 경로는 사라지지만 PVC(`cdn-data`, `slides-worktree`, `sync-state`)는 남는다(데이터 보호). 서비스를 다시 켜면 남은 PVC를 그대로 쓴다.
 2. 데이터를 정말 지울 때만 운영자가 PVC를 직접 삭제한다: `kubectl -n synctx delete pvc <PVC 이름>`. 삭제 전에 백업(`scripts/backup-restore.sh`)과 StorageClass의 `reclaimPolicy`를 확인한다.
-3. 켜진 서비스가 없거나(D1) CDN이 꺼졌는데 `viewer.cdn_base_url`이 상대 경로이면(D2) `helm upgrade`가 렌더 단계에서 실패한다. 메시지를 보고 옵션이나 `.synctx.yaml`을 고친다.
+3. 켜진 서비스가 없거나(D1), CDN이 꺼졌는데 `viewer.cdn_base_url`이 상대 경로이거나(D2), 메트릭이 켜졌는데 Sync·Feedback이 sync-state PVC 없이 켜져 있으면(D8) `helm upgrade`가 렌더 단계에서 실패한다. 메시지를 보고 옵션이나 `.synctx.yaml`을 고친다.
 4. 업그레이드는 `helm upgrade ... -f values-production.yaml`처럼 values 파일을 넘겨 실행하고 `--reuse-values`는 쓰지 않는다. `--reuse-values`는 이전 릴리스 값을 그대로 써서 차트에 새로 생긴 기본값이 빠진다. `viewer`·`cdn`·`marp`·`slides`·`drawio`·`sync`는 `enabled` 키가 없으면 켜진 것으로 보므로 서비스 옵션이 없던 릴리스를 올려도 서비스가 사라지지는 않는다(`feedback`은 키가 없으면 꺼짐).
 
 ## 13. 남은 외부 검증 항목

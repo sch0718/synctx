@@ -28,7 +28,7 @@ viewer:
   enabled: true
   image:
     repository: synctx/viewer
-    tag: "0.1.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
@@ -43,7 +43,7 @@ cdn:
   enabled: true
   image:
     repository: synctx/cdn
-    tag: "0.1.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   persistence:
@@ -63,7 +63,7 @@ sync:
   enabled: true
   image:
     repository: synctx/sync
-    tag: "0.1.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
   schedule: "*/5 * * * *"
   persistence:
@@ -83,7 +83,7 @@ feedback:
   enabled: false
   image:
     repository: synctx/feedback
-    tag: "0.1.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
   schedule: "*/5 * * * *"
   resources:
@@ -136,7 +136,7 @@ marp:
   enabled: true
   image:
     repository: synctx/marp
-    tag: "0.1.0"
+    tag: "0.6.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
