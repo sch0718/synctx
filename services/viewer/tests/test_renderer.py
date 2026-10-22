@@ -82,6 +82,38 @@ def test_unclosed_heading_opener_is_left_alone():
     assert '<h2 id="a-b">a <b</h2>' in r["html"]
 
 
+@pytest.mark.parametrize("raw", ["<h2>a</H2>", "Text <h2> here"])
+def test_raw_heading_without_own_closer_does_not_swallow_markdown_heading(raw):
+    r = renderer.render_markdown(f"## Same\n\n{raw}\n\n## Same\n\n## Same_1\n")
+    body = _ids(r, 2)
+    assert renderer.HEADING_MARK not in r["html"]
+    assert len(body) == len(set(body))
+    assert [t["id"] for t in r["toc"]] == ["same", "same-1", "same_1"]
+    assert body[-2:] == ["same-1", "same_1"]
+
+
+@pytest.mark.parametrize("text", [
+    '## A <span title="<h3 data-synctx-md>">B</span>\n\n## A B\n',
+    '## A <span title=\'<h3 data-synctx-md="1">\'>B</span>\n\n## A B\n',
+])
+def test_marker_text_written_by_author_is_not_trusted(text):
+    r = renderer.render_markdown(text)
+    assert _ids(r, 2) == [t["id"] for t in r["toc"]] == ["a-b", "a-b-1"]
+    assert not re.search(r"<h2[^>]*data-synctx-md", r["html"])
+
+
+def test_toc_block_links_survive_uppercase_raw_closer():
+    r = renderer.render_markdown("[TOC]\n\n<h2>a</H2>\n\n## Same\n\n## Same\n")
+    assert _ids(r, 2) == ["a", "same", "same-1"]
+    assert re.findall(r'<a href="#([^"]*)"', r["html"]) == ["same", "same-1"]
+
+
+def test_uppercase_raw_heading_gets_id_and_counts_for_dedupe():
+    r = renderer.render_markdown("<H2 class=x>Same</H2>\n\n## Same\n")
+    assert '<h2 id="same" class=x>Same</h2>' in r["html"]
+    assert [t["id"] for t in r["toc"]] == ["same-1"]
+
+
 @pytest.mark.parametrize("text", [
     '<h2 class="a"' + " " * 50000 + ">T</h2>\n",
     '<h2 class="a"' + " " * 50000 + '"x">T</h2>\n',

@@ -6,6 +6,7 @@ convert_md_to_html.py에서 핵심 로직을 추출하여 웹 서비스용으로
 import hashlib
 import html as html_lib
 import re
+import secrets
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, unquote
 
@@ -64,25 +65,44 @@ _HEADING_TAGS = {f"h{n}" for n in range(1, 7)}
 
 
 class _HeadingMarker(Treeprocessor):
-    """Markdown이 만든 제목에 표시를 붙여 원시 HTML 제목과 구분한다."""
+    """Markdown이 만든 제목에 표시를 붙여 원시 HTML 제목과 구분한다.
+
+    작성자가 같은 속성을 직접 써서 흉내 내지 못하도록 표시 값은 렌더링마다 새로 만든 값을 쓴다.
+    """
+
+    def __init__(self, md, mark):
+        super().__init__(md)
+        self.mark = mark
 
     def run(self, root):
         for el in root.iter():
             if el.tag in _HEADING_TAGS:
-                el.set(HEADING_MARK, "1")
+                el.set(HEADING_MARK, self.mark)
 
 
 class _HeadingMarkExtension(markdown.Extension):
+    def __init__(self, mark):
+        super().__init__()
+        self.mark = mark
+
     def extendMarkdown(self, md):
-        md.treeprocessors.register(_HeadingMarker(md), "synctx-heading-mark", 4)
+        md.treeprocessors.register(_HeadingMarker(md, self.mark), "synctx-heading-mark", 4)
 
 
-def fix_heading_ids(html, id_map=None):
+def _is_marked(parsed, mark):
+    return mark is not None and any(
+        name == HEADING_MARK and value and value.strip("\"'") == mark for name, value, _ in parsed
+    )
+
+
+def fix_heading_ids(html, id_map=None, mark=None):
     """heading id를 GitHub 방식으로 맞춘다.
 
+    Markdown이 만든 제목은 HEADING_MARK 속성값이 mark인 제목이다.
     id_map이 주어지면 Markdown이 만든 제목의 원래 id를 새 id로 기록한다.
-    re.sub(r"<(h[1-6])([^>]*)>(.*?)</\\1>", ..., flags=re.DOTALL)과 같은 제목을 고르되,
-    닫는 태그가 없는 여는 태그마다 문서 끝까지 다시 훑지 않도록 닫는 태그 위치를 미리 모아 앞으로만 나아간다.
+    여는 태그마다 그 뒤 첫 같은 이름의 닫는 태그(대소문자 무관)를 짝으로 삼되, 짝이 Markdown이 만든
+    제목을 넘어가면 닫히지 않은 원시 HTML 태그로 보고 건드리지 않는다(뒤 제목을 삼키지 않도록).
+    닫는 태그가 없는 여는 태그마다 문서 끝까지 다시 훑지 않도록 위치를 미리 모아 앞으로만 나아간다.
     """
     used = {}
 
@@ -96,7 +116,7 @@ def fix_heading_ids(html, id_map=None):
             used[slug] = 0
         # 속성값 안의 "id=" 같은 글을 속성으로 읽지 않도록 속성을 하나씩 나눠 읽는다
         parsed = _heading_attrs(attrs)
-        if id_map is not None and any(name == HEADING_MARK for name, _, _ in parsed):
+        if id_map is not None and _is_marked(parsed, mark):
             old_id = next((value for name, value, _ in parsed if name == "id" and value), None)
             if old_id:
                 id_map[html_lib.unescape(old_id.strip("\"'"))] = slug
@@ -105,19 +125,29 @@ def fix_heading_ids(html, id_map=None):
 
     closers = {}
     for m in _HEADING_CLOSE.finditer(html):
-        closers.setdefault(m.group(1), []).append(m.start())
-    next_closer = dict.fromkeys(closers, 0)
-    out = []
-    pos = 0
+        closers.setdefault(m.group(1).lower(), []).append(m.start())
+    openers = []
+    marked = []
     gt = -1
     for m in _HEADING_OPEN.finditer(html):
-        if m.start() < pos:
-            continue
+        # 다른 여는 태그의 속성 자리에 든 것은 Markdown 제목일 수 없으니 속성을 다시 읽지 않는다
+        inside_tag = m.start() < gt
         if gt < m.end():
             gt = html.find(">", m.end())
             if gt == -1:
                 break
-        tag = m.group(1)
+        if not inside_tag and _is_marked(_heading_attrs(html[m.end():gt]), mark):
+            marked.append(m.start())
+        openers.append((m, gt))
+
+    next_closer = dict.fromkeys(closers, 0)
+    next_marked = 0
+    out = []
+    pos = 0
+    for m, gt in openers:
+        if m.start() < pos:
+            continue
+        tag = m.group(1).lower()
         ends = closers.get(tag, ())
         i = next_closer.get(tag, 0)
         while i < len(ends) and ends[i] <= gt:
@@ -126,6 +156,10 @@ def fix_heading_ids(html, id_map=None):
         if i == len(ends):
             continue
         end = ends[i]
+        while next_marked < len(marked) and marked[next_marked] <= m.start():
+            next_marked += 1
+        if next_marked < len(marked) and marked[next_marked] < end:
+            continue
         out.append(html[pos:m.start()])
         out.append(rewrite(tag, html[m.end():gt], html[gt + 1:end]))
         pos = end + len(tag) + 3
@@ -133,8 +167,8 @@ def fix_heading_ids(html, id_map=None):
     return "".join(out)
 
 
-_HEADING_OPEN = re.compile(r"<(h[1-6])")
-_HEADING_CLOSE = re.compile(r"</(h[1-6])>")
+_HEADING_OPEN = re.compile(r"<(h[1-6])", re.IGNORECASE)
+_HEADING_CLOSE = re.compile(r"</(h[1-6])>", re.IGNORECASE)
 
 
 # 공백 묶음·속성·그 밖의 한 글자 중 하나를 매번 소비해 앞으로만 나아간다(같은 자리를 다시 훑지 않는다)
@@ -321,6 +355,7 @@ def render_markdown(md_text):
     """
     preprocessed = preprocess_md(md_text)
     title = extract_title(md_text)
+    mark = secrets.token_hex(8)
 
     md = markdown.Markdown(
         extensions=[
@@ -329,14 +364,14 @@ def render_markdown(md_text):
             TocExtension(slugify=github_slugify, toc_depth="1-4"),
             "sane_lists",
             "md_in_html",
-            _HeadingMarkExtension(),
+            _HeadingMarkExtension(mark),
         ],
         output_format="html5",
     )
 
     html_body = md.convert(preprocessed)
     id_map = {}
-    html_body = fix_heading_ids(html_body, id_map)
+    html_body = fix_heading_ids(html_body, id_map, mark)
     html_body = _remap_toc_links(html_body, getattr(md, "toc", ""), id_map)
     html_body = transform_mermaid_blocks(html_body)
 
