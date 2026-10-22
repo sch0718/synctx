@@ -645,6 +645,9 @@
     // 캡처 단계에서 먼저 판단해, 패널이 닫힌 때의 Esc가 회의 모드의 패널 닫기와 겹치지 않게 한다
     window.addEventListener('keydown', function (e) {
       if (e.isComposing || e.keyCode === 229) return;
+      // 근거 말풍선이 열려 있으면 Esc는 evidence.js가 말풍선만 닫는다(발표를 끝내지 않는다)
+      var evidencePop = document.querySelector('[data-evidence-pop]');
+      if (e.key === 'Escape' && evidencePop && !evidencePop.hidden) return;
       var target = e.target && e.target.closest ? e.target : document.body;
       var tag = target.tagName;
       var panel = document.querySelector('.meeting-panel');

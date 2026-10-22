@@ -1,0 +1,56 @@
+/* synctx 회의 근거: 말풍선과 근거 모음. 오프라인 HTML에는 테마 변수가 없을 수 있으므로 모든 var()에 기본값을 둔다. */
+.evidence-pop {
+  position: absolute; z-index: 1002; box-sizing: border-box;
+  max-width: min(480px, calc(100vw - 16px)); max-height: 50vh; overflow: auto;
+  padding: 10px 12px; font-size: 14px; line-height: 1.5; text-align: left; overflow-wrap: anywhere;
+  color: var(--text-primary, #1f2328); background: var(--bg-card, #ffffff);
+  border: 1px solid var(--border-color, #d0d7de); border-radius: 8px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+.evidence-pop-doc { margin: 0; font-weight: 600; }
+.evidence-pop-loc { margin: 0 0 6px; font-size: 13px; color: var(--text-secondary, #57606a); }
+.evidence-pop-loc:empty { display: none; }
+.evidence-pop-hint { margin: 8px 0 0; padding-top: 6px; font-size: 12px; color: var(--text-secondary, #57606a); border-top: 1px solid var(--border-color, #d0d7de); }
+.evidence-pop-body > :first-child, .evidence-body > :first-child { margin-top: 0; }
+.evidence-pop-body > :last-child, .evidence-body > :last-child { margin-bottom: 0; }
+.evidence-pop-body p, .evidence-pop-body ul, .evidence-pop-body ol, .evidence-pop-body dl, .evidence-pop-body blockquote, .evidence-pop-body table, .evidence-pop-body pre { margin: 0 0 8px; }
+.evidence-pop-body h1, .evidence-pop-body h2, .evidence-pop-body h3, .evidence-pop-body h4, .evidence-pop-body h5, .evidence-pop-body h6 { margin: 0 0 6px; font-size: 14px; }
+.evidence-pop-body table, .evidence-body table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.evidence-pop-body th, .evidence-pop-body td, .evidence-body th, .evidence-body td { padding: 4px 6px; text-align: left; vertical-align: top; border: 1px solid var(--border-color, #d0d7de); }
+.evidence-pop-body pre, .evidence-body pre { max-width: 100%; padding: 8px; overflow-x: auto; border-radius: 6px; background: var(--bg-neutral, #f6f8fa); }
+.evidence-pop-body blockquote, .evidence-body blockquote { margin-left: 0; padding-left: 10px; border-left: 3px solid var(--border-color, #d0d7de); }
+.evidence-list {
+  box-sizing: border-box; max-width: 980px; margin: 32px auto 0; padding: 24px 45px 0;
+  color: var(--text-primary, #1f2328); background: var(--bg-default, #ffffff);
+  border-top: 1px solid var(--border-color, #d0d7de);
+}
+.evidence-list h2 { margin: 0 0 4px; font-size: 1.4em; }
+.evidence-count { margin: 0 0 16px; font-size: 14px; color: var(--text-secondary, #57606a); }
+.evidence-doc h3 { margin: 20px 0 8px; font-size: 1.1em; overflow-wrap: anywhere; }
+.evidence-entry {
+  box-sizing: border-box; margin: 0 0 12px; padding: 12px 14px; overflow-wrap: anywhere;
+  color: var(--text-primary, #1f2328); background: var(--bg-card, #ffffff);
+  border: 1px solid var(--border-color, #d0d7de); border-radius: 8px;
+  scroll-margin-top: calc(var(--shell-header-h, 0px) + 12px);
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+.evidence-entry:focus, .evidence-entry:target {
+  background: var(--bg-neutral, #f6f8fa);
+  outline: 2px solid var(--primary, #0969da); outline-offset: 2px; box-shadow: inset 4px 0 0 var(--primary, #0969da);
+}
+.evidence-loc { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--text-secondary, #57606a); }
+.evidence-body { max-width: 100%; overflow-x: auto; }
+.evidence-meta { margin: 10px 0 0; font-size: 13px; color: var(--text-secondary, #57606a); }
+.evidence-meta a { color: var(--primary, #0969da); }
+@media (max-width: 767px) {
+  .evidence-list { padding: 20px 15px 0; }
+}
+@media screen {
+  .page-present .evidence-list { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .evidence-entry { transition: none; }
+}
+@media print {
+  .evidence-pop { display: none !important; }
+  .evidence-entry { break-inside: avoid; }
+}

@@ -502,6 +502,17 @@ class GitRepoManager:
         result = self._run_git("cat-file", "-s", f"{resolved}:{target}")
         return int(result.stdout.decode("utf-8").strip())
 
+    def blob_size_resolved(self, path: str, resolved: str) -> int:
+        """이미 해석한 ref에서 파일(blob) 크기. cat-file -s와 달리 디렉터리(tree)·서브모듈(commit)은 파일 없음으로 본다."""
+        target = self.validate_path(path)
+        result = self._run_git("ls-tree", "-l", "-z", resolved, "--", target)
+        for record in result.stdout.decode("utf-8").split("\0"):
+            meta, _, name = record.partition("\t")
+            fields = meta.split()
+            if name == target and len(fields) == 4 and fields[1] == "blob":
+                return int(fields[3])
+        raise FileNotFoundError(path)
+
     def last_commit(self, path: str = "", ref: str | None = None) -> CommitInfo:
         revision = self._resolve_ref(ref) if ref else self._default_remote_ref()
         args = ["log", "-1", "--format=%H%x1f%an%x1f%aI", revision]

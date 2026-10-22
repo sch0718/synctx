@@ -363,3 +363,36 @@ def render_present_bar(*, title: str, exit_href: str, memo: bool) -> str:
             '</nav>'
             '<p class="present-empty" hidden>발표할 내용이 없습니다</p>'
             '<div class="visually-hidden" aria-live="polite" data-present-live></div>')
+
+
+EVIDENCE_IDS = {"list": "evidence-list", "title": "evidence-title", "data": "evidence-data"}
+
+
+def render_evidence_list(entries, *, ids=None, href_for=None) -> str:
+    """근거 모음. 문서별 묶음(처음 나온 순서) 안에 항목을 둔다. 발췌 html은 이미 정화된 것을 그대로 넣는다."""
+    if not entries:
+        return ""
+    ids = ids or EVIDENCE_IDS
+    groups: dict[tuple[str, str], tuple[str, list[str]]] = {}
+    for e in entries:
+        cites = " · ".join(f'<a href="#{esc(cid)}">{esc(label)}</a>' for cid, label in e.cites)
+        meta = f"인용한 곳: {cites}" if cites else ""
+        if href_for:
+            source = f'<a href="{esc(href_for(e))}">원문 열기</a>'
+            meta = f"{meta} · {source}" if meta else source
+        meta = f'<p class="evidence-meta">{meta}</p>' if meta else ""
+        groups.setdefault((e.repo_id, e.path), (e.doc, []))[1].append(
+            f'<article class="evidence-entry" id="{esc(e.id)}" tabindex="-1">'
+            f'<p class="evidence-loc">{esc(e.loc)}</p><div class="evidence-body">{e.html}</div>{meta}</article>')
+    docs = "".join(f'<section class="evidence-doc"><h3>{esc(doc)}</h3>{"".join(items)}</section>'
+                   for doc, items in groups.values())
+    return (f'<section class="evidence-list" id="{esc(ids["list"])}" aria-labelledby="{esc(ids["title"])}">'
+            f'<h2 id="{esc(ids["title"])}">근거 모음</h2><p class="evidence-count">근거 {len(entries)}건</p>'
+            f'{docs}</section>')
+
+
+def render_evidence_data(entries, *, ids=None) -> str:
+    ids = ids or EVIDENCE_IDS
+    data = {"schema": 1, "entries": [{"id": e.id, "doc": e.doc, "loc": e.loc, "html": e.html} for e in entries]}
+    return (f'<script type="application/json" id="{esc(ids["data"])}" data-synctx-evidence>'
+            f"{encode_for_script(data)}</script>")

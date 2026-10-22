@@ -283,3 +283,44 @@ def test_finder_groups_results_and_uses_core_helpers():
     assert "core.finderHref(" in finder and "core.finderFileStatus(" in finder
     css = (STATIC / "viewer.css").read_text(encoding="utf-8")
     assert re.search(r'\.finder-results li\[role="group"\]\s*\{[^}]*padding:\s*0', css)
+
+
+def test_evidence_js_uses_safe_dom_and_meeting_ui_marker():
+    js = (STATIC / "meeting" / "evidence.js").read_text(encoding="utf-8")
+    assert "data-meeting-ui" in js and "tooltip" in js and "aria-describedby" in js and "data-synctx-evidence" in js and "data-evidence-pop" in js
+    assert "getElementById('evidence-data')" not in js and 'getElementById("evidence-data")' not in js
+    assert "core.popupPosition(" in js and "core.opensInNewContext(" in js and "page-present" in js
+    assert "location.hash =" not in js and "fetch(" not in js
+    assert re.search(r"window\.addEventListener\('keydown',[\s\S]*?stopPropagation[\s\S]*?,\s*true\)", js)
+    assert js.count(".innerHTML") == 1
+
+
+def test_evidence_click_stops_propagation_only_when_handled():
+    js = (STATIC / "meeting" / "evidence.js").read_text(encoding="utf-8")
+    click = js.split("function onClick(e) {")[1].split("\n  }\n")[0]
+    # 처리한 클릭(발표 화면 말풍선, 근거 모음 이동)만 메모 형광펜 등 다른 클릭 처리로 넘기지 않는다
+    assert len(re.findall(r"e\.preventDefault\(\);\s*e\.stopPropagation\(\);", click)) == 2
+    assert click.count("stopPropagation") == 2
+    assert click.index("opensInNewContext") < click.index("stopPropagation")
+    assert click.index("if (!shown(item)) return;") < click.rindex("stopPropagation")
+
+
+def test_evidence_css_hides_list_in_present_and_popup_in_print():
+    css = (STATIC / "meeting" / "evidence.css").read_text(encoding="utf-8")
+    assert re.search(r"@media screen[^{]*\{\s*\.page-present \.evidence-list\s*\{[^}]*display:\s*none", css)
+    assert re.search(r"@media print[^{]*\{[^}]*\.evidence-pop[^}]*display:\s*none", css)
+    assert re.search(r"z-index:\s*1002", css)
+    assert not re.search(r"var\(--[\w-]+\)", css)  # 모든 var()에 기본값
+
+
+def test_evidence_css_marks_focus_without_color_alone_and_respects_reduced_motion():
+    css = (STATIC / "meeting" / "evidence.css").read_text(encoding="utf-8")
+    focus = _rule(css, ".evidence-entry:focus, .evidence-entry:target")
+    assert "outline:" in focus and "box-shadow:" in focus
+    assert re.search(r"@media \(prefers-reduced-motion: reduce\)\s*\{[^}]*transition:\s*none", css)
+
+
+def test_present_escape_leaves_open_evidence_popup_alone():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    present = js.split("function initPresent(")[1].split("\n  }\n")[0]
+    assert "data-evidence-pop" in present

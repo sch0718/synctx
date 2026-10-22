@@ -45,8 +45,8 @@ def _css_source():
     return (Path(__file__).resolve().parents[1] / "src" / "static" / "viewer.css").read_text(encoding="utf-8")
 
 
-def _css_rule(selector):
-    return re.search(rf"(?m)^{re.escape(selector)} \{{([^}}]*)\}}", _css_source()).group(1)
+def _css_rule(selector, css=None):
+    return re.search(rf"(?m)^{re.escape(selector)} \{{([^}}]*)\}}", _css_source() if css is None else css).group(1)
 
 
 def test_primary_buttons_use_on_primary_text():
@@ -59,8 +59,12 @@ def _decl(rule, prop):
 
 
 def _resolve(value, values):
-    ref = re.fullmatch(r"var\((--[\w-]+)\)", value)
-    return values[ref.group(1)] if ref else value
+    ref = re.fullmatch(r"var\((--[\w-]+)(?:,\s*(.+))?\)", value)
+    if not ref:
+        return value
+    if ref.group(2) is None or ref.group(1) in values:
+        return values[ref.group(1)]
+    return _resolve(ref.group(2).strip(), values)
 
 
 @pytest.mark.parametrize("state", ["", ":hover"])
@@ -159,3 +163,32 @@ def test_meeting_guide_open_button_meets_aa(theme):
     values = theme_vars(theme)
     color = _resolve(_decl(_css_rule(".meeting-guide-open"), "color"), values)
     assert contrast(rgb(color)[0], rgb(values["--bg-default"])[0]) >= 4.5
+
+
+def _evidence_css():
+    return (Path(__file__).resolve().parents[1] / "src" / "static" / "meeting" / "evidence.css").read_text(encoding="utf-8")
+
+
+EVIDENCE_PAIRS = [
+    (".evidence-pop", ".evidence-pop"),
+    (".evidence-pop-loc", ".evidence-pop"),
+    (".evidence-pop-hint", ".evidence-pop"),
+    (".evidence-list", ".evidence-list"),
+    (".evidence-count", ".evidence-list"),
+    (".evidence-entry", ".evidence-entry"),
+    (".evidence-loc", ".evidence-entry"),
+    (".evidence-meta", ".evidence-entry"),
+    (".evidence-meta a", ".evidence-entry"),
+    (".evidence-entry", ".evidence-entry:focus, .evidence-entry:target"),
+]
+
+
+# None은 테마 변수가 없는 오프라인 사본(var() 기본값만 쓰인다)
+@pytest.mark.parametrize("theme", _themes() + [None])
+@pytest.mark.parametrize("text,background", EVIDENCE_PAIRS)
+def test_evidence_text_meets_aa(theme, text, background):
+    css = _evidence_css()
+    values = theme_vars(theme) if theme else {}
+    color = _resolve(_decl(_css_rule(text, css), "color"), values)
+    back = _resolve(_decl(_css_rule(background, css), "background"), values)
+    assert contrast(rgb(color)[0], rgb(back)[0]) >= 4.5

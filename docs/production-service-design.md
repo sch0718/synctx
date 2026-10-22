@@ -597,11 +597,20 @@ synctx:
     channel: team-docs      # 필수, 형식만 검사(매핑은 Collab Gateway)
     presenters: [sch0718]             # 선택
     cancelled: false                  # 선택
+    references:                       # 선택, 근거 링크의 접두어 매핑(최대 20개)
+      "../사내규정/": "internal-regs:사내규정/"
 ---
 ```
 
 - Harness Validator가 필드 형식과 `meeting.id` 중복을 검사한다.
 - Viewer 회의 모드는 `repositories[].collab.enabled: true`인 저장소의 기본 브랜치에서만 켜진다.
+- 근거 미리보기·근거 모음(Phase 8.1b)은 검증을 통과한 `synctx.meeting`이 있는 문서에서 쓴다. 일반 보기·발표 화면에서는 회의 모드가 꺼진 저장소·기본이 아닌 ref에서도 쓰고, 회의 모드와 메모 포함 HTML(`meeting-export`)은 회의 모드가 켜진 곳에서만 열리므로 그곳에서 쓴다.
+- `references`는 근거가 다른 저장소에 있을 때 쓰는 접두어 매핑이다. 키는 본문 링크 href의 원문 접두어(예: `../사내규정/`), 값은 `<저장소 id>:<저장소 루트 기준 경로 접두어>`(예: `internal-regs:사내규정/`)이며 가장 긴 키가 이긴다. 값의 경로에는 `..`·절대경로를 쓸 수 없고 20개를 넘으면 회의 정보 오류다(Harness Validator와 Viewer가 같은 규칙으로 검사). 매핑된 링크는 근거가 아니어도 `/view/<저장소>/<경로>`로 바뀐다(저장소 루트·폴더를 가리키면 `/view/<저장소>?path=<폴더>`). 같은 저장소 안 상대경로 링크는 매핑 없이 그대로 쓴다.
+- 매핑이 설정에 없는 저장소를 가리키면 그 매핑만 무시하고 그 접두어로 시작하는 링크는 href 원문 그대로 둔다. 문서 머리에 "근거 저장소를 찾지 못했습니다: <id>" 안내를 한 번 보인다. 다른 저장소 근거는 그 저장소의 기본 ref에서 읽는다(매핑 값에 ref를 두지 않는다).
+- 근거 원문 문서의 규약:
+  - 문서명은 front matter `title:` → 없으면 첫 `#` 제목(H1) → 없으면 파일 이름(확장자 제외) 순으로 정한다. 근거 문서에는 `title:`을 두기를 권한다.
+  - 링크의 `#앵커`는 먼저 원시 HTML 명시 앵커 `<a id="…"></a>`를 찾고, 없으면 Viewer가 제목에 붙이는 id(GitHub 방식 slug, 중복은 번호)로 찾는다. 명시 앵커는 조문 `aN`(예: `a1`), 대비표 행 `cN-N-N`(예: `c3-1-4`), 외부 자료 조문 `efsr-*`(예: `efsr-8-3`)처럼 문서 안에서 유일하게 둔다. 앵커가 없거나 못 찾으면 "문서 첫 부분"을 대신 보이고 위치에 안내를 붙인다.
+  - 발췌 범위: 제목이면 같거나 상위 제목 직전까지, 표의 행이면 머리글 2줄과 그 행, 굵은 제목 줄(`**제9조(목적)**`·`**<표 …**`)이면 다음 제목·`---`·명시 앵커·다음 조문 줄(`**제N조`·`**제N조의M`) 직전까지, 그 밖의 줄이면 다음 빈 줄 두 개 또는 위 경계까지다. 발췌 안의 `<div class="commentary">` 해설 블록은 뺀다. 발췌 하나는 80줄·16 KiB를 넘으면 줄이고 "…(발췌가 길어 줄였습니다)"를 붙인다.
 
 ## 6. Sync Engine 상세 설계
 
@@ -770,7 +779,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | GET | `/api/repos/{repo_id}/render?ref=&path=` | viewer | Markdown HTML 렌더링 |
 | GET | `/api/repos/{repo_id}/raw?ref=&path=` | viewer | 원본 파일 다운로드 |
 | GET | `/api/repos/{repo_id}/download?format=html|pdf` | viewer | 변환 다운로드 |
-| GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음). 회의 모드 조건 불충족 404 |
+| GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음, 근거 모음·말풍선 포함). 회의 모드 조건 불충족 404 |
 | POST | `/api/repos/{repo_id}/webhook` | service | Git push 알림 |
 
 보안:
@@ -782,6 +791,8 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - HTML은 sanitization 또는 신뢰 저장소 정책 중 하나를 명시한다. 운영 기본값은 신뢰 저장소 + CSP다.
 - `synctx-html` 블록은 sanitizer를 거친 뒤 자리표시를 sandbox iframe으로 채운다. 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지운다. CSP는 `font-src`에 `data:`, 각 지시어에 최상위 `html_embed.allowed_origins`를 더한다.
 - 회의 메모는 서버로 보내지 않는다. 브라우저 localStorage에만 저장하고, `<script>` 안 JSON은 `<`·`>`·`&`·U+2028·U+2029를 유니코드 이스케이프로 인코딩한다.
+- 회의 문서의 근거 발췌는 같은 저장소와 `synctx.meeting.references`가 가리키는 **설정에 있는 저장소**의 Git blob만 읽는다. 없는 저장소·파일, `..`으로 저장소 루트를 벗어나는 경로, 제어 문자나 점으로 시작하는 경로 조각, `viewer.max_render_size_bytes`를 넘는 파일은 근거로 쓰지 않는다. Viewer 권한은 저장소 단위가 아니라 `viewer` 역할 하나라 다른 저장소 발췌를 보여 줘도 권한이 넓어지지 않는다. 한 문서에서 처리하는 근거 링크는 200개, 서로 다른 근거 파일은 50개까지다.
+- 근거 발췌는 렌더링한 뒤 **발췌 전용 허용 목록 정화**를 거친다. 허용 태그(문단·강조·코드·인용·목록·표·제목·`hr`·`span`·`div`) 밖의 태그는 글자만 남기고, `script`·`style`·`iframe`·`object`·`embed`·`template`·`noscript`는 내용째 지우며, 모든 속성을 지운다(표의 숫자 `colspan`·`rowspan`만 남김). `a`는 글자만, `img`는 `[그림: alt]` 글자로 바꾸므로 `javascript:` 링크·외부 이미지·`style`이 남지 않는다. 말풍선·근거 모음 데이터는 `<script type="application/json">` 안에서 위 유니코드 이스케이프로 넣고, 메모 포함 HTML의 근거 부분에는 외부 참조(`http(s):`)가 없다.
 
 ### 7.3 CDN Service
 
@@ -1180,6 +1191,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 | Outbound Feedback | fake OpenProject + fake SMTP + fake importer | redaction, signature, replay, PR 생성 검증 |
 | Offline build | vendor artifact only | 외부 네트워크 없이 이미지 빌드 |
 | Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
+| Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
 
 ### 10.2 운영 전 수용 기준
@@ -1355,14 +1367,19 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - 외부 Importer는 main branch에 직접 push하지 않고 PR만 생성한다.
 - PR merge 후 기존 외부→내부 sync로 OpenProject가 idempotent하게 갱신된다.
 
-### Phase 8: 협업 통합 — 8.1a 회의 모드 기반
+### Phase 8: 협업 통합 (회의 모드 · Jitsi · 메신저)
 
 - [x] front matter 분리(일반 보기 포함)
 - [x] `synctx.meeting` 검증과 Harness `meeting.id` 중복 검사
 - [x] `repositories[].collab.enabled`
 - [x] 회의 모드 메모·형광펜·회의 정리
 - [x] `.md`·메모 포함 HTML 내보내기/가져오기
-- [ ] 8.1b 근거 미리보기·근거 모음
+- [x] 8.1b 근거 미리보기·근거 모음
+  - [x] front matter `synctx.meeting.references`(접두어 매핑) 검증과 저장소 간 링크 해석
+  - [x] 근거 링크 판정과 발췌 규칙(앵커·제목 slug·표 행·조문 경계·해설 블록 제거·상한)
+  - [x] 발췌 전용 허용 목록 정화
+  - [x] 링크 말풍선(포인터·키보드·Esc)과 근거 모음(인용한 곳·원문 열기)
+  - [x] 메모 포함 HTML에 근거 모음·말풍선 포함
 - [ ] 8.1c 회의 문서 대시보드
 - [ ] 8.2 Jitsi 내장
 - [ ] 8.3 Collab Gateway
@@ -1373,6 +1390,12 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - 회의 문서를 회의 모드로 열어 메모를 남기고 새로고침해도 위치와 내용이 복원된다.
 - 메모 포함 HTML을 네트워크 없이 열면 읽기 전용으로 메모가 보이고, Viewer에서 다시 가져올 수 있다.
 - 메모 데이터가 서버로 전송되지 않는다.
+
+완료 기준(8.1b):
+
+- 회의 문서에서 근거 링크에 포인터를 올리거나 포커스하면 말풍선으로 원문 발췌가 보이고, 문서 끝 근거 모음에 근거가 모인다. 본문 글자가 바뀌지 않아 기존 메모 위치가 유지된다.
+- `synctx.meeting.references`로 다른 저장소의 문서를 근거로 가리킬 수 있고, 설정에 없는 저장소는 안내만 보이며 링크는 그대로 남는다.
+- 메모 포함 HTML을 네트워크 없이 열어도 말풍선과 근거 모음이 동작한다(외부 참조 없음).
 
 ### Phase 9: 인터랙티브 HTML 임베드
 

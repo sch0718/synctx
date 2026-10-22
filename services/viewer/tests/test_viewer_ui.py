@@ -278,3 +278,14 @@ def test_search_page_without_query_is_not_an_alert():
     blank = ui.render_search_page(view_prefix="/view", query="", raw_query="   ", repos=REPOS,
                                   active_repo=None, ref=None, results=None)
     assert 'role="alert"' not in blank
+
+
+def test_evidence_list_escapes_and_links():
+    from evidence import Entry
+    e = Entry("evidence-1", "r", "a.md", "c1", "<문서>", "위치&", "<p>본문</p>", (("s1", "<절>"),))
+    html = ui.render_evidence_list([e], href_for=lambda x: "/view/r/a.md#c1")
+    assert "&lt;문서&gt;" in html and "위치&amp;" in html and "<p>본문</p>" in html
+    assert 'href="#s1">&lt;절&gt;</a>' in html and '<a href="/view/r/a.md#c1">원문 열기</a>' in html and "근거 1건" in html
+    assert "원문 열기" not in ui.render_evidence_list([e])
+    assert ui.render_evidence_list([]) == ""
+    assert '"id": "evidence-1"' in ui.render_evidence_data([e]).replace("\\u003c", "<") or '"id":"evidence-1"' in ui.render_evidence_data([e])

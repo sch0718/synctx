@@ -239,3 +239,29 @@ class TestValidateMeeting:
         fm = validate_frontmatter({"synctx": {"type": "meeting", "meeting": {
             "id": "m1", "title": "t", "starts_at": "2026-10-08T14:00:00+09:00", "channel": "c"}}})
         assert fm.synctx.meeting.id == "m1"
+
+    def test_meeting_references_default_empty(self):
+        meeting, errors = validate_meeting(_fm(references=None))
+        assert errors == [] and meeting.references == {}
+
+    def test_meeting_references_valid(self):
+        meeting, errors = validate_meeting(_fm(references={"../사내규정/": "internal-regs:사내규정/", "./근거/": "rules:"}))
+        assert errors == [] and meeting.references["../사내규정/"] == "internal-regs:사내규정/"
+
+    def test_meeting_references_accepts_non_ascii_repo_id(self):
+        meeting, errors = validate_meeting(_fm(references={"../규정/": "사내규정:규정/"}))
+        assert errors == [] and meeting.references == {"../규정/": "사내규정:규정/"}
+
+    @pytest.mark.parametrize("refs,needle", [
+        (["x"], "형식의 목록이어야"),
+        ({f"k{i}/": "r:p" for i in range(21)}, "20개 이하"),
+        ({"": "r:p"}, "형식의 목록이어야"),
+        ({"a/": 3}, "형식의 목록이어야"),
+        ({"a/": "noColon"}, "'a/' 값이 올바르지 않습니다"),
+        ({"a/": "r:/abs"}, "'a/' 값이 올바르지 않습니다"),
+        ({"a/": "r:x/../y"}, "'a/' 값이 올바르지 않습니다"),
+        ({"a/": ":p"}, "'a/' 값이 올바르지 않습니다"),
+    ])
+    def test_meeting_references_invalid(self, refs, needle):
+        meeting, errors = validate_meeting(_fm(references=refs))
+        assert meeting is None and any(needle in e for e in errors)

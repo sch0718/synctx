@@ -2,8 +2,10 @@
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -49,9 +51,10 @@ def client(manager, monkeypatch):
     return TestClient(viewer_app.app, raise_server_exceptions=False)
 
 
-def meeting_doc(title="DX 21번 검토", starts_at="2026-10-08T14:00+09:00", body="# 회의 자료\n\n## 안건\n\n본문 내용\n"):
+def meeting_doc(title="DX 21번 검토", starts_at="2026-10-08T14:00+09:00", body="# 회의 자료\n\n## 안건\n\n본문 내용\n",
+                extra_meeting: dict | None = None):
     fm = {"synctx": {"type": "meeting", "meeting": {
-        "id": "dx-21", "title": title, "starts_at": starts_at, "channel": "dx-team"}}}
+        "id": "dx-21", "title": title, "starts_at": starts_at, "channel": "dx-team", **(extra_meeting or {})}}}
     return "---\n" + yaml.safe_dump(fm, allow_unicode=True) + "---\n" + body
 
 
@@ -598,3 +601,176 @@ class TestMeetingGuide:
         for name in ("+ 메모", "메모", "회의 정리", ".md로 내보내기", "가져오기"):
             assert f"「{name}」" in copy
             assert f"['{name}']" in js, name
+
+
+EVIDENCE_BODY = "# 회의 자료\n\n## 1. 점검\n\n규정 [제1조](../근거/a.md#c1)와 [A 전체](../근거/a.md)\n"
+EVIDENCE_SOURCE = ('# 규정 A\n\n<a id="c1"></a>\n**제1조(목적)** <script>alert(1)</script>'
+                   '<b onclick="x()">내용</b> <a href="javascript:alert(1)">위험</a> ![그림](http://ext/x.png)\n')
+
+
+def _serve(manager, files):
+    manager.file_size.return_value = 100
+    manager.blob_size_resolved.return_value = 100
+    manager.resolve_ref.side_effect = lambda ref=None: f"origin/{ref or 'main'}"
+    def read_resolved(path, resolved):
+        if path not in files:
+            raise subprocess.CalledProcessError(128, ["git", "show"])
+        return files[path].encode("utf-8")
+    manager.read_resolved.side_effect = read_resolved
+
+
+A_HREF = f"/view/test-repo/{quote('근거/a.md')}"  # 원문 열기 주소는 기존 doc_href처럼 quote한다
+
+
+def _evidence_json(html):
+    """data-synctx-evidence 속성이 붙은 JSON script 하나의 내용을 읽는다(id·속성 순서에 기대지 않는다)."""
+    found = re.findall(r'<script\b(?=[^>]*\btype="application/json")(?=[^>]*\bdata-synctx-evidence\b)[^>]*>(.*?)</script>', html, re.S)
+    assert len(found) == 1
+    return json.loads(found[0])
+
+
+def _evidence_section(html):
+    """section#evidence-list의 안쪽 HTML만 깊이를 세어 잘라 낸다(중첩 section 포함)."""
+    start = html.index('<section class="evidence-list"')
+    depth, i = 0, start
+    for m in re.finditer(r"<(/?)section\b", html[start:]):
+        depth += -1 if m.group(1) else 1
+        if depth == 0:
+            return html[start:start + m.end()]
+    raise AssertionError("evidence-list가 닫히지 않았다")
+
+
+class TestEvidence:
+    def test_meeting_doc_has_evidence_list_and_data(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=EVIDENCE_BODY)
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        text = client.get("/test-repo/docs/m.md").text
+        assert 'data-evidence="evidence-1"' in text and 'data-evidence="evidence-2"' in text
+        assert 'id="evidence-list"' in text and "근거 2건" in text and 'id="evidence-data"' in text
+        assert "/static/meeting/evidence.js" in text and "/static/meeting/evidence.css" in text
+        listing = _evidence_section(text)
+        data = _evidence_json(text)
+        for piece in [listing] + [e["html"] for e in data["entries"]]:
+            assert "<script" not in piece and "onclick" not in piece and "javascript:" not in piece and "http://ext" not in piece
+        assert text.index("</article>") < text.index('id="evidence-list"')
+        assert f'href="{A_HREF}#c1">원문 열기</a>' in text
+
+    def test_evidence_keeps_article_text(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=EVIDENCE_BODY)
+        _serve(manager, {})
+        plain = article_text(client.get("/test-repo/docs/m.md").text)
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        assert article_text(client.get("/test-repo/docs/m.md").text) == plain
+
+    def test_export_article_text_matches_viewer_with_evidence(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=EVIDENCE_BODY)
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        viewer = article_text(client.get("/test-repo/docs/m.md").text)
+        export = client.get("/api/repos/test-repo/meeting-export", params={"path": "docs/m.md"}).text
+        assert article_text(export) == viewer
+
+    def test_same_repo_mapping_keeps_ref(self, client, manager):
+        doc = meeting_doc(body="# 회의\n\n[근거](../규정/a.md#c1)\n",
+                          extra_meeting={"references": {"../규정/": "test-repo:근거/"}})
+        manager.read_file_text.return_value = doc
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        text = client.get("/test-repo/docs/m.md?ref=feat").text
+        assert 'href="/view/test-repo/근거/a.md?ref=feat#c1"' in text and f'href="{A_HREF}?ref=feat#c1">원문 열기</a>' in text
+
+    def test_evidence_reader_adapter(self, client, manager, monkeypatch):
+        import app as viewer_app
+        from synctx_common.config import RepoProfile, RepoAuthConfig
+        regs = RepoProfile(id="regs", name="R", url="https://git.test/regs.git", auth=RepoAuthConfig(type="none"))
+        other = MagicMock()
+        other.profile = regs
+        _serve(other, {"x.md": "다른 저장소"})
+        monkeypatch.setattr(viewer_app, "repo_managers", {"test-repo": manager, "regs": other})
+        monkeypatch.setattr(viewer_app.config, "repositories", [*viewer_app.config.repositories, regs])
+        _serve(manager, {"ok.md": "가"})
+        manager.read_resolved.side_effect = lambda path, resolved: {"ok.md": "가".encode(), "bad.md": b"\xff"}[path]
+        read = viewer_app._evidence_reader("test-repo", manager, "feat")
+        assert read("test-repo", "ok.md") == "가"
+        assert manager.resolve_ref.call_args.args == ("feat",)  # repo_reader가 resolve_ref(ref)를 위치 인자로 부른다
+        assert read("regs", "x.md") == "다른 저장소"
+        assert other.resolve_ref.call_args.args == (None,)  # 다른 저장소는 기본 ref
+        with pytest.raises(Exception):
+            read("test-repo", "bad.md")
+        assert manager.resolve_ref.call_count == 1  # 같은 저장소의 여러 파일은 ref를 한 번만 해석한다
+        manager.read_resolved.reset_mock()
+        manager.blob_size_resolved.return_value = viewer_app.config.viewer.max_render_size_bytes + 1
+        with pytest.raises(Exception):
+            read("test-repo", "ok.md")
+        manager.read_resolved.assert_not_called()  # 크기가 넘으면 읽지 않는다
+
+    def test_evidence_shown_without_meeting_mode(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=EVIDENCE_BODY)
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        text = client.get("/test-repo/docs/m.md?ref=feat").text
+        assert 'id="evidence-list"' in text and f'href="{A_HREF}?ref=feat#c1">원문 열기</a>' in text
+
+    def test_evidence_shown_when_collab_disabled(self, client, manager):
+        manager.profile = _profile(collab=False)
+        manager.read_file_text.return_value = meeting_doc(body=EVIDENCE_BODY)
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        for url in ("/test-repo/docs/m.md", "/test-repo/docs/m.md?mode=present"):
+            text = client.get(url).text
+            assert 'class="evidence-list"' in text and "data-synctx-evidence" in text
+            assert "/static/meeting/evidence.js" in text and 'data-evidence="evidence-1"' in text
+            assert "/static/meeting/meeting.js" not in text  # 회의 모드 자산은 싣지 않는다
+
+    def test_plain_doc_has_no_evidence(self, client, manager):
+        manager.read_file_text.return_value = "# Hello\n\n[x](../근거/a.md)\n"
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        text = client.get("/test-repo/docs/a.md").text
+        assert "evidence-list" not in text and "data-evidence" not in text
+
+    def test_cross_repo_mapping_and_missing_repo_notice(self, client, manager, monkeypatch):
+        import app as viewer_app
+        from synctx_common.config import RepoProfile, RepoAuthConfig
+        regs = RepoProfile(id="regs", name="R", url="https://git.test/regs.git", auth=RepoAuthConfig(type="none"))
+        other = MagicMock()
+        other.profile = regs
+        _serve(other, {"규정/x.md": "# X 규정\n\n## 범위\n본문"})
+        monkeypatch.setattr(viewer_app, "repo_managers", {"test-repo": manager, "regs": other})
+        monkeypatch.setattr(viewer_app.config, "repositories", [*viewer_app.config.repositories, regs])
+        doc = meeting_doc(body="# 회의\n\n[규정](../사내규정/x.md#범위) [유령](../유령/y.md)\n",
+                          extra_meeting={"references": {"../사내규정/": "regs:규정/", "../유령/": "ghost:"}})
+        assert "references" in yaml.safe_load(doc.split("---\n")[1])["synctx"]["meeting"]
+        manager.read_file_text.return_value = doc
+        _serve(manager, {})
+        text = client.get("/test-repo/docs/m.md").text
+        assert 'href="/view/regs/규정/x.md#범위"' in text and "X 규정" in text
+        assert "근거 저장소를 찾지 못했습니다: ghost" in text
+        assert 'href="../유령/y.md"' in text  # 없는 저장소 매핑은 링크도 원문 그대로
+        assert "유령/y.md" not in str(manager.read_resolved.call_args_list)  # 같은 저장소 경로로 읽지 않는다
+
+    def test_export_shows_missing_repo_notice_and_keeps_href(self, client, manager):
+        doc = meeting_doc(body="# 회의\n\n[유령](../유령/y.md)\n",
+                          extra_meeting={"references": {"../유령/": "ghost:"}})
+        manager.read_file_text.return_value = doc
+        _serve(manager, {"유령/y.md": "# 같은 저장소 동명 파일"})
+        text = client.get("/api/repos/test-repo/meeting-export", params={"path": "docs/m.md"}).text
+        assert text.count("근거 저장소를 찾지 못했습니다: ghost") == 1
+        assert text.index("근거 저장소를 찾지 못했습니다") < text.index('<article class="markdown-body">')
+        assert 'href="../유령/y.md"' in text and "data-evidence" not in text and "evidence-list" not in text
+
+    def test_body_heading_ids_do_not_collide_with_evidence_ids(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=EVIDENCE_BODY + "\n## Evidence data\n\n## Evidence list\n")
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        text = client.get("/test-repo/docs/m.md").text
+        assert text.count('id="evidence-data"') == 1 and text.count('id="evidence-list"') == 1  # 둘 다 본문 제목 쪽
+        assert text.count("data-synctx-evidence") == 1 and 'id="evidence-data-2" data-synctx-evidence' in text
+        assert 'class="evidence-list" id="evidence-list-2"' in text
+
+    def test_export_embeds_evidence_offline(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc(body=EVIDENCE_BODY)
+        _serve(manager, {"근거/a.md": EVIDENCE_SOURCE})
+        text = client.get("/api/repos/test-repo/meeting-export", params={"path": "docs/m.md"}).text
+        assert 'id="evidence-list"' in text and 'id="evidence-data"' in text and 'data-evidence="evidence-1"' in text
+        assert "원문 열기" not in text and not re.search(r'\b(?:src|href)="https?:', text)
+        assert "/static/meeting/evidence.js" not in text and "SynctxEvidenceCore" in text
+        assert text.count('id="evidence-data"') == 1
+        listing = _evidence_section(text)
+        data = _evidence_json(text)
+        for piece in [listing] + [e["html"] for e in data["entries"]]:
+            assert "javascript:" not in piece and "<script" not in piece and "onclick" not in piece  # 문서 전체가 아니라 근거 부분만 본다

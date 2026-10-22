@@ -166,6 +166,7 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 - **HTML/PDF 다운로드** — 자체 완결형 HTML, Chrome CDP 기반 PDF
 - **완전 오프라인** — 모든 외부 라이브러리를 CDN Service에서 로딩
 - **회의 모드** — 회의 문서(`synctx.type: meeting`)에서 메모·형광펜·회의 정리(결정·액션 아이템), `.md`·메모 포함 HTML(읽기 전용) 내보내기와 가져오기. 메모는 브라우저(localStorage)에만 저장 (Phase 8.1a)
+- **근거 미리보기·근거 모음** — 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선으로 미리 보고, 문서 끝 근거 모음에서 발췌·인용한 곳·원문 열기로 확인. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리키며, 메모 포함 HTML에서도 동작 (Phase 8.1b)
 - **인터랙티브 HTML 임베드** — Markdown의 ` ```synctx-html ` 블록이 가리키는 저장소 HTML 묶음(모션 그래픽 등)을 한 파일로 합쳐 sandbox iframe으로 재생. 운영자가 지정한 신뢰 저장소에서만 동작 (Phase 9)
 
 ## CDN Service (내부 CDN)
@@ -330,11 +331,12 @@ synctx/
 │   │       ├── meeting.py             # 회의 모드 판단·설정 JSON·메모 포함 HTML 조립
 │   │       ├── viewer_ui.py           # 공통 화면 틀(상단 바·서랍·오류 화면)·검색 결과 페이지 마크업
 │   │       ├── meeting_card.py        # 회의 정보 카드의 한국 시간 일시·안건 가공
+│   │       ├── evidence.py            # 회의 문서의 근거 링크 판정·접두어 매핑·발췌·발췌 정화·근거 모음 데이터
 │   │       ├── search.py              # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
 │   │       ├── static/viewer.css      # 화면 틀·3단 배치·반응형
 │   │       ├── static/viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서·회의 진행 상태·안건 소속 절·발표 장 나누기와 키 판단 로직
 │   │       ├── static/viewer.js       # 상단 바·서랍·목차·안건 추적·회의 진행 상태 갱신·회의 모드 안내·발표 화면·알림·확인 창 동작
-│   │       ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·CSS
+│   │       ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·근거 말풍선 JS(evidence-core.js, evidence.js)·CSS
 │   │       └── static/style.css       # 사용하지 않는 이전 스타일시트
 │   │
 │   ├── cdn/                           # CDN Service

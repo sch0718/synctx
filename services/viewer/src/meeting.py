@@ -88,14 +88,17 @@ def render_assets(view_prefix: str, config: dict) -> tuple[str, str]:
     return head, body
 
 
+def notice_html(text: str) -> str:
+    return f'<div class="meeting-notice" role="status" style="{_NOTICE_STYLE}">{html.escape(text)}</div>'
+
+
 def render_notice(ctx: MeetingContext) -> str:
-    if not ctx.reason:
-        return ""
-    return f'<div class="meeting-notice" role="status" style="{_NOTICE_STYLE}">{html.escape(ctx.reason)}</div>'
+    return notice_html(ctx.reason) if ctx.reason else ""
 
 
 _DOCUMENT_END = "</body>\n</html>"
 _HEAD_OPEN = "<head>"
+_ARTICLE_OPEN = '<article class="markdown-body">'
 _CSP_META = (
     '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
     "script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:\">"
@@ -110,8 +113,12 @@ def _static_text(name: str) -> str:
     return (STATIC_DIR / name).read_text(encoding="utf-8")
 
 
-def build_export_html(body_markdown: str, theme: str, config: dict, sanitize: Callable[[str], str]) -> str:
-    """오프라인 HTML 틀을 만든다. 메모는 넣지 않는다(브라우저가 자리표시를 MEETING_EMBED로 바꾼다)."""
+def build_export_html(body_markdown: str, theme: str, config: dict, sanitize: Callable[[str], str],
+                      evidence_block: Optional[Callable[[], str]] = None, notice: str = "") -> str:
+    """오프라인 HTML 틀을 만든다. 메모는 넣지 않는다(브라우저가 자리표시를 MEETING_EMBED로 바꾼다).
+
+    evidence_block은 본문 렌더(sanitize)가 끝난 뒤에 불러 근거 모음·근거 데이터를 받는다. notice는 본문 앞에 한 번 넣는다.
+    """
     document = render_download_html(body_markdown, theme=theme, html_filter=sanitize).rstrip()
     if not document.endswith(_DOCUMENT_END):
         raise ExportAssemblyError("오프라인 HTML이 </body></html>로 끝나지 않습니다")
@@ -120,9 +127,17 @@ def build_export_html(body_markdown: str, theme: str, config: dict, sanitize: Ca
         raise ExportAssemblyError("오프라인 HTML의 <head>를 하나로 특정하지 못했습니다")
     head_at = document.index(_HEAD_OPEN) + len(_HEAD_OPEN)
     document = f"{document[:head_at]}{_CSP_META}{document[head_at:]}"
+    if notice:
+        article_at = document.find(_ARTICLE_OPEN)
+        if article_at == -1:
+            raise ExportAssemblyError("오프라인 HTML에서 본문 article을 찾지 못했습니다")
+        document = f"{document[:article_at]}{notice}\n{document[article_at:]}"
+    evidence = evidence_block() if evidence_block else ""
     # 인라인된 mermaid.min.js 안에도 "</body>" 문자열이 있으므로 마지막 것을 기준으로 끼운다
     head, closing, tail = document.rpartition("</body>")
-    staged = f"{head}<style>{THEME_VARS_CSS}{_static_text('meeting.css')}</style>\n{EMBED_MARKER}\n"
+    styles = THEME_VARS_CSS + _static_text("meeting.css") + (_static_text("evidence.css") if evidence else "")
+    evidence_part = f"{evidence}\n" if evidence else ""
+    staged = f"{head}<style>{styles}</style>\n{evidence_part}{EMBED_MARKER}\n"
     if staged.count(EMBED_MARKER) != 1:
         raise ExportAssemblyError("메모 자리표시가 문서에 1개가 아닙니다")
     scripts = (
@@ -130,4 +145,9 @@ def build_export_html(body_markdown: str, theme: str, config: dict, sanitize: Ca
         f"<script>{_escape_script_close_tags(_static_text('memo-core.js'))}</script>\n"
         f"<script>{_escape_script_close_tags(_static_text('meeting.js'))}</script>\n"
     )
+    if evidence:
+        scripts += (
+            f"<script>{_escape_script_close_tags(_static_text('evidence-core.js'))}</script>\n"
+            f"<script>{_escape_script_close_tags(_static_text('evidence.js'))}</script>\n"
+        )
     return staged + scripts + closing + tail + "\n"

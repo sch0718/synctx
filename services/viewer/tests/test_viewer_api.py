@@ -465,6 +465,41 @@ class TestRewriteLinks:
         assert resp.status_code == 200
         assert 'href="/view/test-repo?path=docs/a%26b"' in resp.text
 
+    def test_link_map_points_to_other_repo_and_keeps_other_attrs(self):
+        from renderer import rewrite_links
+        html = '<a href="../사내규정/x.md#a1" data-evidence="evidence-1">x</a><a href="../없는곳/y.md">y</a>'
+        out = rewrite_links(html, "test-repo", "docs/m.md", ref="feat", link_map={"../사내규정/": "regs:규정/"})
+        assert 'href="/view/regs/규정/x.md#a1" data-evidence="evidence-1"' in out
+        assert "ref=feat" not in out.split("</a>")[0]
+        assert 'href="/view/test-repo/없는곳/y.md?ref=feat"' in out  # 매핑에 없으면 기존 규칙 그대로
+        same = rewrite_links('<a href="../근거/z.md#k">z</a>', "test-repo", "docs/m.md", ref="feat",
+                             link_map={"../근거/": "test-repo:근거/"})
+        assert 'href="/view/test-repo/근거/z.md?ref=feat#k"' in same  # 같은 저장소 매핑은 ref 유지
+        kept = rewrite_links('<a href="../유령/y.md">g</a>', "test-repo", "docs/m.md", keep_prefixes=("../유령/",))
+        assert 'href="../유령/y.md"' in kept
+
+    def test_link_map_longest_key_folder_and_kept_prefix(self):
+        from renderer import rewrite_links
+        html = '<a href="../유령/깊이/z.md">z</a><a href="../유령/y.md">y</a><a href="../유령/깊이/폴더/">f</a>'
+        out = rewrite_links(html, "test-repo", "docs/m.md", ref="feat",
+                            link_map={"../유령/깊이/": "regs:근거/"}, keep_prefixes=("../유령/",))
+        assert 'href="/view/regs/근거/z.md"' in out
+        assert 'href="../유령/y.md"' in out
+        assert 'href="/view/regs?path=%EA%B7%BC%EA%B1%B0/%ED%8F%B4%EB%8D%94"' in out
+
+    def test_link_map_to_repo_root_or_folder_uses_folder_view(self):
+        from renderer import rewrite_links
+        root = rewrite_links('<a href="../규정/">r</a><a href="../규정/#x">h</a>', "test-repo", "docs/m.md",
+                             ref="feat", link_map={"../규정/": "regs:"})
+        assert root.count('href="/view/regs?path="') == 2  # 다른 저장소는 ref를 붙이지 않는다
+        same = rewrite_links('<a href="../규정/">r</a>', "test-repo", "docs/m.md", ref="feat",
+                             link_map={"../규정/": "test-repo:"})
+        assert 'href="/view/test-repo?path=&amp;ref=feat"' in same
+        sub = rewrite_links('<a href="../규정/">a</a><a href="../규정/세부/">b</a>', "test-repo", "docs/m.md",
+                            link_map={"../규정/": "regs:근거"})
+        assert 'href="/view/regs?path=%EA%B7%BC%EA%B1%B0"' in sub  # 원래 폴더 링크는 매핑 값에 /가 없어도 폴더
+        assert 'href="/view/regs?path=%EA%B7%BC%EA%B1%B0%EC%84%B8%EB%B6%80"' in sub
+
 
 class TestRefEscaping:
     MALICIOUS_REFS = ['x"><b>', "';alert(1)//</script>"]

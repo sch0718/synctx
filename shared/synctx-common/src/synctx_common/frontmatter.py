@@ -14,6 +14,8 @@ _FRONT_MATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _MEETING_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _STARTS_AT_EXAMPLE = "(예: 2026-10-08T14:00+09:00)"
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f]")
+_REFERENCE_VALUE_RE = re.compile(r"^(?P<repo>[^:/\x00-\x1f]+):(?P<path>[^\x00-\x1f]*)$")
 
 
 class MeetingFrontMatter(BaseModel):
@@ -24,6 +26,7 @@ class MeetingFrontMatter(BaseModel):
     channel: str
     presenters: list[str] = Field(default_factory=list)
     cancelled: bool = False
+    references: dict[str, str] = Field(default_factory=dict)
 
 
 class SynctxFrontMatter(BaseModel):
@@ -143,6 +146,22 @@ def validate_meeting(front_matter: Dict[str, Any]) -> Tuple[Optional[MeetingFron
     if not isinstance(cancelled, bool):
         errors.append("cancelled는 true 또는 false여야 합니다")
 
+    references = raw.get("references")
+    if references is None:
+        references = {}
+    if not isinstance(references, dict) or not all(
+        isinstance(key, str) and key.strip() and not _CONTROL_CHAR_RE.search(key) and isinstance(value, str)
+        for key, value in references.items()
+    ):
+        errors.append("meeting.references는 '링크 접두어: 저장소id:경로' 형식의 목록이어야 합니다")
+    elif len(references) > 20:
+        errors.append("meeting.references는 20개 이하여야 합니다")
+    else:
+        for key, value in references.items():
+            match = _REFERENCE_VALUE_RE.fullmatch(value)
+            if match is None or match["path"].startswith("/") or ".." in match["path"].split("/"):
+                errors.append(f"meeting.references의 '{key}' 값이 올바르지 않습니다(저장소id:저장소 루트 기준 경로)")
+
     if errors:
         return None, errors
 
@@ -154,4 +173,5 @@ def validate_meeting(front_matter: Dict[str, Any]) -> Tuple[Optional[MeetingFron
         channel=channel,
         presenters=presenters,
         cancelled=cancelled,
+        references=references,
     ), []

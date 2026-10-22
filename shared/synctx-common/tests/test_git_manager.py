@@ -138,6 +138,25 @@ async def test_read_resolved_reads_branch_after_single_resolve(tmp_path, remote)
 
 
 @pytest.mark.asyncio
+async def test_blob_size_resolved_accepts_only_blobs(tmp_path, remote):
+    bare, work, first = remote
+    _commit(work, "dir.md/x.txt", "x\n", "dir named like markdown")
+    _git(work, "update-index", "--add", "--cacheinfo", f"160000,{first},sub.md")
+    _git(work, "commit", "-qm", "submodule named like markdown")
+    _git(work, "push", "-q", "origin", "main")
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    resolved = manager.resolve_ref()
+
+    assert manager.blob_size_resolved("docs/a.md", resolved) == manager.file_size("docs/a.md") == 3
+    for path in ("dir.md", "sub.md", "docs/missing.md", "docs"):
+        with pytest.raises(FileNotFoundError):
+            manager.blob_size_resolved(path, resolved)
+    with pytest.raises(ValueError):
+        manager.blob_size_resolved("../x", resolved)
+
+
+@pytest.mark.asyncio
 async def test_file_paths_lists_every_blob_including_hidden_and_special_names(tmp_path, remote):
     bare, work, _ = remote
     for name in ["docs/.hidden.md", "docs/한글.md", 'docs/a "b".md', "docs/tab\tname.md", ".github/x.md"]:

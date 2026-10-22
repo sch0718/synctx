@@ -274,16 +274,49 @@ def _rewrite_tag_attr(
     return tag_re.sub(replace_tag, html)
 
 
-def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = None) -> str:
-    """상대 이미지/링크를 repo permalink 경로로 재작성한다. ref가 있으면 이미지·문서·폴더 주소에 붙여 같은 브랜치를 유지한다."""
+def _path_part(href: str) -> str:
+    return href.split("?", 1)[0].split("#", 1)[0]
+
+
+def longest_prefix(href: str, prefixes) -> str | None:
+    best = None
+    for prefix in prefixes:
+        if href.startswith(prefix) and (best is None or len(prefix) > len(best)):
+            best = prefix
+    return best
+
+
+def map_href(href: str, references: dict[str, str]) -> tuple[str, str] | None:
+    """href 원문이 매핑 키로 시작하면 가장 긴 키로 (저장소 id, 경로 접두어 + 나머지)를 돌려준다."""
+    key = longest_prefix(href, references)
+    if key is None:
+        return None
+    repo, _, prefix = references[key].partition(":")
+    return repo, prefix + href[len(key):]
+
+
+def rewrite_links(
+    html: str,
+    repo_id: str,
+    base_path: str,
+    ref: str | None = None,
+    link_map: dict[str, str] | None = None,
+    keep_prefixes: tuple[str, ...] = (),
+) -> str:
+    """상대 이미지/링크를 repo permalink 경로로 재작성한다. ref가 있으면 이미지·문서·폴더 주소에 붙여 같은 브랜치를 유지한다.
+
+    link_map(접두어 매핑)에 걸린 링크는 매핑한 저장소 경로로 바꾸고, keep_prefixes에 걸린 링크는 그대로 둔다.
+    """
 
     ref_query = f"ref={quote(ref, safe='')}" if ref else ""
+    link_map = link_map or {}
+    prefixes = (*link_map, *keep_prefixes)
 
-    def to_attr(prefix: str, relative: str) -> str:
+    def to_attr(prefix: str, relative: str, base: str = base_path, with_ref: bool = True) -> str:
         """경로·쿼리에 ref를 붙이고 #앵커는 그 뒤에 둔 뒤 속성값으로 이스케이프한다."""
         path_and_query, hash_sign, fragment = relative.partition("#")
-        url = f"{prefix}/{_resolve_relative_path(base_path, path_and_query)}"
-        if ref_query:
+        url = f"{prefix}/{_resolve_relative_path(base, path_and_query)}"
+        if ref_query and with_ref:
             url += ("&" if "?" in url else "?") + ref_query
         return html_lib.escape(url + hash_sign + fragment)
 
@@ -292,20 +325,35 @@ def rewrite_links(html: str, repo_id: str, base_path: str, ref: str | None = Non
             return None
         return to_attr(f"/raw/{repo_id}", html_lib.unescape(raw))
 
+    def view_href(
+        target_repo: str, unescaped: str, base: str, with_ref: bool, any_file: bool, as_folder: bool = False
+    ) -> str | None:
+        target = _path_part(unescaped)
+        if as_folder or target.endswith("/"):
+            folder = unquote(_resolve_relative_path(base, target))
+            ref_param = f"&amp;{ref_query}" if ref_query and with_ref else ""
+            return f"/view/{target_repo}?path={quote(folder, safe='/')}{ref_param}"
+        pure = PurePosixPath(target)
+        if not any_file and pure.suffix.lower() not in {".md", ".markdown"}:
+            return None
+        return to_attr(f"/view/{target_repo}", unescaped, base, with_ref)
+
     def rewrite_href(raw: str) -> str | None:
         if _is_external_link(raw):
             return None
         # 속성값은 HTML 이스케이프된 상태(`a&amp;b/`)로 들어오므로 경로로 쓰기 전에 되돌린다
         unescaped = html_lib.unescape(raw)
-        target = unescaped.split("?", 1)[0].split("#", 1)[0]
-        if target.endswith("/"):
-            folder = unquote(_resolve_relative_path(base_path, target))
-            ref_param = f"&amp;{ref_query}" if ref_query else ""
-            return f"/view/{repo_id}?path={quote(folder, safe='/')}{ref_param}"
-        pure = PurePosixPath(target)
-        if pure.suffix.lower() not in {".md", ".markdown"}:
+        key = longest_prefix(unescaped, prefixes) if prefixes else None
+        if key is None:
+            return view_href(repo_id, unescaped, base_path, True, any_file=False)
+        # 없는 저장소를 가리킨 매핑이 이기면 원문 그대로 둔다
+        if key not in link_map:
             return None
-        return to_attr(f"/view/{repo_id}", unescaped)
+        target_repo, mapped = map_href(unescaped, link_map)
+        mapped = mapped.lstrip("/")
+        # 저장소 루트로 매핑됐거나 원래 폴더를 가리킨 링크는 폴더 주소로 보낸다
+        as_folder = not _path_part(mapped) or _path_part(unescaped).endswith("/")
+        return view_href(target_repo, mapped, "", target_repo == repo_id, any_file=True, as_folder=as_folder)
 
     preserved: list[str] = []
     marker_prefix = "__MD_PREVIEW_PRESERVED_BLOCK_"

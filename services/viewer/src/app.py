@@ -23,6 +23,7 @@ from synctx_common.observability import register_observability_routes
 from renderer import NO_TITLE_FALLBACK, render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
 
 import embed_view
+import evidence
 import meeting as meeting_mode
 import meeting_card
 import search as search_mod
@@ -850,6 +851,47 @@ def _publish_dialog(path: str) -> str:
 </dialog>'''
 
 
+def _evidence_reader(repo_id: str, manager: GitRepoManager, effective_ref: str | None):
+    """근거 파일 원문 읽기. 저장소마다 ref를 한 번만 해석하고, blob이 아니거나 너무 큰 파일은 읽지 않고 예외를 낸다."""
+    resolved: dict[str, tuple[GitRepoManager, str]] = {}
+
+    def read(repo: str, path: str) -> str:
+        if repo not in resolved:
+            same = repo == repo_id
+            mgr = manager if same else get_repo_manager(repo)
+            resolved[repo] = (mgr, mgr.resolve_ref(effective_ref if same else None))
+        mgr, ref = resolved[repo]
+        size = mgr.blob_size_resolved(path, ref)
+        if size > config.viewer.max_render_size_bytes:
+            raise ValueError(f"근거 파일이 너무 큽니다: {repo}/{path} ({size} bytes)")
+        return mgr.read_resolved(path, ref).decode("utf-8")
+
+    return read
+
+
+def _render_excerpt(md: str) -> str:
+    return evidence.sanitize_excerpt(render_markdown(md)["html"])
+
+
+def _evidence_mapping(meeting) -> tuple[dict[str, str], tuple[str, ...], str]:
+    """설정에 있는 저장소를 가리키는 매핑, 건너뛸 접두어(없는 저장소), 없는 저장소 안내 HTML."""
+    valid, missing = evidence.split_references(meeting.references, {r.id for r in config.repositories})
+    skipped = tuple(key for key in meeting.references if key not in valid)
+    notice = meeting_mode.notice_html("근거 저장소를 찾지 못했습니다: " + ", ".join(missing)) if missing else ""
+    return valid, skipped, notice
+
+
+def _build_evidence(html: str, repo_id: str, path: str, manager: GitRepoManager, effective_ref: str | None,
+                    references: dict[str, str], skipped: tuple[str, ...]):
+    """근거를 조립한다. 실패하면 근거 없이 보이도록 None을 돌려준다."""
+    try:
+        return evidence.build(html, repo_id=repo_id, path=path, references=references, skip_prefixes=skipped,
+                              read=_evidence_reader(repo_id, manager, effective_ref), render=_render_excerpt)
+    except Exception as exc:
+        logger.warning("evidence_failed repo_id=%s error=%s", repo_id, type(exc).__name__)
+        return None
+
+
 def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
     manager = get_repo_manager(repo_id)
     effective_ref = ref if ref and ref != manager.profile.default_ref else None
@@ -881,11 +923,25 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             content = _wrap_code_as_markdown(path, content, language)
             render_source = content
 
+        if is_md:
+            meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
+        else:
+            meeting_ctx = meeting_mode.MeetingContext(False, None, None)
+
         prepared = embed_view.prepare(render_source) if is_md else None
         rendered = render_markdown(prepared.text if prepared else render_source)
         rendered["html"] = _sanitize_html(rendered.get("html", ""))
+        found = None
+        evidence_notice = ""
         if is_md:
-            rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path, ref=ref)
+            link_map, skipped = None, ()
+            if meeting_ctx.meeting is not None:
+                link_map, skipped, evidence_notice = _evidence_mapping(meeting_ctx.meeting)
+                found = _build_evidence(rendered.get("html", ""), repo_id, path, manager, effective_ref, link_map, skipped)
+                if found is not None:
+                    rendered["html"] = found.html
+            rendered["html"] = rewrite_links(rendered.get("html", ""), repo_id, path, ref=ref,
+                                             link_map=link_map, keep_prefixes=skipped)
             rendered["html"] = embed_view.fill(
                 rendered["html"], prepared,
                 md_path=path,
@@ -906,10 +962,6 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         cdn_base = config.viewer.cdn_base_url.rstrip("/")
 
         doc_href = f"{VIEW_PREFIX}/{repo_id}/{quote(path)}"
-        if is_md:
-            meeting_ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, ref)
-        else:
-            meeting_ctx = meeting_mode.MeetingContext(False, None, None)
         presenting = mode == "present" and meeting_ctx.meeting is not None
         meeting_active = (mode == "meeting" or presenting) and meeting_ctx.enabled
         meeting_head = meeting_body = meeting_notice = meeting_exit = present_bar = ""
@@ -934,6 +986,20 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         elif mode == "present":
             meeting_notice = meeting_mode.render_notice(meeting_ctx if meeting_ctx.reason else
                 meeting_mode.MeetingContext(False, "발표 화면은 회의 문서에서만 쓸 수 있습니다", None))
+        meeting_notice += evidence_notice
+        evidence_list = evidence_head = evidence_body = ""
+        if found is not None and found.entries:
+            def source_href(entry) -> str:
+                href = f"{VIEW_PREFIX}/{entry.repo_id}/{quote(entry.path)}"
+                if entry.repo_id == repo_id:
+                    href += ref_param_first
+                return href + (f"#{entry.anchor}" if entry.anchor else "")
+
+            evidence_list = ui.render_evidence_list(found.entries, ids=found.ids, href_for=source_href)
+            evidence_head = f'\n<link rel="stylesheet" href="{VIEW_PREFIX}/static/meeting/evidence.css">'
+            evidence_body = (f"\n{ui.render_evidence_data(found.entries, ids=found.ids)}\n"
+                             f'    <script src="{VIEW_PREFIX}/static/meeting/evidence-core.js"></script>\n'
+                             f'    <script src="{VIEW_PREFIX}/static/meeting/evidence.js"></script>')
         has_mermaid = 'class="mermaid"' in rendered.get("html", "")
         if has_mermaid:
             # 발표 화면은 숨긴 장의 그림이 0 크기로 그려지므로 viewer.js가 보이는 장만 그린다
@@ -991,7 +1057,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
     </div>
     {meeting_notice}
     {present_bar}
-    <article class="markdown-body">{rendered.get("html", "")}</article>
+    <article class="markdown-body">{rendered.get("html", "")}</article>{evidence_list}
   </main>
   <aside class="shell-toc" aria-label="이 문서의 목차">
     <h2 class="nav-title">이 문서</h2>
@@ -1003,11 +1069,11 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 {_publish_dialog(path) if 'data-action="marp-publish"' in toolbar_buttons else ""}'''
         head_extra = (f"<style>{theme_css}</style>\n"
                       f'<link rel="stylesheet" href="{cdn_base}/highlight.js/11.9.0/styles/{hljs_theme}.min.css">\n'
-                      f"{meeting_head}")
+                      f"{meeting_head}{evidence_head}")
         body_extra = (f'<script type="application/json" id="raw-markdown-json">{_encode_for_script({"markdown": content})}</script>\n'
                       f'<script src="{cdn_base}/highlight.js/11.9.0/highlight.min.js"></script>\n'
                       f"<script>hljs.highlightAll();</script>\n"
-                      f"{mermaid_scripts}\n{meeting_body}")
+                      f"{mermaid_scripts}\n{meeting_body}{evidence_body}")
         html = ui.page(
             view_prefix=VIEW_PREFIX, title=title, theme=theme,
             header=_shell_header(repo_id, ref, theme), body=body,
@@ -1049,8 +1115,25 @@ def meeting_export(repo_id: str, path: str, theme: str = "github-light"):
     if theme not in THEME_CSS:
         theme = "github-light"
     meeting_cfg = meeting_mode.build_config(repo_id, path, ctx.meeting, readonly=True, export_url=None)
+    references, skipped, notice = _evidence_mapping(ctx.meeting)
+    holder = {}
+
+    # 본문 표시·근거 모음·근거 데이터가 한 조립 결과를 쓴다. 메모 포함 HTML은 링크를 매핑으로 고치지 않는다
+    def sanitize(body_html: str) -> str:
+        clean = _sanitize_html(body_html)
+        found = holder["ev"] = _build_evidence(clean, repo_id, path, manager, None, references, skipped)
+        return found.html if found is not None else clean
+
+    def evidence_block() -> str:
+        found = holder.get("ev")
+        if found is None or not found.entries:
+            return ""
+        return (ui.render_evidence_list(found.entries, ids=found.ids)
+                + ui.render_evidence_data(found.entries, ids=found.ids))
+
     try:
-        document = meeting_mode.build_export_html(body, theme, meeting_cfg, sanitize=_sanitize_html)
+        document = meeting_mode.build_export_html(body, theme, meeting_cfg, sanitize=sanitize,
+                                                  evidence_block=evidence_block, notice=notice)
     except meeting_mode.ExportAssemblyError as exc:
         logger.error("meeting export assembly failed: repo=%s path=%s error=%s", repo_id, path, exc)
         raise HTTPException(status_code=500, detail="Failed to assemble meeting export")
