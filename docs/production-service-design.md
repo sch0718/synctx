@@ -1189,7 +1189,7 @@ Outbound Feedback CronJob도 실행마다 새 프로세스이므로 같은 방�
 - `synctx_feedback_last_success_timestamp`는 실패가 없는 실행만 갱신하고, 한 번도 성공하지 않았으면 내보내지 않는다(이 값을 보는 Alert가 없다).
 - redaction 중 예외가 난 Work Package는 `result="redaction_error"`로 세고 메일을 보내지 않으며 event store에도 남기지 않는다. 실패로 보므로 마지막 처리 시각을 진행하지 않아 다음 실행에서 다시 본다. 다른 Work Package는 계속 처리한다.
 - push 실패는 로그(`Failed to push feedback metrics`)만 남기고 반출 결과에 영향을 주지 않는다. `outbound_feedback.enabled: false`인 실행은 저장·push하지 않는다.
-- Feedback에는 `metrics.enabled`, `feedback.enabled`, `sync.persistence.enabled`일 때 `SYNCTX_PUSHGATEWAY_URL`이 들어간다. Pushgateway는 Sync와 Feedback 중 하나라도 push하면 배포한다. Feedback에는 NetworkPolicy가 없어 9091 egress를 따로 열지 않는다.
+- Feedback에는 `metrics.enabled`, `feedback.enabled`, `sync.persistence.enabled`일 때 `SYNCTX_PUSHGATEWAY_URL`이 들어간다. Sync와 마찬가지로 `metrics.enabled`이고 `feedback.enabled`인데 `sync.persistence.enabled=false`이면 Helm 렌더가 `fail`로 멈춘다(D8). Pushgateway는 Sync와 Feedback 중 하나라도 push하면 배포한다. Feedback에는 NetworkPolicy가 없어 9091 egress를 따로 열지 않는다.
 
 ### 9.3 Alert
 

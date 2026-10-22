@@ -231,8 +231,8 @@ def test_pushgateway_stays_for_feedback_without_sync():
     assert PUSHGATEWAY_RESOURCES <= _names(docs)
 
 
-def test_feedback_does_not_push_without_metrics_or_sync_state():
-    for flags in ["metrics.enabled=false", "sync.persistence.enabled=false"]:
+def test_feedback_does_not_push_without_metrics():
+    for flags in ["metrics.enabled=false", "metrics.enabled=false,sync.persistence.enabled=false"]:
         docs = _docs("--set", FEEDBACK_FLAGS + ",sync.enabled=false," + flags)
         assert "SYNCTX_PUSHGATEWAY_URL" not in _feedback_env(docs)
         assert not PUSHGATEWAY_RESOURCES & _names(docs)
@@ -245,8 +245,18 @@ def test_sync_metrics_without_sync_state_fails():
     assert "sync.persistence.enabled=true" in result.stderr
 
 
+def test_feedback_metrics_without_sync_state_fails():
+    result = _render("--set", FEEDBACK_FLAGS + ",sync.enabled=false,sync.persistence.enabled=false")
+    assert result.returncode != 0
+    assert "sync.persistence.enabled=true" in result.stderr
+
+
 def test_sync_state_not_needed_without_sync_metrics():
-    for flags in ["metrics.enabled=false,sync.persistence.enabled=false", "sync.enabled=false,sync.persistence.enabled=false"]:
+    for flags in [
+        "metrics.enabled=false,sync.persistence.enabled=false",
+        "sync.enabled=false,sync.persistence.enabled=false",
+        FEEDBACK_FLAGS + ",metrics.enabled=false,sync.persistence.enabled=false",
+    ]:
         result = _render("--set", flags)
         assert result.returncode == 0, result.stderr
 

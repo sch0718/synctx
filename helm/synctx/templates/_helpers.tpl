@@ -38,7 +38,7 @@ Sync 메트릭을 Pushgateway로 보낼 때 "true". 누적값을 sync-state PVC�
 {{- end }}
 
 {{/*
-Feedback 메트릭을 Pushgateway로 보낼 때 "true". 누적값을 Feedback이 함께 쓰는 sync-state PVC에 둔다.
+Feedback 메트릭을 Pushgateway로 보낼 때 "true". 누적값을 Feedback이 함께 쓰는 sync-state PVC에 두므로 PVC 없이 메트릭을 켜면 synctx.validate가 렌더를 멈춘다.
 */}}
 {{- define "synctx.feedbackMetricsPush" -}}
 {{- if and .Values.metrics.enabled .Values.feedback.enabled .Values.sync.persistence.enabled }}true{{- end }}
@@ -81,7 +81,7 @@ CronJob 메트릭을 받는 Pushgateway를 배포할 때 "true".
 {{- fail (printf "cdn.enabled=false이면 .synctx.yaml의 viewer.cdn_base_url을 내부 CDN 절대 주소로 지정해야 합니다(현재 %q)" $url) }}
 {{- end }}
 {{- end }}
-{{- if and .Values.metrics.enabled (include "synctx.isEnabled" .Values.sync) (not .Values.sync.persistence.enabled) }}
-{{- fail "metrics.enabled=true이고 sync가 켜져 있으면 sync.persistence.enabled=true여야 합니다. Sync 메트릭 누적값을 sync-state PVC에 두므로 PVC 없이는 Sync Alert가 울리지 않습니다. 메트릭이 필요 없으면 metrics.enabled=false로 두세요" }}
+{{- if and .Values.metrics.enabled (or (include "synctx.isEnabled" .Values.sync) .Values.feedback.enabled) (not .Values.sync.persistence.enabled) }}
+{{- fail "metrics.enabled=true이고 sync나 feedback이 켜져 있으면 sync.persistence.enabled=true여야 합니다. Sync·Feedback 메트릭 누적값을 sync-state PVC에 두므로 PVC 없이는 Sync·Feedback Alert가 울리지 않습니다. 메트릭이 필요 없으면 metrics.enabled=false로 두세요" }}
 {{- end }}
 {{- end }}
