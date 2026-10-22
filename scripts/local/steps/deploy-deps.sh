@@ -244,6 +244,9 @@ spec:
               value: "local-dev-secret-key-base-synctx-2024"
             - name: OPENPROJECT_HOST__NAME
               value: "openproject.synctx.local"
+            # synctx Sync·Feedback는 클러스터 안 서비스 주소로 부른다. 없으면 Host 검사에서 400이 난다
+            - name: OPENPROJECT_ADDITIONAL__HOST__NAMES
+              value: '["openproject.synctx-deps.svc.cluster.local"]'
             - name: OPENPROJECT_HTTPS
               value: "false"
           ports:

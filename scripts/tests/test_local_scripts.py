@@ -150,3 +150,67 @@ def test_make_test_calls_test_all():
     result = subprocess.run(["make", "-n", "test"], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "bash scripts/test-all.sh"
+
+
+def _source_common(tmp_path, command, **extra_env):
+    env = _fake_bin(tmp_path, "kubectl", "minikube", "helm")
+    env.pop("MINIKUBE_PROFILE", None)
+    env.update(extra_env)
+    script = f'source "{LOCAL / "_common.sh"}"; {command}'
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stderr
+    return Path(env["FAKE_LOG"]).read_text().splitlines()
+
+
+@pytest.mark.parametrize(
+    ("extra_env", "profile"),
+    [({}, "minikube"), ({"MINIKUBE_PROFILE": "synctx"}, "synctx")],
+)
+def test_common_targets_selected_minikube_profile(tmp_path, extra_env, profile):
+    calls = _source_common(
+        tmp_path,
+        "minikube status; kubectl get pods -n synctx; helm list -n synctx",
+        **extra_env,
+    )
+    assert calls == [
+        f"-p {profile} status",
+        f"--context {profile} get pods -n synctx",
+        f"--kube-context {profile} list -n synctx",
+    ]
+
+
+def test_start_minikube_creates_selected_profile(tmp_path):
+    env = _fake_bin(tmp_path, "minikube")
+    fake = tmp_path / "bin" / "minikube"
+    fake.write_text(FAKE_LOGGER.replace('exit "${FAKE_EXIT:-0}"', 'case " $* " in *" status "*) exit 1 ;; esac'))
+    env.update(MINIKUBE_PROFILE="synctx", MINIKUBE_MEMORY="8192")
+    script = f'source "{LOCAL / "_common.sh"}"; start_minikube'
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stderr
+    calls = Path(env["FAKE_LOG"]).read_text().splitlines()
+    assert calls[0] == "-p synctx status"
+    assert calls[1].startswith("-p synctx start ") and "--memory=8192" in calls[1]
+
+
+def test_prerequisites_check_ignores_wrapper_functions(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("bash", "dirname", "grep", "sed", "cat", "printf"):
+        target = shutil.which(name)
+        if target:
+            (bin_dir / name).symlink_to(target)
+    env = {"PATH": str(bin_dir), "HOME": str(tmp_path)}
+    script = f'source "{LOCAL / "_common.sh"}"; check_prerequisites minikube helm'
+    result = subprocess.run([shutil.which("bash"), "-c", script], capture_output=True, text=True, env=env)
+    assert result.returncode != 0
+    assert "minikube" in result.stdout + result.stderr
+
+
+
+def test_openproject_allows_host_synctx_config_uses():
+    body = DEPLOY_DEPS.read_text().split("<<'OP_EOF'\n", 1)[1].split("\nOP_EOF", 1)[0]
+    deploy = next(d for d in yaml.safe_load_all(body) if d and d["kind"] == "Deployment" and d["metadata"]["name"] == "openproject")
+    env = {e["name"]: e.get("value") for e in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+    _, config = _values_local()
+    host = config["targets"]["openproject"]["base_url"].split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
+    assert host in yaml.safe_load(env["OPENPROJECT_ADDITIONAL__HOST__NAMES"])

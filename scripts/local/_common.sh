@@ -59,6 +59,12 @@ MONITORING_NAMESPACE="monitoring"
 DOCKER_REGISTRY=${DOCKER_REGISTRY:-"synctx"}
 MINIKUBE_CPUS=${MINIKUBE_CPUS:-4}
 MINIKUBE_MEMORY=${MINIKUBE_MEMORY:-8192}
+# 다른 프로젝트와 기본 minikube 클러스터를 나눠 쓰지 않으려면 MINIKUBE_PROFILE=synctx처럼 전용 프로필을 쓴다.
+# 아래 함수가 minikube·kubectl·helm을 이 프로필의 클러스터로 고정하므로 현재 kubectl 컨텍스트와 상관없다.
+MINIKUBE_PROFILE=${MINIKUBE_PROFILE:-minikube}
+minikube() { command minikube -p "${MINIKUBE_PROFILE}" "$@"; }
+kubectl() { command kubectl --context "${MINIKUBE_PROFILE}" "$@"; }
+helm() { command helm --kube-context "${MINIKUBE_PROFILE}" "$@"; }
 SERVICES=(viewer cdn marp sync feedback)
 THIRD_PARTY_IMAGES=(
     "nginx:1.25.4-alpine"
@@ -115,7 +121,7 @@ check_prerequisites() {
     fi
 
     if [ "$check_all" = true ] || [ "$check_minikube" = true ]; then
-        if command -v minikube &>/dev/null; then
+        if type -P minikube &>/dev/null; then
             print_success "minikube 설치 확인"
         else
             print_error "minikube가 설치되어 있지 않습니다"
@@ -125,7 +131,7 @@ check_prerequisites() {
     fi
 
     if [ "$check_all" = true ] || [ "$check_helm" = true ]; then
-        if command -v helm &>/dev/null; then
+        if type -P helm &>/dev/null; then
             print_success "helm 설치 확인"
         else
             print_error "helm이 설치되어 있지 않습니다"

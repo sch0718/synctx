@@ -204,9 +204,9 @@ minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.loc
 ./scripts/local/setup.sh --skip-deploy  # 배포 건너뜀
 ```
 
-환경변수 `MINIKUBE_CPUS`(기본 4), `MINIKUBE_MEMORY`(MB, 기본 8192)로 minikube 크기를 바꾼다.
+환경변수 `MINIKUBE_CPUS`(기본 4), `MINIKUBE_MEMORY`(MB, 기본 8192)로 minikube 크기를 바꾼다. `MINIKUBE_PROFILE`(기본 `minikube`)로 전용 프로필을 쓸 수 있고, `scripts/local/` 스크립트는 minikube·kubectl·helm을 그 프로필의 클러스터로 실행한다.
 
-설치 완료 후 별도 터미널에서 `minikube tunnel`을 실행해야 접속 가능하다.
+설치 완료 후 별도 터미널에서 `minikube tunnel -p <프로필>`을 실행해야 접속 가능하다.
 
 ### 개별 단계 실행
 

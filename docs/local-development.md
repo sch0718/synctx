@@ -56,7 +56,9 @@ brew install minikube helm kubectl docker mkcert node uv
 | node | 18+ | 회의 모드 JS 단위 테스트 (`node --test`, `make test`) |
 | uv (Python 3.13+) | - | `run-viewer.sh`, 전체 테스트 (`make test` = `scripts/test-all.sh`, 내부에서 `uv run --frozen --all-packages pytest`) |
 
-minikube 리소스 권장: CPU 4코어, RAM 8GB, 디스크 30GB. `setup.sh`는 `MINIKUBE_CPUS`(기본 4)와 `MINIKUBE_MEMORY`(MB, 기본 8192)로 바꿀 수 있다.
+minikube 리소스 권장: CPU 4코어, RAM 8GB, 디스크 30GB. `setup.sh`는 `MINIKUBE_CPUS`(기본 4)와 `MINIKUBE_MEMORY`(MB, 기본 8192)로 바꿀 수 있다. Docker Desktop 메모리는 minikube 메모리보다 커야 하고, 이미 만든 클러스터의 메모리는 바꿀 수 없다(지우고 다시 만들어야 한다).
+
+다른 프로젝트가 기본 minikube 클러스터를 쓰고 있으면 `MINIKUBE_PROFILE=synctx`처럼 전용 프로필을 지정한다(기본 `minikube`). `scripts/local/` 스크립트는 minikube·kubectl·helm을 모두 이 프로필의 클러스터로 실행하므로 현재 kubectl 컨텍스트와 상관없다. 모든 스크립트를 같은 값으로 실행하고, 접속할 때는 `minikube tunnel -p <프로필>`을 쓴다. `cleanup.sh --delete-cluster`는 이 프로필의 클러스터만 지운다.
 
 ## 3. 아키텍처
 

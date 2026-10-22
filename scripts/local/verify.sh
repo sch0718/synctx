@@ -44,7 +44,7 @@ LB_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{
 if [ -n "$LB_IP" ]; then
     print_success "LoadBalancer IP 할당됨: $LB_IP"
 else
-    print_warning "LoadBalancer IP 미할당 (minikube tunnel 필요)"
+    print_warning "LoadBalancer IP 미할당 (minikube tunnel -p ${MINIKUBE_PROFILE} 필요)"
 fi
 
 # 3. Cert-Manager
@@ -175,7 +175,7 @@ done
 
 # 11. 엔드포인트 접근 테스트 (HTTPS)
 print_header "11. 엔드포인트 접근 테스트"
-print_info "minikube tunnel이 실행 중이어야 합니다"
+print_info "minikube tunnel -p ${MINIKUBE_PROFILE}이 실행 중이어야 합니다"
 
 ENDPOINTS=(
     "https://${SYNCTX_SUBDOMAIN}/view/healthz"

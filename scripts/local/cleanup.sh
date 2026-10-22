@@ -68,7 +68,7 @@ kubectl delete namespace "${DEPS_NAMESPACE}" 2>/dev/null && \
 if [ "$KEEP_MINIKUBE" = false ]; then
     print_header "4. Minikube 클러스터 삭제"
     minikube delete
-    print_success "Minikube 클러스터 삭제 완료"
+    print_success "Minikube 클러스터(${MINIKUBE_PROFILE}) 삭제 완료"
 fi
 
 print_header "정리 완료"

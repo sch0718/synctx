@@ -32,6 +32,7 @@ synctx 로컬 개발 환경을 설치합니다.
 환경변수:
   MINIKUBE_CPUS     minikube CPU 수 (기본 4)
   MINIKUBE_MEMORY   minikube 메모리 MB (기본 8192, Docker Desktop 할당량보다 작아야 함)
+  MINIKUBE_PROFILE  minikube 프로필 (기본 minikube). 다른 프로젝트와 클러스터를 나누려면 synctx처럼 지정
 
 단계:
   1. 인프라: minikube 시작, Ingress 활성화, /etc/hosts 설정
@@ -71,7 +72,7 @@ fi
 print_header "설치 완료"
 print_info "다음 단계:"
 print_info "1. Minikube tunnel 실행 (별도 터미널):"
-echo -e "   ${YELLOW}minikube tunnel${NC}"
+echo -e "   ${YELLOW}minikube tunnel -p ${MINIKUBE_PROFILE}${NC}"
 print_info "2. synctx 접속:"
 echo -e "   ${YELLOW}https://${SYNCTX_SUBDOMAIN}${NC}"
 print_info "3. 의존성 서비스:"
