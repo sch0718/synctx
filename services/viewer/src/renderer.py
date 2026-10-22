@@ -14,6 +14,8 @@ import markdown
 from markdown.extensions.toc import TocExtension
 from markdown.treeprocessors import Treeprocessor
 
+from linear_inline import LinearInlineExtension
+
 
 def _strip_tags(text):
     """re.sub(r"<[^>]+>", "", text)와 같은 결과를 앞으로만 훑어 만든다(닫히지 않은 "<"마다 끝까지 다시 훑지 않는다)."""
@@ -413,6 +415,7 @@ def render_markdown(md_text):
             "sane_lists",
             "md_in_html",
             _HeadingMarkExtension(mark),
+            LinearInlineExtension(),
         ],
         output_format="html5",
     )

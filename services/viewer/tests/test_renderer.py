@@ -126,3 +126,17 @@ def test_heading_and_toc_rewrites_stay_linear(text):
     started = time.monotonic()
     renderer.render_markdown(text)
     assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.parametrize("text", [
+    "## A\n\n" + "`" * 20000,
+    '`a` [x](y) <div class="commentary">c</div>\n' * 8000,
+    "`a" * 10000,
+    "\\```a" * 4000,
+    "[" * 20000,
+    "![" * 10000,
+], ids=["backtick-run", "inline-lines", "backtick-pairs", "escaped-backticks", "open-brackets", "open-images"])
+def test_inline_patterns_stay_linear(text):
+    started = time.monotonic()
+    renderer.render_markdown(text)
+    assert time.monotonic() - started < 1.0
