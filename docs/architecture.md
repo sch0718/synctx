@@ -530,6 +530,7 @@ Marp publish API
 ```
 
 출판된 HTML은 Git 저장소에 커밋되므로 이력 관리가 가능하다.
+출판 저장소 인증은 소스 저장소의 읽기 토큰과 분리한다. `marp.publish_auth`가 있으면 그것을, 없으면 출판 전용 `GIT_PUBLISH_TOKEN`을 쓴다. 둘 다 없을 때만 0.6.0까지처럼 `repositories[0].auth`로 출판하고 `publish_auth_fallback` 경고를 남긴다(production-service-design.md 3.4).
 운영 기준에서 출판 데이터의 단일 원천은 `publish_repo` Git 저장소다.
 Slides Server는 PVC에 직접 쓰지 않고, `slides-sync` sidecar가 `publish_repo`를 pull한 working tree를 읽기 전용으로 서빙한다.
 
@@ -773,6 +774,7 @@ cdn:
 # Marp 설정
 marp:
   publish_repo: "https://gitlab.internal/team/published-slides.git"
+  # publish_auth: {type: token, credential_env: GIT_PUBLISH_TOKEN}  # 생략 시 GIT_PUBLISH_TOKEN → repositories[0].auth
   publish_branch: main
   publish_base_path: "_published/slides"
   worktree_path: "/data/marp/publish-worktree"

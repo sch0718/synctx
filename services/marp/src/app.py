@@ -184,13 +184,29 @@ def publish_lock():
     finally:
         lock_path.unlink(missing_ok=True)
 
+PUBLISH_TOKEN_ENV = "GIT_PUBLISH_TOKEN"
+
+def _publish_auth() -> RepoAuthConfig:
+    if config.marp.publish_auth is not None:
+        return config.marp.publish_auth
+    if os.getenv(PUBLISH_TOKEN_ENV, "").strip():
+        return RepoAuthConfig(type="token", credential_env=PUBLISH_TOKEN_ENV)
+    # 0.6.0까지는 첫 저장소의 읽기 인증으로 출판했다. 출판 토큰이 없는 기존 배포가 멈추지 않게 남긴다.
+    fallback = config.repositories[0] if config.repositories else None
+    logger.warning(
+        "publish_auth_fallback reason=%s_empty repo_id=%s",
+        PUBLISH_TOKEN_ENV,
+        fallback.id if fallback else None,
+    )
+    return fallback.auth if fallback else RepoAuthConfig(type="none")
+
 def get_publish_manager() -> GitRepoManager:
     profile = RepoProfile(
         id="publish-repo",
         name="Publish Repo",
         url=config.marp.publish_repo,
         default_ref=config.marp.publish_branch,
-        auth=config.repositories[0].auth if config.repositories else RepoAuthConfig(type="none"),
+        auth=_publish_auth(),
     )
     return GitRepoManager(profile, config.marp.worktree_path)
 

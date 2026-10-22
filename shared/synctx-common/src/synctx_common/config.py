@@ -180,6 +180,7 @@ class CdnConfig(BaseModel):
 
 class MarpConfig(BaseModel):
     publish_repo: str = ""
+    publish_auth: Optional[RepoAuthConfig] = None
     publish_branch: str = "main"
     publish_base_path: str = "_published/slides"
     worktree_path: str = "/data/marp/publish-worktree"

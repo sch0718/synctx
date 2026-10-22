@@ -5,7 +5,7 @@ import os
 import pytest
 
 _src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
-_app_module = None
+_app_modules = {}
 
 
 def _load_app():
@@ -21,11 +21,10 @@ def _load_app():
 def pytest_collectstart(collector):
     # conftest는 pytest 시작 시점에 로드되므로, 다른 suite가 sys.path에 끼워 넣은 동명 `app` 모듈을
     # 피하려면 이 디렉토리의 테스트 모듈을 import하기 직전에 경로와 캐시를 다시 맞춰야 한다.
-    global _app_module
     if isinstance(collector, pytest.Module):
-        _app_module = _load_app()
+        _app_modules[collector.path] = _load_app()
 
 
 @pytest.fixture(autouse=True)
-def _marp_app_module(monkeypatch):
-    monkeypatch.setitem(sys.modules, "app", _app_module)
+def _marp_app_module(request, monkeypatch):
+    monkeypatch.setitem(sys.modules, "app", _app_modules[request.path])

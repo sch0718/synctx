@@ -232,8 +232,8 @@ authz:
 
 | Secret | 사용처 | 권한 |
 |--------|--------|------|
-| `GIT_READ_TOKEN` | Viewer, Sync Engine, Marp, slides-sync | source repo read, slides-sync의 publish repo pull |
-| `GIT_PUBLISH_TOKEN` | Marp | publish repo write/read |
+| `GIT_READ_TOKEN` | Viewer, Sync Engine, slides-sync, Marp(폴백) | source repo read, slides-sync의 publish repo pull. Marp는 `GIT_PUBLISH_TOKEN`이 비었을 때만 출판에 쓴다 |
+| `GIT_PUBLISH_TOKEN` | Marp | publish repo write/read (출판·출판 취소·출판 목록) |
 | `GITLAB_WEBHOOK_SECRET` | Sync Webhook Receiver | GitLab push event 검증 |
 | `XWIKI_CREDENTIAL` | Sync Engine | page/attachment write |
 | `XWIKI_HTML_CREDENTIAL` | Sync Engine | `html_embed.enabled` 저장소 전용 XWiki 계정. page/attachment write + 대상 공간 한정 script right (`XWIKI_CREDENTIAL`과 다른 계정) |
@@ -244,6 +244,12 @@ authz:
 | `SYNCTX_SERVICE_TOKEN` | internal API | service-to-service. 값이 있을 때만 Viewer webhook이 `X-Service-Token` 헤더를 검사한다(현재 Helm·Compose는 주입하지 않음) |
 
 모든 Secret은 env 또는 mounted file로만 전달한다. 로그에는 credential 값과 credential이 포함된 URL을 출력하지 않는다.
+
+Marp가 publish repo에 접근할 때 쓰는 인증은 다음 순서로 정한다.
+
+1. `marp.publish_auth`가 있으면 그 설정(`type`·`credential_env`·`credential_file`·`ssh_key_file`)을 그대로 쓴다. 지정한 값이 비어 있어도 다른 토큰으로 넘어가지 않는다.
+2. 없으면 `GIT_PUBLISH_TOKEN`에 값이 있을 때 이 토큰으로 인증한다. Helm(`git.secrets.publishToken`, `existingSecret`의 `publish-token` 키)과 Docker Compose(`secrets.env`)가 Marp에 넣는 값이다.
+3. 둘 다 없으면 0.6.0까지처럼 `repositories[0].auth`(보통 `GIT_READ_TOKEN`)로 출판하고, 호출마다 `publish_auth_fallback` WARNING 로그를 남긴다. 기존 배포가 업그레이드 직후 멈추지 않게 둔 호환 경로이며, 읽기 토큰에 쓰기 권한을 주지 않으려면 `GIT_PUBLISH_TOKEN`을 채운다. 저장소가 하나도 없으면 인증 없이 접근한다.
 
 ### 3.5 업로드 보안
 
@@ -387,6 +393,9 @@ cdn:
 
 marp:
   publish_repo: "https://gitlab.internal/team/published-slides.git"
+  # publish_auth:                  # 생략하면 GIT_PUBLISH_TOKEN → repositories[0].auth 순서 (3.4)
+  #   type: token
+  #   credential_env: GIT_PUBLISH_TOKEN
   publish_branch: main
   publish_base_path: "_published/slides"
   worktree_path: "/data/marp/publish-worktree"
@@ -1507,7 +1516,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 1. Marp Service log에서 `publish_path`, `repo_id`, `commit_sha` 확인
 2. publish repo non-fast-forward 여부 확인
 3. worktree lock(`marp.worktree_path`의 `.publish.lock`) stale 여부 확인. 남아 있으면 publish가 계속 409다
-4. 재시도해도 실패하면 publish repo 권한과 branch protection 확인
+4. 재시도해도 실패하면 publish repo 권한과 branch protection 확인. Marp log에 `publish_auth_fallback`이 있으면 `GIT_PUBLISH_TOKEN`이 비어 읽기 토큰으로 push한 것이다(3.4)
 
 ### 12.3 CDN 파일 교체
 

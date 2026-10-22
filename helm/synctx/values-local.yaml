@@ -237,7 +237,7 @@ metrics:
 
 # ── Git 인증 정보 (로컬 개발용) ──
 # readToken → 환경변수 GIT_READ_TOKEN 으로 주입됨
-# publishToken → 환경변수 GIT_PUBLISH_TOKEN 으로 주입됨
+# publishToken → 환경변수 GIT_PUBLISH_TOKEN 으로 주입됨 (Marp 출판 push. 비우면 readToken으로 대신 출판하고 경고 로그)
 # .synctx.yaml의 repositories[].auth.credential_env 와 매칭
 # 기본: credential_env: GIT_READ_TOKEN (별도 지정 시 개별 repo마다 다른 토큰 사용 가능)
 git:
