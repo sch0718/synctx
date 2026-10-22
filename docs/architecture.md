@@ -281,6 +281,7 @@ reports/harness/
 | D5 | Draw.io 꺼짐 | Viewer에서 Draw.io 버튼을 숨김 | Viewer |
 | D6 | Docker에서 `sync`·`feedback` 지정 | 중단(2단계 전) | `deploy.sh` |
 | D7 | Slides 켜짐, 게시 저장소 주소 없음 | 중단 | `deploy.sh` (Helm은 기본값이 있어 그대로) |
+| D8 | `metrics.enabled`, Sync 켜짐, `sync.persistence.enabled=false` | 중단. Sync 메트릭 누적값을 sync-state PVC에 두므로 PVC 없이는 Sync Alert가 울리지 않는다 | Helm `fail` |
 
 - D2를 Viewer 시작 검사로도 두는 이유: 외부 ConfigMap(`synctxConfig.create: false`)이나 Docker는 배포 도구가 `.synctx.yaml`을 읽지 않는다. Viewer가 시작할 때 오류 메시지를 남기고 종료하면 어느 배포 방식이든 잡힌다.
 - D4에서 Marp가 꺼진 Marp 문서에는 버튼이 하나도 남지 않으므로 다운로드 버튼이 나온다.
@@ -904,7 +905,7 @@ helm/synctx/
 │   └── sync-sidecar.sh             # Slides sync sidecar 스크립트
 └── templates/
     ├── _helpers.tpl                # 서비스 옵션 검사(synctx.validate) 포함
-    ├── validate.yaml               # D1·D2 의존성 검사 (fail)
+    ├── validate.yaml               # D1·D2·D8 의존성 검사 (fail)
     ├── NOTES.txt                   # 켜진 서비스 요약, D3 경고
     ├── configmap.yaml              # .synctx.yaml → ConfigMap
     ├── secret.yaml                 # Feedback HMAC/salt/SMTP Secret
@@ -1162,7 +1163,7 @@ helm upgrade synctx ./helm/synctx \
 
 - **PVC(`cdn-data`, `slides-worktree`, `sync-state`)는 서비스를 꺼도 남긴다(데이터 보호).** 렌더 결과에서 빠지면 Helm upgrade가 PVC를 지우고, 동적 프로비저닝 기본값 `reclaimPolicy: Delete`에서는 데이터도 사라진다. 서비스를 다시 켜면 남은 PVC를 그대로 쓴다. 데이터를 지우려면 운영자가 PVC를 직접 삭제한다(production-service-design.md Runbook 참조).
 - Viewer Deployment는 항상 `SYNCTX_ENABLED_SERVICES`를 받는다. 기본값으로 렌더한 결과는 이 환경변수 하나를 빼면 이전과 같다.
-- `templates/validate.yaml`이 `synctx.validate`(`_helpers.tpl`)를 불러 D1(켜진 서비스 없음)과 D2(Viewer 켜짐·CDN 꺼짐인데 `viewer.cdn_base_url`이 상대 경로)를 `fail`로 중단한다. D2는 `synctxConfig.create`일 때만 `synctxConfig.data`를 읽어 검사한다.
+- `templates/validate.yaml`이 `synctx.validate`(`_helpers.tpl`)를 불러 D1(켜진 서비스 없음)과 D2(Viewer 켜짐·CDN 꺼짐인데 `viewer.cdn_base_url`이 상대 경로)를 `fail`로 중단한다. D2는 `synctxConfig.create`일 때만 `synctxConfig.data`를 읽어 검사한다. D8(메트릭이 켜졌고 Sync가 켜졌는데 `sync.persistence.enabled=false`)도 `fail`로 중단한다.
 - Ingress 경로의 `backend`는 `viewer`·`cdn`·`marp`·`slides`·`drawio` 중 하나여야 한다. 다른 값이면 렌더가 실패한다.
 - `templates/NOTES.txt`는 켜진 서비스 목록과 D3(Slides 켜짐·Marp 꺼짐) 경고를 출력한다.
 - `scripts/local/steps/deploy-synctx.sh`는 추가 인자를 `helm upgrade`에 넘기고(예: `--set drawio.enabled=false`), CDN Service가 없으면 CDN 채우기를 건너뛴다.

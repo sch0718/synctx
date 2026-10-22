@@ -3,7 +3,3 @@ synctx {{ .Chart.Version }} 배포: 켜진 서비스 {{ include "synctx.enabledS
 
 ⚠ Slides는 켜져 있지만 Marp가 꺼져 있습니다. 게시 저장소({{ .Values.slides.publishRepoUrl }})를 직접 채우지 않으면 보여 줄 슬라이드가 없습니다.
 {{- end }}
-{{- if and .Values.metrics.enabled (include "synctx.isEnabled" .Values.sync) (not .Values.sync.persistence.enabled) }}
-
-⚠ sync.persistence.enabled=false라 Sync 메트릭을 수집하지 않습니다. 메트릭 누적값을 sync-state PVC에 두므로 PVC 없이는 Pushgateway를 배포하지 않고 Sync Alert도 울리지 않습니다.
-{{- end }}

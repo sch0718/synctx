@@ -1179,7 +1179,7 @@ Sync CronJob은 실행마다 새 프로세스라 카운터가 0에서 시작한�
 - 한 번도 성공하지 못한 저장소는 감시를 시작한 실행의 시각을 `synctx_sync_last_success_timestamp`의 기준값으로 둔다. 첫 실행부터 계속 실패해도 30분 뒤 `SynctxSyncNoSuccess`가 울린다.
 - 저장소가 이미 최신이거나 바뀐 파일이 없는 실행도 성공으로 보고 `synctx_sync_last_success_timestamp`를 갱신한다.
 - `--repo` 없이 전체 저장소를 도는 실행(dry-run 제외)은 끝에 `.synctx.yaml`에 없는 `repo_id`의 그룹을 Pushgateway에서 지운다. 저장소를 빼거나 id를 바꾼 뒤 남은 그룹의 마지막 성공 시각이 멈춰 `SynctxSyncNoSuccess`가 계속 울리지 않게 하기 위해서다. 메트릭 파일은 지우지 않는다(다시 넣으면 누적값이 이어진다).
-- Sync 메트릭은 `metrics.enabled`이고 `sync`가 켜졌고 `sync.persistence.enabled`일 때만 Pushgateway로 보낸다. 누적값을 sync-state PVC에 두므로 PVC가 없으면 Sync 메트릭을 보내지 않고 Helm NOTES로 경고한다. Sync에는 `SYNCTX_PUSHGATEWAY_URL`이 들어가고, Sync NetworkPolicy가 Pushgateway Pod의 9091 포트로 나가는 것을 허용한다. 이 환경변수가 없으면 누적값만 저장하고 push하지 않는다.
+- Sync 메트릭은 `metrics.enabled`이고 `sync`가 켜졌고 `sync.persistence.enabled`일 때만 Pushgateway로 보낸다. 누적값을 sync-state PVC에 두므로 `metrics.enabled`이고 `sync`가 켜졌는데 `sync.persistence.enabled=false`이면 Helm 렌더가 `fail`로 멈춘다(의존성 규칙 D8). 메트릭이 필요 없으면 `metrics.enabled=false`로 둔다. Sync에는 `SYNCTX_PUSHGATEWAY_URL`이 들어가고, Sync NetworkPolicy가 Pushgateway Pod의 9091 포트로 나가는 것을 허용한다. 이 환경변수가 없으면 누적값만 저장하고 push하지 않는다.
 
 Outbound Feedback CronJob도 실행마다 새 프로세스이므로 같은 방식(`synctx_common.metrics_push`)을 쓴다. Sync와 다른 점은 다음과 같다.
 
