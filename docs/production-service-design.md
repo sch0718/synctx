@@ -461,7 +461,8 @@ outbound_feedback:
 `change_detection`은 `polling` 또는 `webhook` 중 하나다. OpenProject webhook 사용 가능 여부를 운영 환경에서 검증하기 전까지 기본값은 `polling`이다.
 
 외부 Importer는 외부망에서 동작하는 별도 서비스이므로 내부 `.synctx.yaml`의 실행 설정에 포함하지 않는다.
-다만 외부 Importer에는 다음 권장 정책을 별도 설정으로 적용한다.
+0.6.0까지 스키마에 있던 `outbound_feedback.external_importer` 블록은 어떤 코드도 읽지 않아 제거했다. 기존 `.synctx.yaml`에 남아 있어도 오류 없이 무시된다.
+외부 Importer에는 다음 정책을 적용한다. 참조 구현 `scripts/external_importer.py`는 이 정책을 코드에 고정해 두었고, 실행 설정은 환경변수로만 받는다(`scripts/README.md`).
 
 ```yaml
 external_importer_policy:

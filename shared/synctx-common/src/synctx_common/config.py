@@ -229,12 +229,6 @@ class OutboundMailConfig(BaseModel):
     to: str = "synctx-feedback-import@example.com"
 
 
-class ExternalImporterConfig(BaseModel):
-    create_pr: bool = True
-    direct_push: bool = False
-    branch_prefix: str = "synctx-feedback/"
-
-
 class OutboundFeedbackConfig(BaseModel):
     enabled: bool = False
     transport: Literal["email"] = "email"
@@ -251,7 +245,6 @@ class OutboundFeedbackConfig(BaseModel):
     require_hmac_signature: bool = True
     replay_window_minutes: int = 1440
     outbound_mail: OutboundMailConfig = Field(default_factory=OutboundMailConfig)
-    external_importer: ExternalImporterConfig = Field(default_factory=ExternalImporterConfig)
 
 
 class SynctxConfig(BaseModel):

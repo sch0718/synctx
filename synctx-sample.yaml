@@ -156,7 +156,3 @@ outbound_feedback:
     credential_env: OUTBOUND_SMTP_CREDENTIAL
     from: "synctx-feedback@internal"
     to: "synctx-feedback-import@example.com"
-  external_importer:
-    create_pr: true
-    direct_push: false
-    branch_prefix: "synctx-feedback/"
