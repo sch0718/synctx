@@ -21,6 +21,8 @@ from signer import FeedbackSigner
 logger = logging.getLogger(__name__)
 
 class FeedbackExporter:
+    PAGE_SIZE = 100
+
     def __init__(self, config: SynctxConfig):
         self.config = config
         self.fb_config = config.outbound_feedback
@@ -85,14 +87,23 @@ class FeedbackExporter:
             ) as client:
                 # Fetch work packages updated since last_ts
                 url = "/api/v3/work_packages"
+                # OpenProject의 updatedAt 필터는 >=를 받지 않는다. <>d에 시작 시각만 주면 그 시각 이후를 거른다
                 params = {
-                    "filters": f'[{{"updatedAt":{{"operator":">=","values":["{last_ts}"]}}}}]'
+                    "filters": json.dumps([{"updatedAt": {"operator": "<>d", "values": [last_ts, ""]}}]),
+                    "sortBy": json.dumps([["id", "asc"]]),
                 }
                 try:
-                    response = await client.get(url, params=params)
-                    response.raise_for_status()
-                    data = response.json()
-                    updated_wps = data.get("_embedded", {}).get("elements", [])
+                    # 한 페이지만 보고 마지막 처리 시각을 옮기면 나머지는 다시 보지 않으므로 모든 페이지를 읽는다
+                    offset = 1
+                    while True:
+                        response = await client.get(url, params={**params, "offset": offset, "pageSize": self.PAGE_SIZE})
+                        response.raise_for_status()
+                        data = response.json()
+                        elements = data.get("_embedded", {}).get("elements", [])
+                        updated_wps.extend(elements)
+                        if not elements or len(updated_wps) >= data.get("total", 0):
+                            break
+                        offset += 1
                 except Exception as e:
                     logger.error(f"Failed to fetch updated WPs from OpenProject: {e}")
                     return
