@@ -14,8 +14,29 @@ from markdown.extensions.toc import TocExtension
 from markdown.treeprocessors import Treeprocessor
 
 
+def _strip_tags(text):
+    """re.sub(r"<[^>]+>", "", text)와 같은 결과를 앞으로만 훑어 만든다(닫히지 않은 "<"마다 끝까지 다시 훑지 않는다)."""
+    out = []
+    pos = 0
+    gt = -1
+    lt = text.find("<")
+    while lt != -1:
+        if gt < lt:
+            gt = text.find(">", lt + 1)
+            if gt == -1:
+                break
+        if gt > lt + 1:
+            out.append(text[pos:lt])
+            pos = gt + 1
+            lt = text.find("<", pos)
+        else:
+            lt = text.find("<", lt + 1)
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def github_slugify(text, sep="-"):
-    text = re.sub(r"<[^>]+>", "", text)
+    text = _strip_tags(text)
     text = text.strip().lower()
     text = re.sub(r"[^\w\s\-]", "", text, flags=re.UNICODE)
     text = re.sub(r"[\s]+", sep, text)
@@ -60,14 +81,13 @@ def fix_heading_ids(html, id_map=None):
     """heading id를 GitHub 방식으로 맞춘다.
 
     id_map이 주어지면 Markdown이 만든 제목의 원래 id를 새 id로 기록한다.
+    re.sub(r"<(h[1-6])([^>]*)>(.*?)</\\1>", ..., flags=re.DOTALL)과 같은 제목을 고르되,
+    닫는 태그가 없는 여는 태그마다 문서 끝까지 다시 훑지 않도록 닫는 태그 위치를 미리 모아 앞으로만 나아간다.
     """
     used = {}
 
-    def replacer(match):
-        tag = match.group(1)
-        attrs = match.group(2)
-        inner = match.group(3)
-        plain = re.sub(r"<[^>]+>", "", inner).strip()
+    def rewrite(tag, attrs, inner):
+        plain = _strip_tags(inner).strip()
         slug = github_slugify(plain)
         if slug in used:
             used[slug] += 1
@@ -83,7 +103,38 @@ def fix_heading_ids(html, id_map=None):
         rest = "".join(" " + raw for name, _, raw in parsed if name not in ("id", HEADING_MARK))
         return f'<{tag} id="{slug}"{rest}>{inner}</{tag}>'
 
-    return re.sub(r"<(h[1-6])([^>]*)>(.*?)</\1>", replacer, html, flags=re.DOTALL)
+    closers = {}
+    for m in _HEADING_CLOSE.finditer(html):
+        closers.setdefault(m.group(1), []).append(m.start())
+    next_closer = dict.fromkeys(closers, 0)
+    out = []
+    pos = 0
+    gt = -1
+    for m in _HEADING_OPEN.finditer(html):
+        if m.start() < pos:
+            continue
+        if gt < m.end():
+            gt = html.find(">", m.end())
+            if gt == -1:
+                break
+        tag = m.group(1)
+        ends = closers.get(tag, ())
+        i = next_closer.get(tag, 0)
+        while i < len(ends) and ends[i] <= gt:
+            i += 1
+        next_closer[tag] = i
+        if i == len(ends):
+            continue
+        end = ends[i]
+        out.append(html[pos:m.start()])
+        out.append(rewrite(tag, html[m.end():gt], html[gt + 1:end]))
+        pos = end + len(tag) + 3
+    out.append(html[pos:])
+    return "".join(out)
+
+
+_HEADING_OPEN = re.compile(r"<(h[1-6])")
+_HEADING_CLOSE = re.compile(r"</(h[1-6])>")
 
 
 # 공백 묶음·속성·그 밖의 한 글자 중 하나를 매번 소비해 앞으로만 나아간다(같은 자리를 다시 훑지 않는다)

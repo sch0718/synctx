@@ -74,11 +74,22 @@ def test_heading_attribute_values_are_not_mistaken_for_attributes(attrs, kept):
     assert '<h2 id="next">Next</h2>' in r["html"]
 
 
+def test_unclosed_heading_opener_is_left_alone():
+    r = renderer.render_markdown("## Same\n\nText <h4> here\n\n## Same\n\n<h3>Same</h3>\n\n<h2>a <b</h2>\n")
+    assert "<p>Text <h4> here</p>" in r["html"]
+    assert [t["id"] for t in r["toc"]] == _ids(r, 2)[:2] == ["same", "same-1"]
+    assert _ids(r, 3) == ["same-2"]
+    assert '<h2 id="a-b">a <b</h2>' in r["html"]
+
+
 @pytest.mark.parametrize("text", [
     '<h2 class="a"' + " " * 50000 + ">T</h2>\n",
     '<h2 class="a"' + " " * 50000 + '"x">T</h2>\n',
     '<div class="toc"></DIV>\n' * 10000,
-])
+    "<h2>\n" * 20000,
+    "<h2>x</H2>\n" * 10000,
+    "<h2>" + "<a " * 40000 + "</h2>\n",
+], ids=["attr-spaces", "attr-spaces-quote", "toc-div", "unclosed-h2", "upper-closer", "stray-lt"])
 def test_heading_and_toc_rewrites_stay_linear(text):
     started = time.monotonic()
     renderer.render_markdown(text)
