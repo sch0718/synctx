@@ -331,11 +331,23 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
         raise HTTPException(status_code=500, detail="Download failed")
 
 
+# 본문이 <img>로 참조하는 그림은 맞는 형식으로 준다. 브라우저는 SVG를 image/svg+xml일 때만 그린다.
+RAW_IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+                   ".webp": "image/webp", ".svg": "image/svg+xml"}
+# 저장소의 SVG는 스크립트를 담을 수 있으므로, 주소를 직접 열어도 실행되지 않게 막는다(<img>로는 원래 실행되지 않음).
+RAW_SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+
+
 @app.get("/raw/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
 def raw_file(repo_id: str, path: str, ref: str | None = None):
     manager = get_repo_manager(repo_id)
+    suffix = PurePosixPath(path).suffix.lower()
+    media_type = RAW_IMAGE_TYPES.get(suffix, "application/octet-stream")
+    headers = {"X-Content-Type-Options": "nosniff"} if suffix in RAW_IMAGE_TYPES else {}
+    if suffix == ".svg":
+        headers["Content-Security-Policy"] = RAW_SVG_CSP
     try:
-        return Response(content=manager.read_file(path, ref=ref), media_type="application/octet-stream")
+        return Response(content=manager.read_file(path, ref=ref), media_type=media_type, headers=headers)
     except Exception as e:
         logger.warning("raw_file_failed repo_id=%s error=%s", repo_id, type(e).__name__)
         raise HTTPException(status_code=404, detail="File not found")

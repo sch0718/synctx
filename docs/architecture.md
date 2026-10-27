@@ -333,7 +333,7 @@ flowchart TD
     Server --> Client
 ```
 
-문서 화면(`_render_file_response`)의 처리 순서는 렌더 → `_sanitize_html` → 근거 판정·표시(회의 문서만) → `rewrite_links`(접두어 매핑) → `embed_view.fill`이다. 근거 판정은 링크를 고치기 전 원문 href를 해석하므로 메모 포함 HTML 내보내기도 같은 함수를 쓴다(3.6).
+문서 화면(`_render_file_response`)의 처리 순서는 렌더 → `_sanitize_html` → 근거 판정·표시(회의 문서만) → `rewrite_links`(접두어 매핑) → `embed_view.fill`이다. 근거 판정은 링크를 고치기 전 원문 href를 해석하므로 메모 포함 HTML 내보내기도 같은 함수를 쓴다(3.6). `rewrite_links`는 상대 `img src`와 `img`·`<picture>`의 `source srcset`(다크 모드 그림 등, 후보마다 설명자 유지)을 `/raw/<저장소>/…`로, 상대 Markdown 링크를 `/view/<저장소>/…`로 바꾼다.
 
 ### 3.2 API
 
@@ -350,6 +350,8 @@ GET /api/repos/{id}/board/{version} 스크럼 보드(칸반) HTML
 GET /raw/{id}/{path}                원본 파일(이미지 등 본문이 참조하는 파일)
 POST /api/repos/{id}/webhook        Git push 알림
 ```
+
+`/raw/`는 png·jpg·gif·webp·svg를 그 이미지 형식으로, 나머지는 `application/octet-stream`으로 준다. 저장소의 SVG는 스크립트를 담을 수 있으므로 `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`와 `X-Content-Type-Options: nosniff`를 붙여 주소를 직접 열어도 실행되지 않게 한다.
 
 ### 3.3 기능 목록
 

@@ -276,6 +276,30 @@ def _rewrite_tag_attr(
     return tag_re.sub(replace_tag, html)
 
 
+def _srcset_candidates(value: str) -> list[tuple[str, str]]:
+    """srcset을 (주소, 설명자) 후보로 나눈다. HTML 표준처럼 주소는 공백까지라서 data URL 등 주소 안의 쉼표는 그대로 둔다."""
+    out: list[tuple[str, str]] = []
+    i, n = 0, len(value)
+    while i < n:
+        while i < n and (value[i].isspace() or value[i] == ","):
+            i += 1
+        start = i
+        while i < n and not value[i].isspace():
+            i += 1
+        url = value[start:i]
+        if not url:
+            break
+        if url.endswith(","):
+            out.append((url.rstrip(","), ""))
+            continue
+        start, depth = i, 0
+        while i < n and not (value[i] == "," and depth == 0):
+            depth += {"(": 1, ")": -1}.get(value[i], 0)
+            i += 1
+        out.append((url, value[start:i].strip()))
+    return out
+
+
 def _path_part(href: str) -> str:
     return href.split("?", 1)[0].split("#", 1)[0]
 
@@ -327,6 +351,15 @@ def rewrite_links(
             return None
         return to_attr(f"/raw/{repo_id}", html_lib.unescape(raw))
 
+    def rewrite_srcset(raw: str) -> str | None:
+        """`url [설명자], …` 후보마다 상대 주소만 바꾼다(<picture>의 다크 모드 그림 등). 바꿀 것이 없으면 그대로 둔다."""
+        candidates = _srcset_candidates(raw)
+        rewritten = [(rewrite_src(url), descriptor) for url, descriptor in candidates]
+        if all(new is None for new, _ in rewritten):
+            return None
+        return ", ".join((new or url) + (f" {descriptor}" if descriptor else "")
+                         for (url, descriptor), (new, _) in zip(candidates, rewritten))
+
     def view_href(
         target_repo: str, unescaped: str, base: str, with_ref: bool, any_file: bool, as_folder: bool = False
     ) -> str | None:
@@ -370,6 +403,8 @@ def rewrite_links(
     masked = re.sub(r"<style\b.*?</style>", preserve_block, masked, flags=re.IGNORECASE | re.DOTALL)
 
     rewritten = _rewrite_tag_attr(masked, tag="img", attr="src", url_rewriter=rewrite_src)
+    rewritten = _rewrite_tag_attr(rewritten, tag="img", attr="srcset", url_rewriter=rewrite_srcset)
+    rewritten = _rewrite_tag_attr(rewritten, tag="source", attr="srcset", url_rewriter=rewrite_srcset)
     rewritten = _rewrite_tag_attr(rewritten, tag="a", attr="href", url_rewriter=rewrite_href)
 
     marker_re = re.compile(

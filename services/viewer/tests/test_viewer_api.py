@@ -406,6 +406,62 @@ class TestRewriteLinks:
         html = rewrite_links(f'<img alt="i" src="{src}">', "test-repo", "docs/readme.md", ref="feature/x")
         assert f'src="{expected}"' in html
 
+    def test_picture_source_srcset_points_to_raw(self):
+        # README·도움말의 다크 모드 그림(<picture><source srcset>)도 /raw로 받아야 한다
+        from renderer import rewrite_links
+        html = rewrite_links('<picture><source media="(prefers-color-scheme: dark)" srcset="img/a-dark.svg">'
+                             '<img src="img/a-light.svg"></picture>', "test-repo", "docs/readme.md", ref="feature/x")
+        assert 'srcset="/raw/test-repo/docs/img/a-dark.svg?ref=feature%2Fx"' in html
+        assert 'src="/raw/test-repo/docs/img/a-light.svg?ref=feature%2Fx"' in html
+
+    def test_srcset_candidates_keep_descriptors_and_external_urls(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<img src="a.png" srcset="a.png 1x, img/a@2x.png 2x, https://cdn.example/a.png 3x">',
+                             "test-repo", "docs/readme.md")
+        assert ('srcset="/raw/test-repo/docs/a.png 1x, /raw/test-repo/docs/img/a@2x.png 2x, '
+                'https://cdn.example/a.png 3x"') in html
+
+    @pytest.mark.parametrize("srcset", [
+        "data:image/png;base64,AAAA,BBBB 1x",
+        "https://cdn.example/a,b.png 1x, https://cdn.example/c.png 2x",
+        "data:image/svg+xml,%3Csvg%3E%3C/svg%3E",
+    ])
+    def test_srcset_keeps_commas_inside_data_and_external_urls(self, srcset):
+        from renderer import rewrite_links
+        html = rewrite_links(f'<img src="https://x.example/a.png" srcset="{srcset}">', "test-repo", "docs/readme.md")
+        assert f'srcset="{srcset}"' in html
+
+    def test_srcset_rewrites_relative_url_next_to_data_url(self):
+        from renderer import rewrite_links
+        html = rewrite_links('<source srcset="data:image/png;base64,AAAA 1x,img/b.png 2x">', "test-repo", "docs/readme.md")
+        assert 'srcset="data:image/png;base64,AAAA 1x, /raw/test-repo/docs/img/b.png 2x"' in html
+
+    @pytest.mark.parametrize(("path", "media_type"), [
+        ("docs/img/a.png", "image/png"), ("docs/img/a.JPG", "image/jpeg"), ("docs/img/a.gif", "image/gif"),
+        ("docs/img/a.webp", "image/webp"), ("docs/img/a.svg", "image/svg+xml"), ("docs/a.bin", "application/octet-stream"),
+    ])
+    def test_raw_serves_images_with_their_media_type(self, client, mock_repo_manager, path, media_type):
+        # 브라우저는 SVG를 image/svg+xml일 때만 그림으로 그린다(README·도움말의 움직이는 그림)
+        mock_repo_manager.read_file.return_value = b"<svg/>"
+        resp = client.get(f"/raw/test-repo/{path}")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].split(";")[0] == media_type
+
+    def test_raw_svg_cannot_run_scripts_when_opened_directly(self, client, mock_repo_manager):
+        mock_repo_manager.read_file.return_value = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'
+        resp = client.get("/raw/test-repo/docs/img/a.svg")
+        csp = resp.headers["content-security-policy"]
+        assert "default-src 'none'" in csp and "sandbox" in csp and "script-src" not in csp
+        assert resp.headers["x-content-type-options"] == "nosniff"
+
+    def test_picture_in_rendered_page_uses_raw_for_dark_image(self, client, mock_repo_manager):
+        mock_repo_manager.read_file_text.return_value = (
+            '<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="img/hero-dark.svg">'
+            '<img src="img/hero-light.svg" alt="hero"></picture></p>')
+        text = client.get("/test-repo/docs/readme.md").text
+        assert 'srcset="/raw/test-repo/docs/img/hero-dark.svg"' in text
+        assert 'src="/raw/test-repo/docs/img/hero-light.svg"' in text
+
     def test_image_with_fragment_in_rendered_page_reads_ref(self, client, mock_repo_manager):
         import re
         from urllib.parse import parse_qs, urlsplit

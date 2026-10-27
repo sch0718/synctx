@@ -791,7 +791,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | GET | `/api/search?q=&repo=&ref=` | viewer | 본문 검색(`{"query", "repos": [{"id", "name", "status", "truncated", "matches": [{"path", "line", "before", "match", "after"}]}]}`). `repo`가 없으면 모든 저장소. 검색어 2~100글자·줄바꿈 없음, `ref`는 `repo`와 함께만 쓰며 어기면 400, 모르는 저장소 404 |
 | GET | `/search?q=&repo=&ref=&ref_repo=` | viewer | 본문 검색 결과 HTML 페이지(`search`는 예약 경로) |
 | GET | `/api/repos/{repo_id}/render?ref=&path=&theme=&mode=` | viewer | Markdown HTML 렌더링 |
-| GET | `/raw/{repo_id}/{path}?ref=` | viewer | 원본 파일 |
+| GET | `/raw/{repo_id}/{path}?ref=` | viewer | 원본 파일. png·jpg·gif·webp·svg는 그 이미지 형식, 나머지는 `application/octet-stream`. SVG에는 스크립트를 막는 CSP(`default-src 'none'; style-src 'unsafe-inline'; sandbox`)와 `nosniff` |
 | GET | `/api/repos/{repo_id}/download?path=&format=raw\|html\|pdf&ref=` | viewer | 원본·변환 다운로드(기본 `raw`, `pdf`는 Marp 호출) |
 | GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음, 근거 모음·말풍선 포함). 회의 모드 조건 불충족 404 |
 | GET | `/api/repos/{repo_id}/board/{version}` | viewer | 스크럼 보드 HTML |
@@ -805,6 +805,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - 본문 검색은 저장소마다 최대 50건·git 출력 2 MiB·기한 3초(ref 확인과 실행 대기 포함)이고, 동시에 도는 검색은 프로세스(파드)마다 4개까지다. 부분 복제(`blobless`·`treeless`) 저장소는 모든 파일 내용을 원격에서 받아 오게 되므로 검색하지 않고 `unsupported`로 돌려준다. 결과는 볼 수 있는 파일만, 제어 문자나 점으로 시작하는 경로 조각이 없는 것만 싣는다.
 - 화면 경로(`/`, `/{repo_id}`, `/{repo_id}/{path}`)의 오류(404·413·415·502·500)는 HTML 안내 화면으로, `/api/...`·`/raw/...` 경로는 JSON으로 돌려준다. HTML 안내 화면, 파일 목록 API의 502 응답, 검색 응답(`status`만 돌려줌)에는 예외 문구와 인증 정보를 넣지 않고, 검색 경로가 새로 남기는 로그는 예외 종류만 담는다. `/api/...`·`/raw/...`의 JSON 오류 응답 `detail`은 상태별 고정 문구("File not found", "Repository refresh failed" 등)이고 예외 메시지를 담지 않으며, 이때 남기는 로그는 저장소 id와 예외 종류만 담는다. git 호출이 실패해 생기는 예외(`CalledProcessError`·`TimeoutExpired`)의 명령 목록에는 인증 헤더가 든 설정 인자(`-c http.extraHeader=…`)를 넣지 않고 URL 인증정보를 가리므로, 예외를 문자열로 만들어도 토큰이 나오지 않는다. git 호출 로그(`git_command_failed`·`fetch_ref_failed`)는 `https://user:pass@host`의 비밀번호, `https://TOKEN@host`의 사용자 정보, Authorization 헤더 값을 가린 채 남는다.
 - HTML은 sanitization 또는 신뢰 저장소 정책 중 하나를 명시한다. 운영 기본값은 신뢰 저장소 + CSP다.
+- 저장소의 SVG는 `/raw/`에서 `image/svg+xml`로 주되 `sandbox` CSP와 `nosniff`를 붙인다. 본문의 `<img>`로는 스크립트가 원래 실행되지 않고, 주소를 직접 열어도 sandbox 때문에 실행되지 않는다.
 - `synctx-html` 블록은 sanitizer를 거친 뒤 자리표시를 sandbox iframe으로 채운다. 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지운다. CSP는 `font-src`에 `data:`, 각 지시어에 최상위 `html_embed.allowed_origins`를 더한다.
 - 회의 메모는 서버로 보내지 않는다. 브라우저 localStorage에만 저장하고, `<script>` 안 JSON은 `<`·`>`·`&`·U+2028·U+2029를 유니코드 이스케이프로 인코딩한다.
 - 회의 문서의 근거 발췌는 같은 저장소와 `synctx.meeting.references`가 가리키는 **설정에 있는 저장소**의 Git blob만 읽는다. 없는 저장소·파일, `..`으로 저장소 루트를 벗어나는 경로, 제어 문자나 점으로 시작하는 경로 조각, `viewer.max_render_size_bytes`를 넘는 파일은 근거로 쓰지 않는다. Viewer 권한은 저장소 단위가 아니라 `viewer` 역할 하나라 다른 저장소 발췌를 보여 줘도 권한이 넓어지지 않는다. 한 문서에서 처리하는 근거 링크는 200개, 서로 다른 근거 파일은 50개까지다.

@@ -13,12 +13,15 @@ scripts/
 ├── smoke-test.sh              # 배포 후 smoke test
 ├── external_importer.py       # 외부 피드백 메일 수신 → PR 생성
 ├── test-all.sh                # 전체 테스트(pytest + node --test), make test가 호출
+├── build_motion.py            # README 소개 그림·메뉴별 도움말(그림·글) 생성
+├── motion/                    # build_motion.py의 그리기 도구와 메뉴별 단계 정의
 ├── tests/                     # 스크립트 테스트
 │   ├── test_external_importer.py
 │   ├── test_helm_options.py   # Helm 서비스 옵션 렌더
 │   ├── test_docker_deploy.py  # Docker 배포 검사·게이트웨이 설정
 │   ├── test_seed_cdn.py       # CDN 채우기
 │   ├── test_run_viewer.py     # run-viewer.sh의 로컬 설정 생성·묶음 앱
+│   ├── test_motion.py         # 생성한 그림·도움말이 최신인지, SVG·문서 링크 검사
 │   ├── test_prometheus_rules.py  # 렌더한 PrometheusRule을 promtool로 평가
 │   └── prometheus/            # Sync·Feedback Alert 평가 케이스 (*.test.yaml)
 ├── docker/                    # Docker Compose 배포 (K8s 없는 서버)
@@ -132,6 +135,18 @@ cat email_body.json | python scripts/external_importer.py
 | `OUTBOUND_FEEDBACK_HMAC_KEY` | (필수) | HMAC 서명 키 |
 | `OUTBOUND_FEEDBACK_REPLAY_WINDOW_MINUTES` | `1440` | Replay 방지 윈도우 (분) |
 | `OUTBOUND_FEEDBACK_PROCESSED_EVENTS_FILE` | `.synctx-feedback/processed_events.json` | 처리된 이벤트 저장 파일 |
+
+### build_motion.py
+
+README 맨 위 소개 그림(`docs/readme/hero-{light,dark}.svg`)과 Viewer 메뉴별 도움말(`docs/help/*.md`, `docs/help/img/*-{light,dark}.svg`)을 만든다. 같은 사용자의 landmark·gazua 저장소와 같은 방식으로, 단계 정의 하나(`motion/help_pages.py`)에서 움직이는 그림과 글을 함께 만든다. 표준 라이브러리만 쓰고 색은 Viewer 테마 토큰(`services/viewer/src/renderer.py`)에서 읽는다.
+
+```bash
+python3 scripts/build_motion.py
+```
+
+- 화면 문구는 Viewer의 실제 문구를 쓴다. Viewer 화면이 바뀌면 `motion/help_pages.py`를 고치고 다시 만든다. 생성된 파일은 직접 고치지 않는다.
+- 그림은 GitHub가 `<img>`로 보여 주므로 스크립트·외부 글꼴 없이 CSS 애니메이션만 쓰고, 동작 줄이기 설정이면 첫 장면에 멈춘다.
+- `tests/test_motion.py`가 커밋된 파일이 생성 결과와 같은지, SVG가 외부 자원 없이 40KB 이하인지, README·도움말·개발 문서의 상대 링크가 살아 있는지 확인한다.
 
 ## Docker Compose 배포 (docker/)
 
