@@ -37,8 +37,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 validate_options() {
-    [ -n "${SYNCTX_IMAGE_TAG:-}" ] || fail "SYNCTX_IMAGE_TAG를 지정하세요 (예: 0.6.0-<git-sha>)"
-    [ "$SYNCTX_IMAGE_TAG" != "latest" ] || fail "SYNCTX_IMAGE_TAG에 latest는 쓸 수 없습니다. 0.6.0-<git-sha> 형식을 쓰세요"
+    [ -n "${SYNCTX_IMAGE_TAG:-}" ] || fail "SYNCTX_IMAGE_TAG를 지정하세요 (예: 0.7.0-<git-sha>)"
+    [ "$SYNCTX_IMAGE_TAG" != "latest" ] || fail "SYNCTX_IMAGE_TAG에 latest는 쓸 수 없습니다. 0.7.0-<git-sha> 형식을 쓰세요"
 
     parse_services
 

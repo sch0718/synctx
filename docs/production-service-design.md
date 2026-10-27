@@ -286,7 +286,7 @@ HTML 렌더 보기(PR #63, 상세는 `html-embed-design.md` 14장):
 - `/render`에는 `frame-ancestors`·`X-Frame-Options`를 넣지 않는다. 사용자가 제공한 Chromium spike에서 출처 `null`인 조상 아래 중첩 프레임은 `'self'`·명시 출처·`*` 모두 차단됐다. Referer도 실리지 않아 검사에 쓰지 않는다. 앞단 프록시도 이 두 헤더를 일괄 주입하지 않아야 한다.
 - 외부 삽입은 토큰 비공개와 기존 authz로 통제한다. 토큰 유출 뒤 권한 있는 브라우저의 외부 iframe 요청은 허용될 수 있고 `Sec-Fetch-Dest`는 외부 삽입을 구분하지 못한다. 운영 SSO 쿠키 호환성은 아래 사전 시험을 전제로 하며 토큰은 인증을 대체하지 않는다.
 - 합본 meta CSP `frame-src`는 렌더 보기만 `'self'`, 다른 합본 호출은 기본 `'none'`이다. `src` 없는 iframe은 현행도 통과한다. 완화는 초기 `src`가 있는 상대 HTML 프레임에만 적용하며 쿼리·해시를 뺀 경로 확장자와 합본기의 `resolve_path`로 검사한다. `about:blank`·`srcdoc`·`data:` 프레임은 계속 거부한다. 다른 지시어는 그대로다.
-- `'self'`는 같은 출처 전체를 허용한다. `csp_middleware`는 `text/html`에만 CSP·XFO를 붙이므로 `/api` JSON·`/raw`에는 XFO가 없다. 같은 호스트의 `/cdn`·`/marp`·`/slides`·`/drawio`도 프레임에 들어갈 수 있으며 CDN은 XFO·CSP가 없고 SVG 업로드도 허용한다. 이 문서들은 sandbox는 물려받지만 합본 meta CSP의 네트워크 제한은 물려받지 않는 위험이 남는다. `config.runtime.public_base_url`(`app.py:158`)로 만든 `https://host/view/render/` 경로 소스로 좁히는 대안은 결정 필요다. sandbox 문서에서의 경로 매칭은 미확인이다.
+- `'self'`는 같은 출처 전체를 허용한다. `csp_middleware`는 `text/html`에만 CSP·XFO를 붙이므로 `/api` JSON·`/raw`에는 XFO가 없다. 같은 호스트의 `/cdn`·`/marp`·`/slides`·`/drawio`도 프레임에 들어갈 수 있으며 CDN은 XFO·CSP가 없고 SVG 업로드도 허용한다. 이 문서들은 sandbox는 물려받지만 합본 meta CSP의 네트워크 제한은 물려받지 않는 위험이 남는다. `config.runtime.public_base_url`(`app.py`의 `_render_download_html`·`_prepare_pdf_markdown`이 쓰는 값)로 만든 `https://host/view/render/` 경로 소스로 좁히는 대안은 결정 필요다. sandbox 문서에서의 경로 매칭은 미확인이다.
 - 앱·접근 로그는 토큰 경로를 마스킹한다. 인그레스·EFK 로그에 남는 토큰의 위험은 알리고 수용하며 접근권한·보존 기간으로 관리한다. Edge·Firefox·Safari, 헤드리스 전체 화면 동작은 미확인이다. 신뢰 저장소·폐쇄망·외부 네트워크 금지와 기존 잔여 위험 통제는 유지한다.
 
 운영 전제 / 운영 시험(운영 SSO는 미확인, PR #63 이후 남은 결정 C1): `pf`의 조상에 출처 `null`인 sandbox 문서가 있어 `Sec-Fetch-Site`가 cross-site가 되고 `SameSite=Lax`·`Strict` 인증 쿠키가 빠져 로그인으로 리다이렉트될 수 있다. 실제 운영 SSO 쿠키의 `SameSite`·`Secure` 속성으로 Viewer → 첫 sandbox 문서 → `pf` 대상의 2단계 중첩 요청과 링크 클릭을 시험하고 쿠키 송신·리다이렉트·인증 헤더를 확인한다. 로컬·무인증(`authz.enabled=false`) 사용은 이 전제와 무관하며 실제 Chromium에서 동작을 확인했다.
@@ -488,7 +488,7 @@ outbound_feedback:
 
 `html_embed`의 출처는 `https://호스트[:포트]`만 허용하고, 저장소 목록은 최상위 목록의 부분집합이어야 한다. 어기면 서비스가 시작되지 않는다. 신뢰 저장소(`enabled: true`)는 운영자만 지정한다(3.6).
 
-`repositories[].html_embed.render_files: bool = False`·`viewer.render_token_ttl_seconds`는 플랫폼 설정이다. 렌더 보기·`/render`는 `enabled`·`render_files`가 모두 true여야 한다. 저장소 안 `.synctx.yaml`로는 켤 수 없다. 현행 공통 validator는 최상위 `targets.xwiki`가 있고 저장소가 `enabled`이면 Viewer 전용 저장소에도 기본 계정과 다른 `xwiki_credential_env`를 요구한다(`config.py:281-292`). 실제 XWiki 게시 대상에만 요구하는 방안(대상 판정·라우팅 변경 검증 필요), Viewer 설정 검사를 분리하는 방안(서비스별 설정 계약 관리 증가)은 결정 필요이며 현행 요건은 유지한다.
+`repositories[].html_embed.render_files: bool = False`·`viewer.render_token_ttl_seconds`는 플랫폼 설정이다. 렌더 보기·`/render`는 `enabled`·`render_files`가 모두 true여야 한다. 저장소 안 `.synctx.yaml`로는 켤 수 없다. 현행 공통 validator는 최상위 `targets.xwiki`가 있고 저장소가 `enabled`이면 Viewer 전용 저장소에도 기본 계정과 다른 `xwiki_credential_env`를 요구한다(`config.py`의 `SynctxConfig._check_html_embed_origins`). 실제 XWiki 게시 대상에만 요구하는 방안(대상 판정·라우팅 변경 검증 필요), Viewer 설정 검사를 분리하는 방안(서비스별 설정 계약 관리 증가)은 결정 필요이며 현행 요건은 유지한다.
 
 `SYNCTX_RENDER_SECRET`·`SYNCTX_RENDER_SECRET_PREVIOUS`는 YAML에 값으로 넣지 않고 환경변수 또는 각각의 `_FILE` 변형으로 mounted UTF-8 파일을 참조한다(3.4). 같은 키의 직접 값·파일 동시 지정, 파일 읽기 실패, 32바이트 미만 키, 이전 키만 지정은 시작 오류다. 파일은 마지막 줄바꿈 하나(LF 또는 CRLF)만 제거한다. 키 생성은 `openssl rand -base64 32`를 쓰고 출력 텍스트 자체를 UTF-8 키로 사용하며 다시 디코딩하지 않는다. 현재 키 지정이 없으면 시작 때 무작위 32바이트를 만들어 단일 인스턴스·로컬에서 쓰고 재시작하면 기존 토큰은 무효다. 단일 파드도 롤링 중 구·신 파드 무작위 키가 공존하면 간헐 실패하므로 운영 렌더는 유지되는 공유 Secret을 쓴다. 복수 인스턴스·프로세스는 공유 현재 키가 필수이고 교체 중 보조 키도 공유한다. PREVIOUS는 보통 이전 키지만 교체 준비 단계에는 다음 키를 담는 검증 전용 슬롯이다.
 
@@ -815,7 +815,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | `GET /healthz` | 프로세스 생존 확인 |
 | `GET /readyz` | 트래픽 받을 준비 확인. 준비 전에는 503(Viewer는 시작 때 저장소 clone·fetch가 끝나야 ready) |
 | `GET /metrics` | Prometheus metrics |
-| `GET /version` | 서비스 버전(`{"version": "0.6.0"}`) |
+| `GET /version` | 서비스 버전(`{"version": "0.7.0"}`) |
 
 ### 7.2 Viewer Service
 
@@ -1074,7 +1074,7 @@ resources:
 개발 완료 후 실제 운영 환경과 유사한 조건에서 검증하기 위해 Minikube를 활용한 로컬 시뮬레이션을 수행한다.
 
 **시뮬레이션 환경 구성:**
-- **Minikube Cluster**: `minikube start --addons=ingress,metrics-server` 명령으로 Ingress Controller와 Metrics Server가 활성화된 클러스터 구성.
+- **Minikube Cluster**: `minikube start --addons=ingress,metrics-server` 명령으로 Ingress Controller와 Metrics Server가 활성화된 클러스터 구성. 로컬 스크립트는 `MINIKUBE_PROFILE`(기본 `minikube`, 예: `synctx`)의 클러스터로 minikube·kubectl·helm을 고정한다(`minikube -p`, `--context`, `--kube-context`). 터널은 `minikube tunnel -p <프로필>`.
 - **Minikube Docker Daemon**: `eval $(minikube docker-env)`를 통해 로컬 Docker 데몬을 Minikube와 공유하여 빠른 로컬 빌드 및 테스트를 수행. (단, 운영 환경의 내부 레지스트리 및 imagePullSecret 검증이 필요한 경우 `registry` addon을 활성화하여 별도 테스트 수행)
 - **Helm 배포**: 작성된 Helm Chart를 사용하여 전체 마이크로서비스(Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server)를 `synctx` 네임스페이스에 배포.
 
@@ -1122,7 +1122,7 @@ K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성�
 - Docker Compose v2.17 이상(`up --wait --wait-timeout` 사용), amd64
 - 운영 서버는 폐쇄망 레지스트리(`registry.local:5000`)에서 이미지를 받는다. 반입 절차는 기존 `pull-and-save-images.sh` 흐름(외부에서 pull → tar 저장 → 폐쇄망 반입 → registry push)을 따른다.
 - 서버에는 저장소 체크아웃(또는 아래 디렉터리 묶음)이 같은 상대 위치로 있어야 한다. `compose.yaml`이 `../../helm/synctx/files`(Slides nginx 설정·스크립트)와 `../../cdn-data`(CDN vendor 파일)를 마운트하고, 배포는 `scripts/docker/*.sh`로 한다. 폐쇄망에는 이미지와 함께 `deploy/docker`, `scripts/docker`, `helm/synctx/files`, `cdn-data`를 저장소와 같은 구조로 묶어(예: `git archive HEAD deploy/docker scripts/docker helm/synctx/files cdn-data`) 반입한다. 이미지 태그의 `<git-sha>`와 같은 커밋에서 묶는다.
-- 레지스트리에 있어야 하는 이미지(켠 서비스만 필요하다. synctx 이미지 태그는 `0.6.0-<git-sha>`)
+- 레지스트리에 있어야 하는 이미지(켠 서비스만 필요하다. synctx 이미지 태그는 `0.7.0-<git-sha>`)
 
 | 이미지 | 용도 |
 |--------|------|
@@ -1140,7 +1140,7 @@ K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성�
 | 파일 | 내용 |
 |------|------|
 | `deploy/docker/synctx.env` | 서비스 선택, 이미지, 포트, TLS, 신뢰 프록시 옵션 (`synctx.env.example`을 복사) |
-| `deploy/docker/secrets.env` | `GIT_READ_TOKEN`, `GIT_PUBLISH_TOKEN` (`secrets.env.example`을 복사, 권한 600 권장) |
+| `deploy/docker/secrets.env` | `GIT_READ_TOKEN`, `GIT_PUBLISH_TOKEN`, 선택 `SYNCTX_RENDER_SECRET`·`SYNCTX_RENDER_SECRET_PREVIOUS` (`secrets.env.example`을 복사, 권한 600 권장) |
 | `.synctx.yaml` | `SYNCTX_CONFIG_FILE`이 가리키는 설정 파일 |
 
 두 env 파일과 `.synctx.yaml`, `.generated/`, `tls/`는 `deploy/docker/.gitignore`로 git에서 뺀다. 옵션 파일 안의 상대 경로는 `deploy/docker` 기준이고, `--env-file`·`--secrets-file`로 준 상대 경로는 현재 디렉터리 기준이다. 옵션 파일은 `deploy.sh`가 bash로 읽고 docker compose도 읽으므로 공백이 든 값은 큰따옴표로 감싼다(예: `SYNCTX_EXTRA_COMPOSE_FILES="a.yaml b.yaml"`).
@@ -1149,7 +1149,7 @@ K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성�
 |------|--------|------|
 | `SYNCTX_SERVICES` | `viewer,cdn,marp,slides` | 켤 서비스(필수) |
 | `SYNCTX_IMAGE_PREFIX` | `registry.local:5000/` | 이미지 접두사. 로컬에서는 빈 값 |
-| `SYNCTX_IMAGE_TAG` | 없음(필수) | `0.6.0-<git-sha>`. `latest`는 거부 |
+| `SYNCTX_IMAGE_TAG` | 없음(필수) | `0.7.0-<git-sha>`. `latest`는 거부 |
 | `SYNCTX_CONFIG_FILE` | `./synctx.yaml` | 모든 서비스가 읽는 `.synctx.yaml` |
 | `SYNCTX_SLIDES_REPO_URL` | 없음 | Slides 게시 저장소(slides를 켜면 필수) |
 | `SYNCTX_SLIDES_BRANCH` / `SYNCTX_SLIDES_POLL_SECONDS` | `main` / `60` | 게시 브랜치, 폴링 간격 |
@@ -1161,6 +1161,7 @@ K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성�
 | `SYNCTX_PROJECT_NAME` | `synctx` | compose 프로젝트 이름(컨테이너·볼륨 이름 접두사) |
 | `SYNCTX_EXTRA_COMPOSE_FILES` | 없음 | 사내 사정에 맞춘 compose 오버라이드 파일(공백 구분, 여러 개면 큰따옴표) |
 | `SYNCTX_WAIT_TIMEOUT` | `180` | `up --wait` 대기(초) |
+| `SYNCTX_RENDER_SECRET_FILE` / `SYNCTX_RENDER_SECRET_PREVIOUS_FILE` | 없음 | 렌더 키 파일 경로. 같은 키의 직접 값과 함께 쓰면 중단하고, viewer에 읽기 전용으로 마운트한다 |
 
 - TLS: CERT·KEY를 주면 443 server 블록을 만들고 80은 443으로 돌린다. `compose.tls.yaml`이 443 포트 매핑과 인증서 마운트를 더한다. 하나만 주면 중단한다.
 - 토큰은 `secrets.env`에 두고 필요한 컨테이너(viewer·marp·slides-git)에만 `environment:`로 넘긴다.
@@ -1199,19 +1200,19 @@ scripts/docker/deploy.sh [--env-file 경로] [--secrets-file 경로] [--check]
 # Docker Engine. 기존 빌드 스크립트로 Viewer만 빌드
 ./run.sh --docker --build --repo https://git.example/team/docs.git
 # 폐쇄망에 반입한 사전 빌드 Viewer 이미지
-./run.sh --docker --image registry.local:5000/synctx/viewer:0.6.0-abcdef0 --config ./viewer.yaml
+./run.sh --docker --image registry.local:5000/synctx/viewer:0.7.0-abcdef0 --config ./viewer.yaml
 ```
 
 | 항목 | 동작 |
 |------|------|
 | 실행·의존성 | `standalone.py`에서 기존 Viewer만 `/view`로 제공. 번들 vendor 사용, 외부 CDN·Marp·Compose·게이트웨이 불필요 |
-| 기본 이미지·빌드 | `${DOCKER_REGISTRY:-synctx}/viewer:0.6.0-<git-sha>`. `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag <태그>`에 위임. `--image`와 상호 배타적. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓰고, 없으면 실행 전에 `--build`·`--image`를 안내(Docker Hub에서 받지 않음). `DOCKER_REGISTRY`나 `--image`를 주면 Docker 기본 pull 정책 |
+| 기본 이미지·빌드 | `${DOCKER_REGISTRY:-synctx}/viewer:0.7.0-<git-sha>`. `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag <태그>`에 위임. `--image`와 상호 배타적. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓰고, 없으면 실행 전에 `--build`·`--image`를 안내(Docker Hub에서 받지 않음). `DOCKER_REGISTRY`나 `--image`를 주면 Docker 기본 pull 정책 |
 | 반입 | 같은 커밋의 Viewer 이미지·루트 `run.sh`·`scripts/docker/run-viewer.sh`를 함께 준비. `--image`면 호스트 Python·uv·Git 없이 실행. SemVer-SHA 태그 필수, `latest` 거부 |
 | 포트·캐시 | 호스트 `127.0.0.1:18000`, 컨테이너 `0.0.0.0:8000`. 기본 named volume `synctx-viewer-cache:/data/viewer`. `--bind`·`--port`·`--name`·`--volume`으로 변경 |
 | 설정 | `--repo` 반복 또는 `--config`. 파일은 호출 위치 기준으로 해결하고 읽기 전용으로 마운트. 기존 설정의 명시적 authz·collab 정책 유지. `--ref`는 `--repo` 전용이며 `--config`와 함께 주면 거부(설정의 `default_ref` 사용) |
 | 자산 설정 | `viewer.asset_source` 기본 `cdn`; 경량 실행은 `bundled`로 바꾸고 `SYNCTX_ENABLED_SERVICES=viewer` 고정. 저장소 캐시와 생성 YAML은 캐시 볼륨 안에 둠 |
 | Git 갱신 | 시작 clone/fetch 뒤 기본 60초마다 async 갱신. `--refresh-interval 0`은 주기 갱신 끔 |
-| Secret | `GIT_READ_TOKEN`·`SYNCTX_SERVICE_TOKEN`을 Docker 환경변수 이름으로만 전달. 다른 `credential_env`는 `--env NAME`. 토큰 값을 URL·명령 인자·생성 YAML에 저장하지 않음 |
+| Secret | `GIT_READ_TOKEN`·`SYNCTX_SERVICE_TOKEN`·`SYNCTX_RENDER_SECRET`·`SYNCTX_RENDER_SECRET_PREVIOUS`를 Docker 환경변수 이름으로만 전달하고, `_FILE`은 파일을 읽기 전용으로 마운트. 다른 `credential_env`는 `--env NAME`. 토큰 값을 URL·명령 인자·생성 YAML에 저장하지 않음 |
 | 공개 URL | `--public-base-url` → 명시적 `runtime.public_base_url` → `SYNCTX_VIEWER_PUBLIC_BASE_URL` → 로컬 주소. Docker는 환경변수가 비면 호스트 공개 주소를 전달 |
 
 `--repo` 생성 프로필은 로컬 열람용(`authz.enabled: false`, `collab.enabled: true`)이다. 기본 loopback에서 사용하고 외부 공개는 TLS·인증 프록시와 방화벽을 구성한 뒤 실제 공개 URL을 지정한다. 직접 보낸 권한 헤더가 신뢰되지 않도록 프록시만 Viewer에 접근하게 제한한다. `--config`는 인증을 자동으로 끄지 않으므로 authz가 켜진 설정에 프록시 헤더 없이 접근하면 403이 정상이다. Docker의 명시적 로컬 `--repo`만 실제 디렉터리에 읽기 전용으로 마운트하고 상위 디렉터리는 노출하지 않는다. 로컬 file URL은 빈 호스트 또는 `localhost`만 허용하고 URL 이스케이프(예: `%20`)를 해석한 실제 디렉터리를 마운트한다. 다른 호스트와 `.git`이 파일인 linked worktree·submodule은 Docker 실행 전에 거부하며 원격 Git URL을 안내한다. 외부 Git 관리 디렉터리를 자동 마운트하지 않는다. 컨테이너는 root로 돌고 바인드 마운트는 호스트 소유자 uid를 유지하므로(Linux), Git의 소유자 검사(dubious ownership)를 피하려고 마운트한 디렉터리마다 `GIT_CONFIG_*` 환경변수로 `safe.directory`를 등록한다. 실제 Linux Docker에서의 로컬 `--repo` clone은 아직 확인하지 않았다. 설정 파일의 저장소는 컨테이너에서 접근 가능한 Git URL을 쓴다.
@@ -1331,7 +1332,8 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 | E2E | Kind 또는 dev cluster | Viewer 렌더링, Marp publish, Sync dry-run |
 | Security | path traversal, upload validation, authz | 권한 없는 요청 403 |
 | Harness | sample `.context` + issues/board/docs | context schema, blueprint, agent-readiness, board 관계 검증 |
-| Outbound Feedback | fake OpenProject + fake SMTP + fake importer | redaction, signature, replay, PR 생성 검증 |
+| Outbound Feedback | fake OpenProject + fake SMTP + fake importer | redaction, signature, replay, PR 생성, OpenProject 변경 조회 필터(`<>d`)·전체 페이지 처리 검증 |
+| Marp 출판 인증 | pytest(Marp TestClient) | `publish_auth` → `GIT_PUBLISH_TOKEN` → `repositories[0].auth` 순서, `publish_auth_fallback` 경고 |
 | Offline build | vendor artifact only | 외부 네트워크 없이 이미지 빌드 |
 | Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
 | Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·`synctx-html` 블록 한 줄 안내·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
@@ -1582,7 +1584,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 서비스 옵션, Docker Compose와 경량 Viewer 실행(8.7)은 새 Phase가 아니다. Phase 번호 체계(1-9)는 그대로다.
 
 - [ ] 옵션 검사: `scripts/docker/deploy.sh --check`가 통과하고 켜진 서비스가 의도와 같다
-- [ ] 이미지 반입: 켠 서비스의 이미지가 `registry.local:5000`에 있고 `SYNCTX_IMAGE_TAG`가 `0.6.0-<git-sha>` 형식이다(`latest` 아님)
+- [ ] 이미지 반입: 켠 서비스의 이미지가 `registry.local:5000`에 있고 `SYNCTX_IMAGE_TAG`가 `0.7.0-<git-sha>` 형식이다(`latest` 아님)
 - [ ] `.synctx.yaml` 준비: 인증 프록시가 없으면 `authz.enabled: false`, CDN을 끄면 `viewer.cdn_base_url`이 절대 주소다
 - [ ] TLS: 인증서를 `tls/`에 두고 HTTPS 200, HTTP 301을 확인한다
 - [ ] 헤더 제거 확인: 위조한 `X-Forwarded-Groups`로 직접 요청해도 권한이 올라가지 않는다(신뢰 모드면 허용 목록 밖 출발지는 403)

@@ -861,7 +861,7 @@ wheels = [
 
 [[package]]
 name = "synctx"
-version = "0.6.0"
+version = "0.7.0"
 source = { virtual = "." }
 dependencies = [
     { name = "synctx-common" },
@@ -884,7 +884,7 @@ dev = [
 
 [[package]]
 name = "synctx-cdn"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "services/cdn" }
 dependencies = [
     { name = "aiofiles" },
@@ -905,7 +905,7 @@ requires-dist = [
 
 [[package]]
 name = "synctx-common"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "shared/synctx-common" }
 dependencies = [
     { name = "fastapi" },
@@ -928,7 +928,7 @@ requires-dist = [
 
 [[package]]
 name = "synctx-feedback"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "services/feedback" }
 dependencies = [
     { name = "fastapi" },
@@ -947,7 +947,7 @@ requires-dist = [
 
 [[package]]
 name = "synctx-marp"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "services/marp" }
 dependencies = [
     { name = "fastapi" },
@@ -966,7 +966,7 @@ requires-dist = [
 
 [[package]]
 name = "synctx-sync"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "services/sync" }
 dependencies = [
     { name = "httpx" },
@@ -985,7 +985,7 @@ requires-dist = [
 
 [[package]]
 name = "synctx-viewer"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "services/viewer" }
 dependencies = [
     { name = "fastapi" },

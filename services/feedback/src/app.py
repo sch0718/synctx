@@ -16,7 +16,7 @@ from redactor import redact_work_package
 from signer import FeedbackSigner
 
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 configure_logging(service_name="feedback")
 app = FastAPI(title="synctx-feedback", version=__version__)
 config = load_config()

@@ -8,7 +8,7 @@ metrics:
 viewer:
   image:
     repository: registry.internal/synctx/viewer
-    tag: "0.6.0"
+    tag: "0.7.0"
   replicaCount: 2
   resources:
     requests:
@@ -21,7 +21,7 @@ viewer:
 cdn:
   image:
     repository: registry.internal/synctx/cdn
-    tag: "0.6.0"
+    tag: "0.7.0"
   replicaCount: 2
   resources:
     requests:
@@ -34,7 +34,7 @@ cdn:
 sync:
   image:
     repository: registry.internal/synctx/sync
-    tag: "0.6.0"
+    tag: "0.7.0"
   schedule: "*/5 * * * *"
   resources:
     requests:
@@ -47,7 +47,7 @@ sync:
 marp:
   image:
     repository: registry.internal/synctx/marp
-    tag: "0.6.0"
+    tag: "0.7.0"
   replicaCount: 2
 
 slides:
@@ -68,7 +68,7 @@ feedback:
   enabled: true
   image:
     repository: registry.internal/synctx/feedback
-    tag: "0.6.0"
+    tag: "0.7.0"
   secrets:
     existingSecret: "synctx-feedback-secrets"
 

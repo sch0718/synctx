@@ -42,7 +42,7 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 
 - **단방향 동기화**: Git이 source of truth, XWiki/OpenProject는 파생 데이터
 - **폐쇄망 독립**: 모든 외부 의존성 vendoring, 런타임에 외부 네트워크 접근 없음
-- **이미지 태그**: SemVer `"0.6.0-<git-sha>"` 형식, `latest` 태그 사용 금지
+- **이미지 태그**: SemVer `"0.7.0-<git-sha>"` 형식, `latest` 태그 사용 금지
 - **Outbound Feedback**: Phase 7 선택 기능, 양방향 동기화가 아니라 서명된 메일 이벤트 반출 + 외부 PR 생성
 
 ## 서비스 목록 (6+1+1)
@@ -106,7 +106,9 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 - **빌드/배포**: 직접 `docker build`/`kubectl` 명령 사용 금지 — 반드시 `scripts/local/` 스크립트 사용
 - **스크립트 오류 시**: 스크립트를 우회하지 말고, 원인을 파악하여 스크립트 자체를 수정
 - **네임스페이스**: `synctx` (scripts에 정의됨, `default` 네임스페이스 사용 금지)
-- **Viewer만 로컬 실행**: `scripts/local/run-viewer.sh`(Docker·minikube 없이 `/view`·`/marp`·`/cdn`을 한 프로세스로, http://127.0.0.1:18000/view/). 설정은 values-local.yaml에서 만들어 `~/.cache/synctx/`에 둔다
+- **minikube 프로필**: `MINIKUBE_PROFILE=synctx`처럼 전용 클러스터를 쓸 수 있다. 스크립트가 minikube·kubectl·helm을 그 프로필로 고정한다(터널은 `minikube tunnel -p <프로필>`)
+- **Viewer만 로컬 실행**: `./run.sh --repo <Git 주소>`(문서·회의 Viewer만, `uv`, 번들 자산, http://127.0.0.1:18000/view/). Marp 미리보기까지는 `scripts/local/run-viewer.sh`(Docker·minikube 없이 `/view`·`/marp`·`/cdn`을 한 프로세스로). 설정은 values-local.yaml에서 만들어 `~/.cache/synctx/`에 둔다
+- **단일 Viewer 컨테이너**: `./run.sh --docker`(= `scripts/docker/run-viewer.sh`)로 띄운다. 직접 `docker run` 금지 — 태그·토큰·렌더 키 전달을 스크립트가 맞춘다
 - **Docker Compose 배포**: `scripts/docker/deploy.sh`(옵션 파일 `deploy/docker/synctx.env`), 중지 `scripts/docker/down.sh`, 운영 명령 `scripts/docker/compose.sh -- <명령>`. 직접 `docker compose up` 금지 — 게이트웨이 설정과 설정 해시를 deploy.sh가 만든다
 
 ## 구현 주의사항

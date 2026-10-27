@@ -19,7 +19,7 @@ synctx Docker 이미지 빌드 + minikube 로드
 옵션:
   --only <targets>   빌드할 대상만 지정 (쉼표 구분)
   --skip <targets>   빌드에서 제외할 대상 (쉼표 구분)
-  --tag <tag>        이미지 태그 (기본 latest. Docker 배포 확인에는 0.6.0-<git-sha>)
+  --tag <tag>        이미지 태그 (기본 latest. Docker 배포 확인에는 0.7.0-<git-sha>)
   --no-load          minikube에 올리지 않고 호스트 Docker에만 빌드
   -h, --help         도움말
 

@@ -147,8 +147,8 @@ flowchart TB
 ```bash
 cp deploy/docker/synctx.env.example deploy/docker/synctx.env
 cp deploy/docker/secrets.env.example deploy/docker/secrets.env
-# synctx.env: SYNCTX_SERVICES, SYNCTX_IMAGE_TAG(0.6.0-<git-sha>), SYNCTX_SLIDES_REPO_URL 수정
-# secrets.env: GIT_READ_TOKEN, GIT_PUBLISH_TOKEN 입력
+# synctx.env: SYNCTX_SERVICES, SYNCTX_IMAGE_TAG(0.7.0-<git-sha>), SYNCTX_SLIDES_REPO_URL 수정
+# secrets.env: GIT_READ_TOKEN, GIT_PUBLISH_TOKEN(출판 전용) 입력, 렌더 보기를 쓰면 SYNCTX_RENDER_SECRET
 # SYNCTX_CONFIG_FILE이 가리키는 .synctx.yaml 준비 (인증 프록시가 없으면 authz.enabled: false)
 
 scripts/docker/deploy.sh --check   # 옵션 검사와 게이트웨이 설정 미리 보기(배포하지 않음)
@@ -166,12 +166,12 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 ./run.sh --repo https://git.example/team/docs.git
 ./run.sh --repo https://git.example/team/docs.git --repo https://git.example/team/meetings.git --ref main
 ./run.sh --docker --build --repo https://git.example/team/docs.git
-./run.sh --docker --image synctx/viewer:0.6.0-abcdef0 --repo https://git.example/team/docs.git
+./run.sh --docker --image synctx/viewer:0.7.0-abcdef0 --repo https://git.example/team/docs.git
 ```
 
-접속 주소는 http://127.0.0.1:18000/view/ 이다. `--docker`는 첫 번째 인자에 둔다. Docker는 Viewer 컨테이너 하나만 실행하며 `--build`일 때만 기존 빌드 스크립트를 호출한다. 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.6.0-<git-sha>`이고(`DOCKER_REGISTRY` 없이는 로컬 이미지만 쓰고 Docker Hub에서 받지 않는다), `--image`도 SemVer-SHA 태그를 요구한다(`latest` 불가). `--build`와 `--image`는 함께 쓰지 않는다.
+접속 주소는 http://127.0.0.1:18000/view/ 이다. `--docker`는 첫 번째 인자에 둔다. Docker는 Viewer 컨테이너 하나만 실행하며 `--build`일 때만 기존 빌드 스크립트를 호출한다. 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.7.0-<git-sha>`이고(`DOCKER_REGISTRY` 없이는 로컬 이미지만 쓰고 Docker Hub에서 받지 않는다), `--image`도 SemVer-SHA 태그를 요구한다(`latest` 불가). `--build`와 `--image`는 함께 쓰지 않는다.
 
-`--repo`는 반복할 수 있고, 기존 설정은 `--config ./my.synctx.yaml`로 대신 지정한다. `--repo` 프로필은 회의 모드를 켜고 로컬 열람용으로 인증을 끈다. `--config`는 명시한 인증·협업 정책을 유지한다. Git 토큰은 `GIT_READ_TOKEN` 환경변수로 주며 URL이나 YAML에 값을 넣지 않는다. Docker는 토큰을 변수 이름으로 전달하고, 사용자 정의 `credential_env`는 `--env MY_GIT_TOKEN`으로 전달한다.
+`--repo`는 반복할 수 있고, 기존 설정은 `--config ./my.synctx.yaml`로 대신 지정한다. `--repo` 프로필은 회의 모드를 켜고 로컬 열람용으로 인증을 끈다. `--config`는 명시한 인증·협업 정책을 유지한다. Git 토큰은 `GIT_READ_TOKEN` 환경변수로 주며 URL이나 YAML에 값을 넣지 않는다. Docker는 토큰을 변수 이름으로 전달하고, 사용자 정의 `credential_env`는 `--env MY_GIT_TOKEN`으로 전달한다. HTML 렌더 보기는 `--config`에서 `html_embed.enabled`·`render_files`를 켠 저장소만 쓸 수 있고(`--repo` 프로필은 켜지 않는다), `SYNCTX_RENDER_SECRET`을 주지 않으면 실행마다 무작위 키를 쓰므로 다시 시작하면 원래 화면을 새로 고쳐야 한다.
 
 Viewer는 기존 `static/vendor/`의 Mermaid·highlight.js를 직접 제공한다(`viewer.asset_source: bundled`, 기본 배포는 `cdn`). Marp를 로드하지 않으며 PDF·Marp 출판은 제공하지 않는다. 일반 HTML 다운로드는 기본 렌더 HTML이고, 회의 모드의 메모 포함 HTML 내보내기는 vendor와 브라우저 메모를 포함한 자체 완결형 사본이다. 회의 플랫폼은 본문의 일반 HTTPS Markdown 링크로 연다. `synctx.meeting.channel`을 포함한 기존 필수 메타데이터와 브라우저별 로컬 메모 저장 방식은 그대로다.
 
@@ -201,7 +201,8 @@ Docker 캐시는 기본 이름 `synctx-viewer-cache`인 볼륨에 남으며 Ctrl
 - **회의 모드** — 회의 문서(`synctx.type: meeting`)에서 메모·형광펜·회의 정리(결정·액션 아이템), `.md`·메모 포함 HTML(읽기 전용) 내보내기와 가져오기. 메모는 브라우저(localStorage)에만 저장 (Phase 8.1a)
 - **회의 정보 카드·발표 화면** — 회의 문서 머리의 일시·진행 상태·안건 카드, `?mode=present` 발표 화면, 회의 모드 첫 사용 안내
 - **근거 미리보기·근거 모음** — 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선으로 미리 보고, 문서 끝 근거 모음에서 발췌·인용한 곳·원문 열기로 확인. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리키며, 메모 포함 HTML에서도 동작 (Phase 8.1b)
-- **인터랙티브 HTML 임베드** — Markdown의 ` ```synctx-html ` 블록이 가리키는 저장소 HTML 묶음(모션 그래픽 등)을 한 파일로 합쳐 sandbox iframe으로 재생. 운영자가 지정한 신뢰 저장소에서만 동작 (Phase 9)
+- **인터랙티브 HTML 임베드** — Markdown의 ` ```synctx-html ` 블록이 가리키는 저장소 HTML 묶음(모션 그래픽 등)을 한 파일로 합쳐 sandbox iframe으로 재생. 운영자가 지정한 신뢰 저장소에서만 동작하며, Viewer 화면에서는 `크게 보기`로 iframe을 다시 읽지 않고 키운다 (Phase 9)
+- **HTML 렌더 보기** — `html_embed.enabled`·`render_files`가 모두 켜진 저장소의 `.html`을 `?mode=render`(새 탭은 `layout=full`)로 실행. 화면이 서명 토큰 경로(`/render/{token}/…`, ref·커밋 SHA 고정, 기본 4시간)로 sandbox iframe을 열어 문서 안 상대 링크도 같은 스냅샷으로 연다. 화면 맞춤·비율·전체 화면 지원. 복수 인스턴스는 `SYNCTX_RENDER_SECRET` 공유 필수 (Phase 9)
 
 ## CDN Service (내부 CDN)
 
@@ -229,7 +230,7 @@ Docker 캐시는 기본 이름 `synctx-viewer-cache`인 볼륨에 남으며 Ctrl
 ### 주요 기능
 
 - **PDF 변환 + 다운로드** — Marp CLI로 마크다운 → 슬라이드 PDF 생성, 브라우저에서 다운로드
-- **프레젠테이션 HTML 출판** — 마크다운 → 자체 완결형 슬라이드 HTML 생성 → Git 저장소의 지정 경로에 커밋 → Slides Server에서 바로 열람
+- **프레젠테이션 HTML 출판** — 마크다운 → 자체 완결형 슬라이드 HTML 생성 → Git 저장소의 지정 경로에 커밋 → Slides Server에서 바로 열람. push는 `marp.publish_auth` 또는 출판 전용 `GIT_PUBLISH_TOKEN`으로 인증하고, 둘 다 없으면 첫 저장소의 읽기 인증으로 대신하며 경고 로그를 남긴다
 - **Marp 테마 지원** — 기본 테마(default, gaia, uncover). CDN CSS 커스텀 테마는 아직 구현되지 않음
 - **실시간 미리보기** — 변환 전 슬라이드 미리보기
 
@@ -399,7 +400,8 @@ synctx/
 │   │   ├── src/
 │   │   │   └── app.py                 # FastAPI 서버 (변환/출판/미리보기)
 │   │   └── tests/
-│   │       └── test_marp_api.py       # API 통합 테스트
+│   │       ├── test_marp_api.py       # API 통합 테스트
+│   │       └── test_publish_auth.py   # 출판 인증 선택 순서
 │   │
 │   ├── sync/                          # Sync Engine
 │   │   ├── Dockerfile                 # multi-stage (node + python)
@@ -442,6 +444,7 @@ synctx/
 │   │       ├── test_signer.py
 │   │       ├── test_redactor.py
 │   │       ├── test_event_store.py
+│   │       ├── test_exporter_query.py # OpenProject 변경 조회 필터·페이지 처리
 │   │       └── test_feedback_metrics.py
 │   │
 │   └── slides/                        # Slides Server (Nginx). Draw.io는 외부 이미지라 디렉터리가 없다
@@ -459,6 +462,8 @@ synctx/
 │       │   ├── test_auth.py
 │       │   ├── test_config_collab.py
 │       │   ├── test_config_html_embed.py
+│       │   ├── test_config_marp.py
+│       │   ├── test_config_outbound_feedback.py
 │       │   ├── test_cumulative_metrics.py
 │       │   ├── test_frontmatter.py
 │       │   ├── test_git_manager.py
@@ -466,7 +471,8 @@ synctx/
 │       │   ├── test_html_bundle.py
 │       │   ├── test_html_bundle_blocks.py
 │       │   ├── test_logging.py
-│       │   └── test_observability.py
+│       │   ├── test_observability.py
+│       │   └── test_render_token.py
 │       └── src/synctx_common/
 │           ├── config.py              # 공통 설정 스키마 (Pydantic)
 │           ├── git_manager.py         # 공통 Git 모듈
@@ -475,6 +481,7 @@ synctx/
 │           ├── observability.py       # healthz/readyz/version/metrics
 │           ├── logging.py             # 구조화 JSON 로그 (인증정보 가림)
 │           ├── html_bundle.py         # synctx-html 블록: HTML 묶음 합본 + sandbox iframe
+│           ├── render_token.py        # HTML 렌더 보기 서명 토큰 발급·검증·키 읽기
 │           ├── metrics_push.py        # CronJob 메트릭 실행 간 누적 + Pushgateway push (Sync·Feedback 공용)
 │           ├── harness.py             # Harness Validator 로직
 │           └── cli.py                 # CLI 엔트리포인트
@@ -499,6 +506,7 @@ synctx/
 │           ├── git-secret.yaml        # Git 읽기·출판 토큰
 │           ├── ingress.yaml
 │           ├── viewer-deployment.yaml
+│           ├── viewer-render-secret.yaml # 렌더 토큰 키 Secret (viewer.renderTokenSecret.create)
 │           ├── cdn-deployment.yaml
 │           ├── cdn-pvc.yaml
 │           ├── marp-deployment.yaml
@@ -561,6 +569,7 @@ synctx/
         ├── test_docker_deploy.py      # Docker 배포 검사·게이트웨이 설정
         ├── test_run_viewer_docker.py  # 단일 Viewer 실행 인자·볼륨·토큰·빌드 위임
         ├── test_run_lite.py           # run.sh·소스 실행 인자 전달
+        ├── test_local_scripts.py      # scripts/local·values-local·test-all.sh 정합성
         ├── test_seed_cdn.py
         ├── test_run_viewer.py
         ├── test_motion.py             # 생성한 그림·도움말이 최신인지, 링크가 살아 있는지
@@ -624,7 +633,7 @@ workspace/
 | [도움말](help/README.md) | Viewer 메뉴별 사용법과 움직이는 그림 |
 | [아키텍처 설계](architecture.md) | 마이크로서비스 설계, Marp, CDN, Helm Chart, 설정 체계 |
 | [운영 서비스 설계](production-service-design.md) | 실제 서비스 운영을 위한 보안, 상태 관리, 배포, 체크리스트 |
-| [로컬 개발 환경](local-development.md) | Viewer 단독 실행(`run-viewer.sh`)과 minikube 로컬 환경 |
+| [로컬 개발 환경](local-development.md) | 경량 Viewer(`./run.sh`)·Marp 포함 로컬 실행(`run-viewer.sh`)과 minikube 로컬 환경 |
 | [인터랙티브 HTML 임베드 설계](html-embed-design.md) | Phase 9 `synctx-html` 블록 설계 기록 |
 | [Viewer Index Page 설계](viewer-index-design.md) | 저장소 목록·파일 트리 화면 초기 설계 기록 (현행 화면은 아키텍처 설계 3.6) |
 | [재활용 자산 목록](reusable-assets.md) | 기존 저장소에서 가져올 코드와 활용 방안 |

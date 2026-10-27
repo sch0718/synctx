@@ -30,7 +30,7 @@ import meeting_card
 import search as search_mod
 import viewer_ui as ui
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 configure_logging(service_name="viewer")
 VIEW_PREFIX = "/view"
 

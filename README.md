@@ -8,7 +8,7 @@
 </p>
 
 <p align="center"><b>sync + context — 외부에서 AI와 쓴 문서를 폐쇄망 안에서 읽고, 회의하고, 동기화합니다</b><br>
-현재 버전 <b>0.6.0</b> · <a href="https://github.com/sch0718/synctx/releases">릴리스</a> · 외부 CDN·인터넷 없이 사내 브라우저에서</p>
+현재 버전 <b>0.7.0</b> · <a href="https://github.com/sch0718/synctx/releases">릴리스</a> · 외부 CDN·인터넷 없이 사내 브라우저에서</p>
 
 금융권 폐쇄망의 현업 팀은 외부망에 접근할 수 없어서, 외부에서 AI 도구(Claude Code·Codex·Cursor)로 만든 요건 문서·회의 자료·이슈를 바로 쓰기 어렵습니다. synctx는 이미 자동화된 **외부 → 내부 Git 동기화** 경로를 그대로 써서, Git에 올린 Markdown을 폐쇄망 안에서 웹으로 읽고, 회의와 발표에 쓰고, 팀이 쓰는 XWiki·OpenProject에 맞춰 넣습니다. Git이 원본이고 내부 도구의 내용은 거기서 만든 파생 데이터입니다.
 
@@ -21,6 +21,7 @@
 | 🗒️ **회의** | 회의 문서에 메모·형광펜을 달고, 결정·액션 아이템을 모아 `.md`나 메모 포함 HTML로 내보냅니다. |
 | 🎤 **발표** | 회의 문서를 제목마다 한 장씩 넘기는 발표 화면으로 바로 띄웁니다. |
 | 📎 **근거 확인** | 회의 문서가 인용한 규정·설계 문서의 조문을 말풍선과 문서 끝 근거 모음에서 확인합니다. |
+| 🧩 **인터랙티브 HTML** | 운영자가 허용한 저장소의 HTML 묶음(모션 그래픽 등)을 문서 안에서 재생하고 `크게 보기`로 키웁니다. `.html` 파일은 `렌더링`으로 실행해 보고, 문서 안 링크도 같은 커밋으로 엽니다. |
 | 🖼️ **슬라이드** | `marp: true` 문서를 슬라이드로 미리 보고, PDF로 받거나 팀 슬라이드 저장소에 출판합니다. |
 | 🔄 **내부 도구 동기화** | Front Matter의 `type`·`route`에 따라 문서는 XWiki로, 작업은 OpenProject로 자동 동기화합니다. |
 | ✏️ **다이어그램** | 폐쇄망 안에 셀프호스팅한 Draw.io(`/drawio/`)에서 그림을 그리고 `.drawio` 파일로 저장해 Git에 올립니다. |
@@ -30,7 +31,7 @@
 
 1. **읽기** — 사내 브라우저로 운영자가 알려 준 synctx 주소의 `/view/`를 엽니다. 등록된 저장소가 카드로 보입니다.
 2. **쓰기** — 외부망에서 문서를 Markdown으로 쓰고 GitHub에 올립니다. 내부 GitLab 미러로 반입되면 Viewer에 나타납니다. 회의 문서는 Front Matter에 `synctx.type: meeting`과 `synctx.meeting`(id·title·starts_at·channel)을 적습니다.
-3. **혼자 써 보기** — 이 저장소를 받아 `./run.sh --repo <Git 주소>`를 실행하면 문서·회의 Viewer만 http://127.0.0.1:18000/view/ 에 뜹니다(`uv`·Git 필요). `./run.sh --docker --build --repo <Git 주소>`는 Viewer 컨테이너 하나로 띄웁니다. Marp 미리보기까지 보려면 `scripts/local/run-viewer.sh`를 씁니다. 자세한 내용은 [개발 문서](docs/development.md)의 「Markdown·회의 Viewer 빠른 시작」와 [로컬 개발 환경](docs/local-development.md)에 있습니다.
+3. **혼자 써 보기** — 이 저장소를 받아 `./run.sh --repo <Git 주소>`를 실행하면 문서·회의 Viewer만 http://127.0.0.1:18000/view/ 에 뜹니다(`uv`·Git 필요). `./run.sh --docker --build --repo <Git 주소>`는 Viewer 컨테이너 하나로 띄웁니다. Marp 미리보기까지 보려면 `scripts/local/run-viewer.sh`를 씁니다. 자세한 내용은 [개발 문서](docs/development.md)의 「Markdown·회의 Viewer 빠른 시작」과 [로컬 개발 환경](docs/local-development.md)에 있습니다.
 
 ## 간단한 사용법
 
@@ -69,6 +70,7 @@
 
 | 버전 | 날짜 | 주요 변경 |
 |------|------|-----------|
+| [0.7.0](https://github.com/sch0718/synctx/releases/tag/v0.7.0) | 2026-10-28 | **경량 Viewer와 HTML 렌더 보기.** `./run.sh` 한 줄 실행과 단일 컨테이너(`--docker`)로 문서·회의용 Viewer 띄우기, 신뢰 저장소의 HTML을 `mode=render`로 실행해 보고 문서 안 링크를 같은 커밋으로 여는 렌더 보기(`/render` 서명 토큰), 화면 맞춤·전체 화면·`synctx-html` 블록 크게 보기, README를 서비스 소개로 바꾸고 메뉴별 도움말 추가, Feedback이 OpenProject 변경을 실제로 반출하도록 수정, Marp 출판에 출판 전용 토큰 사용 |
 | [0.6.0](https://github.com/sch0718/synctx/releases/tag/v0.6.0) | 2026-10-22 | **Phase 8.1b 회의 근거와 CronJob 메트릭.** 회의 문서의 근거 링크에 원문 발췌 말풍선과 근거 모음(`synctx.meeting.references`), Sync·Feedback CronJob 메트릭을 Pushgateway로 수집해 Alert를 실제로 평가, Helm 의존성 규칙 D8(메트릭을 켰는데 sync-state PVC가 없으면 렌더 실패), Markdown 인라인 렌더 선형화, 문서 전체를 코드와 맞춤 |
 | [0.5.0](https://github.com/sch0718/synctx/releases/tag/v0.5.0) | 2026-10-22 | **Viewer UX 개편.** 상단 바·서랍·3단 문서 화면의 공통 틀, 파일 찾기·최근 문서, 저장소 본문 검색(`git grep`), `run-viewer.sh`로 Docker 없이 Viewer 실행, 회의 정보 카드·발표 화면·첫 사용 안내, Git 토큰이 오류 응답에 새지 않게 수정 |
 | [0.4.0](https://github.com/sch0718/synctx/releases/tag/v0.4.0) | 2026-10-16 | **Phase 9 인터랙티브 HTML 임베드와 배포 옵션.** `synctx-html` 블록을 한 파일로 합쳐 Viewer sandbox iframe과 XWiki html 매크로로 보여 줌, 서비스별 배포 옵션·Docker Compose 배포, 문서 파일 트리, Sync lease 강화, Python 3.13 |

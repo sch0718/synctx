@@ -1,6 +1,6 @@
 # 인터랙티브 HTML 임베드 설계
 
-> 상태: `synctx-html` 블록은 Phase 9로 구현됐다(PR #27 이후 보강 포함). HTML 렌더 보기(`mode=render`, 14장)와 크게 보기 오버레이는 PR #63에서 구현했다(WP1~WP4). 운영 SSO 중첩 요청 시험(C1)과 Chromium 외 브라우저 확인은 남아 있다. 이 문서는 설계 기록이며, 현행 구조 요약은 `docs/architecture.md` Phase 9, 설정·보안·운영 절차는 `docs/production-service-design.md`에 있다. 아래 `지금`·`기존`은 구현 전을 기준으로 쓴 표현이다.
+> 상태: `synctx-html` 블록은 Phase 9로 구현됐다(PR #27 이후 보강 포함). HTML 렌더 보기(`mode=render`, 14장)와 크게 보기 오버레이는 PR #63에서 구현했다(WP1~WP4). 운영 SSO 중첩 요청 시험(C1)과 Chromium 외 브라우저 확인은 남아 있다. 이 문서는 설계 기록이며, 현행 구조 요약은 `docs/architecture.md` Phase 9, 설정·보안·운영 절차는 `docs/production-service-design.md`에 있다. 아래 `지금`·`기존`·`(신규 설계)`는 구현 전을 기준으로 쓴 표현이다.
 
 ## 1. 개요
 
@@ -324,7 +324,7 @@ repositories:
   - 포트가 443이면 빼서 저장한다. 그래서 정적 검사와 CSP가 같은 문자열을 쓴다.
 - 저장소의 `allowed_origins`는 정규화한 뒤 최상위 `allowed_origins`에 모두 들어 있어야 한다.
 
-현행 공통 설정 검사는 최상위 `targets.xwiki`가 있고 저장소가 `enabled`이면 전용 `xwiki_credential_env`를 요구한다(`config.py:281-292`). 저장소의 실제 게시 대상은 검사하지 않아 Viewer 전용 저장소도 이 요건에 걸린다. 완화는 결정 필요다. 실제 XWiki 게시 대상인 저장소에만 요구하면 대상 판정·라우팅 변경 시 검증이 필요하고, Viewer용 설정 모델·검사를 분리하면 서비스 간 설정 계약 관리가 늘어난다. 이 설계에서 검사를 완화한 것으로 간주하지 않는다.
+현행 공통 설정 검사는 최상위 `targets.xwiki`가 있고 저장소가 `enabled`이면 전용 `xwiki_credential_env`를 요구한다(`config.py`의 `SynctxConfig._check_html_embed_origins`). 저장소의 실제 게시 대상은 검사하지 않아 Viewer 전용 저장소도 이 요건에 걸린다. 완화는 결정 필요다. 실제 XWiki 게시 대상인 저장소에만 요구하면 대상 판정·라우팅 변경 시 검증이 필요하고, Viewer용 설정 모델·검사를 분리하면 서비스 간 설정 계약 관리가 늘어난다. 이 설계에서 검사를 완화한 것으로 간주하지 않는다.
 
 ### 8.2 XWiki 권한
 
@@ -635,7 +635,7 @@ Chromium spike는 설계 근거이며 구현 후 수용 시험은 별도로 수�
 | 항목 | 상태·대응 |
 |---|---|
 | Edge·Firefox·Safari | 동작 미확인. Chromium spike 결과를 다른 브라우저로 일반화하지 않는다 |
-| `frame-src`의 `/render/` 접두사 제한 | 결정 필요. `config.runtime.public_base_url`(`app.py:158`)로 만든 `https://host/view/render/` 경로 소스를 검토한다. sandbox 문서에서의 경로 매칭은 미확인이며 14.12 운영 시험과 함께 확인한다. 현재 안의 `'self'`는 같은 출처 전체 범위다 |
+| `frame-src`의 `/render/` 접두사 제한 | 결정 필요. `config.runtime.public_base_url`(`app.py`의 `_render_download_html`·`_prepare_pdf_markdown`이 쓰는 값)로 만든 `https://host/view/render/` 경로 소스를 검토한다. sandbox 문서에서의 경로 매칭은 미확인이며 14.12 운영 시험과 함께 확인한다. 현재 안의 `'self'`는 같은 출처 전체 범위다 |
 | 운영 SSO 쿠키·중첩 요청 | 운영 전제이며 구현 전 시험 필요. `null` 조상 때문에 cross-site가 되어 Lax/Strict 쿠키가 빠지고 로그인으로 리다이렉트될 수 있다. 대안은 14.12에서 결정 필요로 남긴다 |
 | Viewer 전용 저장소의 XWiki 계정 요건 | 현행 공통 validator의 요건이 그대로 적용된다. 실제 게시 대상에 한정하거나 Viewer 검사를 분리할지는 8.1의 결정 필요 항목이다 |
 | 구형 브라우저의 `Sec-Fetch-Dest` 부재 | 403으로 차단하는 결정. 호환성을 위해 검사를 생략하지 않는다 |
