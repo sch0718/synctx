@@ -19,18 +19,22 @@ scripts/
 │   ├── test_external_importer.py
 │   ├── test_helm_options.py   # Helm 서비스 옵션 렌더
 │   ├── test_docker_deploy.py  # Docker 배포 검사·게이트웨이 설정
+│   ├── test_run_viewer_docker.py # 단일 Viewer: 포트·볼륨·Secret·빌드 위임
+│   ├── test_run_lite.py        # run.sh·소스 실행 인자 전달
 │   ├── test_seed_cdn.py       # CDN 채우기
 │   ├── test_run_viewer.py     # run-viewer.sh의 로컬 설정 생성·묶음 앱
 │   ├── test_motion.py         # 생성한 그림·도움말이 최신인지, SVG·문서 링크 검사
 │   ├── test_prometheus_rules.py  # 렌더한 PrometheusRule을 promtool로 평가
 │   └── prometheus/            # Sync·Feedback Alert 평가 케이스 (*.test.yaml)
-├── docker/                    # Docker Compose 배포 (K8s 없는 서버)
+├── docker/                    # 단일 Viewer·Docker Compose 배포 (K8s 없는 서버)
+│   ├── run-viewer.sh          # run.sh --docker: 단일 Viewer·기존 스크립트로 빌드 위임
 │   ├── deploy.sh              # 검사 → 게이트웨이 설정 → compose up → CDN 채우기
 │   ├── down.sh                # 중지 (--volumes일 때만 볼륨 삭제)
 │   ├── compose.sh             # 같은 compose 인자로 docker compose 명령 실행
 │   ├── seed_cdn.py            # cdn 컨테이너 안에서 vendor 파일 업로드
 │   └── _common.sh             # 공통 함수
 └── local/                     # 로컬 minikube 개발 환경
+    ├── run-lite.sh            # run.sh: uv workspace로 Markdown·회의 Viewer만 실행
     ├── run-viewer.sh          # Docker·minikube 없이 Viewer+Marp+CDN 파일을 한 프로세스로 실행
     ├── run_viewer.py          # run-viewer.sh가 실행하는 묶음 앱(/view, /marp, /cdn)
     ├── setup.sh               # 전체 설치 (one-shot)
@@ -148,6 +152,25 @@ python3 scripts/build_motion.py
 - 그림은 GitHub가 `<img>`로 보여 주므로 스크립트·외부 글꼴 없이 CSS 애니메이션만 쓰고, 동작 줄이기 설정이면 첫 장면에 멈춘다.
 - `tests/test_motion.py`가 커밋된 파일이 생성 결과와 같은지, SVG가 외부 자원 없이 40KB 이하인지, README·도움말·개발 문서의 상대 링크가 살아 있는지 확인한다.
 
+## 경량 Markdown·회의 Viewer (루트 run.sh)
+
+```bash
+./run.sh --repo https://git.example/team/docs.git
+./run.sh --docker --build --repo https://git.example/team/docs.git
+./run.sh --docker --image synctx/viewer:0.6.0-abcdef0 --config "./my configs/viewer.yaml"
+./run.sh --docker --repo https://git.example/team/docs.git --port 18100 --volume docs-cache
+```
+
+루트 `run.sh`는 첫 인자가 `--docker`면 `docker/run-viewer.sh`, 그 밖에는 `local/run-lite.sh`를 호출한다. 두 방식 모두 기존 `services/viewer/src/standalone.py`의 Markdown·회의 Viewer를 실행한다. 소스 실행은 체크아웃·uv·Git·Python 3.13 이상, Docker 실행은 Bash·Docker Engine과 standalone 코드가 들어 있는 Viewer 이미지가 필요하다. 준비된 `--image` 실행은 호스트 uv·Python·Git 없이 가능하다.
+
+- 기본 접속은 http://127.0.0.1:18000/view/ 이다. Docker는 `--bind`·`--port`로 호스트 공개 주소, `--name`으로 컨테이너 이름, `--volume`으로 이름 있는 캐시 볼륨을 바꾼다. 기본값은 `127.0.0.1`, `18000`, `synctx-viewer`, `synctx-viewer-cache`다. 컨테이너 내부는 `0.0.0.0:8000`, 캐시는 `/data/viewer` 고정이다. Ctrl-C로 종료하면 컨테이너만 지워지고 캐시는 남는다.
+- 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.6.0-<git-sha>`. `--build`는 `local/steps/build.sh --only viewer --no-load --tag <태그>`만 호출한다. `--image`와 함께 쓸 수 없고 SemVer-SHA 태그만 허용한다(`latest` 불가). 빌드·실행은 같은 레지스트리 접두사를 쓴다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓰고, 없으면 실행 전에 `--build`·`--image`를 안내한다.
+- `--repo` 반복 또는 `--config` 중 하나를 지정한다. 상대 경로는 호출 디렉터리 기준이다. 명시적 로컬 저장소는 실제 경로로 정규화해 읽기 전용 마운트하며 상위 디렉터리는 노출하지 않는다. `file:///path/to/repo`·`file://localhost/path/to/repo`도 URL 이스케이프를 해석해 실제 디렉터리로 바꾼다. 다른 file URL 호스트와 `.git`이 파일인 linked worktree·submodule은 실행 전에 거부하므로 원격 Git URL을 대신 사용한다. Git 관리 디렉터리를 추가로 노출하지 않는다. 설정 파일도 읽기 전용이며, Docker 설정 파일의 저장소는 컨테이너에서 접근 가능한 URL을 쓴다. `--ref`·`--public-base-url`·`--refresh-interval`은 앱으로 전달한다. `--ref`는 `--repo` 전용이라 `--config`와 함께 주면 실행 전에 거부한다.
+- Docker는 `GIT_READ_TOKEN`·`SYNCTX_SERVICE_TOKEN`을 변수 이름으로 전달하며 추가 credential은 `--env MY_GIT_TOKEN`으로 전달한다. 값을 인자·YAML에 넣지 않는다. `--repo`는 로컬 열람용 인증 해제·회의 활성화 프로필을 만들고, `--config`의 명시적 authz·collab은 보존한다. 외부 공개는 인증 프록시·접근 제한과 실제 공개 URL을 먼저 구성한다.
+- 경량 모드는 기존 vendor 자산을 `bundled`로 직접 제공하고 Marp·외부 CDN·Compose·게이트웨이를 띄우지 않는다. 회의 입장은 일반 HTTPS Markdown 링크, 메모는 브라우저 localStorage 그대로다. 일반 HTML 다운로드는 기본 렌더 HTML이며 회의 내보내기가 vendor·로컬 메모를 포함한 자체 완결형 사본이다. 기존 `meeting.channel` 필수 조건도 유지한다.
+
+전체 인자·공개 URL 우선순위·캐시·빌드와 실제 환경 검증 범위는 `docs/local-development.md` 0.1과 `docs/production-service-design.md` 8.7을 따른다. fake Docker 테스트는 실제 daemon·이미지 빌드·네트워크 인증을 대신하지 않는다.
+
 ## Docker Compose 배포 (docker/)
 
 K8s 클러스터가 없는 Docker 서버에 synctx를 배포한다. 옵션 파일 `deploy/docker/synctx.env`(`synctx.env.example`을 복사)의 `SYNCTX_SERVICES`로 켤 서비스(`viewer, cdn, marp, slides, drawio`)를 고른다. Sync·Feedback은 아직 지원하지 않는다. 옵션과 절차는 `docs/production-service-design.md` 8.6, Runbook은 12.7을 따른다.
@@ -189,7 +212,7 @@ K8s 클러스터가 없는 Docker 서버에 synctx를 배포한다. 옵션 파�
 
 minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.local`을 사용한다.
 
-### run-viewer.sh — Viewer만 가볍게 실행
+### run-viewer.sh — Marp를 포함한 로컬 실행
 
 ```bash
 ./scripts/local/run-viewer.sh                    # http://127.0.0.1:18000/view/
@@ -198,7 +221,7 @@ minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.loc
 ./scripts/local/run-viewer.sh --values my-values.yaml --cache-dir /tmp/synctx-cache   # values 파일·캐시 위치 변경
 ```
 
-`uv`(Python 3.13 이상)로 실행하며, Docker·minikube 없이 uvicorn 하나로 `/view`(Viewer), `/marp`(Marp), `/cdn`(`cdn-data/`)을 띄운다. 설정은 `helm/synctx/values-local.yaml`의 `synctxConfig.data`에서 `~/.cache/synctx/synctx.local.yaml`을 만들어 쓰고, 토큰은 `GIT_READ_TOKEN` 또는 `values-local.secret.yaml`에서 실행 시점에만 읽는다. Marp에는 `marp`·`mmdc`(npm)와 Chrome이 필요하며, 없으면 Marp를 끈 채 실행한다. 자세한 내용은 [docs/local-development.md](../docs/local-development.md) 0절.
+`uv`(Python 3.13 이상)로 실행하며, Docker·minikube 없이 uvicorn 하나로 `/view`(Viewer), `/marp`(Marp), `/cdn`(`cdn-data/`)을 띄운다. 설정은 `helm/synctx/values-local.yaml`의 `synctxConfig.data`에서 `~/.cache/synctx/synctx.local.yaml`을 만들어 쓰고, 토큰은 `GIT_READ_TOKEN` 또는 `values-local.secret.yaml`에서 실행 시점에만 읽는다. Marp에는 `marp`·`mmdc`(npm)와 Chrome이 필요하며, 없으면 Marp를 끈 채 실행한다. 자세한 내용은 [docs/local-development.md](../docs/local-development.md) 0.2절.
 
 ### 사전 요구사항
 

@@ -378,6 +378,7 @@ targets:
       urgent: 10
 
 viewer:
+  asset_source: cdn                     # cdn(기본) | bundled(경량 실행에서 강제)
   repo_cache_path: "/data/repos"
   max_render_size_bytes: 5242880
   cdn_base_url: "https://synctx.internal/cdn"
@@ -1149,6 +1150,42 @@ scripts/docker/deploy.sh [--env-file 경로] [--secrets-file 경로] [--check]
 - D2 검사는 상대 경로만 잡는다. 절대 주소가 꺼진 자기 자신의 `/cdn`을 가리키는 경우는 알 수 없다.
 - K8s Ingress와 Viewer→Marp PDF 경로는 60초 제한이 남아 있다(기존 문제). Docker 게이트웨이만 Marp 경로를 180초로 둔다.
 
+### 8.7 경량 Markdown·회의 Viewer 배포
+
+기존 Viewer의 소스 실행·단일 컨테이너 실행 옵션이며 서비스 목록과 Phase 번호는 바꾸지 않는다. 설치 명령과 전체 인자는 local-development.md 0.1을 따른다.
+
+```bash
+# 저장소 체크아웃·uv·Git·Python 3.13 이상
+./run.sh --repo https://git.example/team/docs.git
+# Docker Engine. 기존 빌드 스크립트로 Viewer만 빌드
+./run.sh --docker --build --repo https://git.example/team/docs.git
+# 폐쇄망에 반입한 사전 빌드 Viewer 이미지
+./run.sh --docker --image registry.local:5000/synctx/viewer:0.6.0-abcdef0 --config ./viewer.yaml
+```
+
+| 항목 | 동작 |
+|------|------|
+| 실행·의존성 | `standalone.py`에서 기존 Viewer만 `/view`로 제공. 번들 vendor 사용, 외부 CDN·Marp·Compose·게이트웨이 불필요 |
+| 기본 이미지·빌드 | `${DOCKER_REGISTRY:-synctx}/viewer:0.6.0-<git-sha>`. `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag <태그>`에 위임. `--image`와 상호 배타적. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓰고, 없으면 실행 전에 `--build`·`--image`를 안내(Docker Hub에서 받지 않음). `DOCKER_REGISTRY`나 `--image`를 주면 Docker 기본 pull 정책 |
+| 반입 | 같은 커밋의 Viewer 이미지·루트 `run.sh`·`scripts/docker/run-viewer.sh`를 함께 준비. `--image`면 호스트 Python·uv·Git 없이 실행. SemVer-SHA 태그 필수, `latest` 거부 |
+| 포트·캐시 | 호스트 `127.0.0.1:18000`, 컨테이너 `0.0.0.0:8000`. 기본 named volume `synctx-viewer-cache:/data/viewer`. `--bind`·`--port`·`--name`·`--volume`으로 변경 |
+| 설정 | `--repo` 반복 또는 `--config`. 파일은 호출 위치 기준으로 해결하고 읽기 전용으로 마운트. 기존 설정의 명시적 authz·collab 정책 유지. `--ref`는 `--repo` 전용이며 `--config`와 함께 주면 거부(설정의 `default_ref` 사용) |
+| 자산 설정 | `viewer.asset_source` 기본 `cdn`; 경량 실행은 `bundled`로 바꾸고 `SYNCTX_ENABLED_SERVICES=viewer` 고정. 저장소 캐시와 생성 YAML은 캐시 볼륨 안에 둠 |
+| Git 갱신 | 시작 clone/fetch 뒤 기본 60초마다 async 갱신. `--refresh-interval 0`은 주기 갱신 끔 |
+| Secret | `GIT_READ_TOKEN`·`SYNCTX_SERVICE_TOKEN`을 Docker 환경변수 이름으로만 전달. 다른 `credential_env`는 `--env NAME`. 토큰 값을 URL·명령 인자·생성 YAML에 저장하지 않음 |
+| 공개 URL | `--public-base-url` → 명시적 `runtime.public_base_url` → `SYNCTX_VIEWER_PUBLIC_BASE_URL` → 로컬 주소. Docker는 환경변수가 비면 호스트 공개 주소를 전달 |
+
+`--repo` 생성 프로필은 로컬 열람용(`authz.enabled: false`, `collab.enabled: true`)이다. 기본 loopback에서 사용하고 외부 공개는 TLS·인증 프록시와 방화벽을 구성한 뒤 실제 공개 URL을 지정한다. 직접 보낸 권한 헤더가 신뢰되지 않도록 프록시만 Viewer에 접근하게 제한한다. `--config`는 인증을 자동으로 끄지 않으므로 authz가 켜진 설정에 프록시 헤더 없이 접근하면 403이 정상이다. Docker의 명시적 로컬 `--repo`만 실제 디렉터리에 읽기 전용으로 마운트하고 상위 디렉터리는 노출하지 않는다. 로컬 file URL은 빈 호스트 또는 `localhost`만 허용하고 URL 이스케이프(예: `%20`)를 해석한 실제 디렉터리를 마운트한다. 다른 호스트와 `.git`이 파일인 linked worktree·submodule은 Docker 실행 전에 거부하며 원격 Git URL을 안내한다. 외부 Git 관리 디렉터리를 자동 마운트하지 않는다. 컨테이너는 root로 돌고 바인드 마운트는 호스트 소유자 uid를 유지하므로(Linux), Git의 소유자 검사(dubious ownership)를 피하려고 마운트한 디렉터리마다 `GIT_CONFIG_*` 환경변수로 `safe.directory`를 등록한다. 실제 Linux Docker에서의 로컬 `--repo` clone은 아직 확인하지 않았다. 설정 파일의 저장소는 컨테이너에서 접근 가능한 Git URL을 쓴다.
+
+회의 `synctx.meeting`의 `id`·`title`·`starts_at`·`channel` 필수 조건은 유지한다. 영상 회의는 본문의 일반 HTTPS Markdown 링크로 입장한다. 메모·형광펜은 브라우저 localStorage에 남으며 서버 캐시 볼륨이나 다른 브라우저와 동기화하지 않는다. 일반 `download?format=html`은 기본 렌더 HTML이다. `meeting-export`는 브라우저가 현재 메모를 채워 저장하는 자체 완결형 HTML 틀이며 vendor·회의 UI를 포함한다. Marp PDF·출판은 제공하지 않는다.
+
+운영 절차:
+
+1. 이미지·Git 접근·환경변수를 준비한 뒤 포그라운드 실행 로그와 `/view/`에서 저장소 목록을 확인한다. 잘못된 설정·저장소 URL·인증 오류는 앱 로그에서 확인한다. 스크립트가 명시적 설정 정책을 덮어써서 오류를 숨기지 않는다.
+2. 기본 60초 갱신 뒤 원격 변경이 보이는지 확인한다. 갱신 실패 로그에는 저장소 ID와 예외 종류가 남으며 다음 주기에 재시도한다.
+3. Ctrl-C로 중지하면 `--rm`으로 컨테이너만 제거된다. 같은 `--volume`으로 재실행해 캐시를 재사용한다. 캐시 삭제 전에 필요한 내용을 백업하고 브라우저 메모는 별도로 내보낸다.
+4. 자동 테스트는 fake Docker의 명령 인자·readonly mount·이름만 전달하는 Secret·태그·빌드 위임을 검증한다. 실제 이미지 빌드와 대상 플랫폼, daemon·Git 서버·TLS·인증 프록시 연결은 해당 환경에서 확인한다. Markdown·회의 보기와 메모 포함 내보내기, 캐시 재사용, Ctrl-C 종료를 함께 확인한다.
+
 ## 9. 관측성과 운영
 
 ### 9.1 로그
@@ -1257,7 +1294,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
 | Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync·Feedback fake Pushgateway | Sync·Feedback Alert 발생·미발생 시점, 실행 간 누적값, 0 기준값, push 그룹 |
 | Viewer 화면·검색 | pytest(`viewer_ui`·`search`·`linear_inline` 단위, Viewer TestClient) + `node --test`(viewer-core.js) | 상단 바·서랍·오류 안내 화면 이스케이프, 본문 검색 기한·동시 실행 제한·상태, 파일 찾기·최근 문서, Markdown 인라인 렌더 결과가 python-markdown과 같음, 오류 `detail` 고정 문구·git 인증정보 가림 |
-| 배포 옵션 | pytest(`scripts/tests`: `helm template`, `deploy.sh`·`compose.sh`, `run-viewer.sh`, `seed_cdn.py`) | 서비스 옵션과 D1·D2·D8 렌더 실패, Pushgateway 배포 조건, 게이트웨이 설정·`nginx -t`·TLS·신뢰 프록시 검사, 로컬 Viewer 설정 생성, CDN 시드 |
+| 배포 옵션 | pytest(`scripts/tests`: `helm template`, `deploy.sh`·`compose.sh`, `run-viewer.sh`, `run-lite.sh`, `seed_cdn.py`) | 서비스 옵션과 D1·D2·D8 렌더 실패, Pushgateway 배포 조건, 게이트웨이 설정·`nginx -t`·TLS·신뢰 프록시 검사, 로컬 Viewer 설정 생성, 경량 소스·단일 컨테이너 인자·캐시·Secret·빌드 위임(fake Docker), CDN 시드 |
 
 ### 10.2 운영 전 수용 기준
 
@@ -1487,7 +1524,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 
 ### 배포 옵션 (Phase 번호와 별개): Docker 배포 체크리스트
 
-서비스 옵션과 Docker Compose 배포는 새 Phase가 아니다. Phase 번호 체계(1-9)는 그대로다.
+서비스 옵션, Docker Compose와 경량 Viewer 실행(8.7)은 새 Phase가 아니다. Phase 번호 체계(1-9)는 그대로다.
 
 - [ ] 옵션 검사: `scripts/docker/deploy.sh --check`가 통과하고 켜진 서비스가 의도와 같다
 - [ ] 이미지 반입: 켠 서비스의 이미지가 `registry.local:5000`에 있고 `SYNCTX_IMAGE_TAG`가 `0.6.0-<git-sha>` 형식이다(`latest` 아님)

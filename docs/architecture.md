@@ -245,7 +245,7 @@ reports/harness/
 
 ### 2.6 내부 CDN을 통한 라이브러리 서빙
 
-폐쇄망에서는 외부 CDN에 접근할 수 없다. CDN Service가 모든 프론트엔드 라이브러리를 서빙한다.
+폐쇄망에서는 외부 CDN에 접근할 수 없다. 기본 배포는 CDN Service가 프론트엔드 라이브러리를 서빙한다. 경량 Viewer는 `viewer.asset_source: bundled`로 기존 `static/vendor/` 파일을 직접 제공하며 CDN Service 없이 실행한다(10.7). 기본값은 `cdn`이므로 기존 Helm·Compose 동작은 유지된다.
 
 - **웹 UI + API로 파일 관리**: 새 라이브러리 추가 시 재배포 불필요
 - **버전 디렉토리 구조**: `/{library}/{version}/{file}`
@@ -275,7 +275,7 @@ reports/harness/
 | # | 상황 | 처리 | 검사 위치 |
 |---|------|------|-----------|
 | D1 | 켜진 서비스가 없음 | 중단 | Helm `fail`, `deploy.sh` |
-| D2 | Viewer 켜짐, CDN 꺼짐, `viewer.cdn_base_url`이 상대 경로(`/`로 시작하고 `//`가 아님) | 중단 | Helm `fail`(설정을 차트가 만들 때), Viewer 시작 검사(항상) |
+| D2 | Viewer 켜짐, CDN 꺼짐, `viewer.cdn_base_url`이 상대 경로(`/`로 시작하고 `//`가 아님) | 중단(앱은 `asset_source: cdn`일 때) | Helm `fail`(설정을 차트가 만들 때), Viewer 시작 검사 |
 | D3 | Slides 켜짐, Marp 꺼짐 | 경고. 게시 저장소를 직접 채우면 쓸 수 있다 | Helm NOTES, `deploy.sh` |
 | D4 | Marp 꺼짐 | Viewer에서 Marp 버튼 3개(PDF·미리보기·출판)를 숨기고 `format=pdf`는 503 | Viewer |
 | D5 | Draw.io 꺼짐 | Viewer에서 Draw.io 버튼을 숨김 | Viewer |
@@ -284,6 +284,7 @@ reports/harness/
 | D8 | `metrics.enabled`, Sync나 Feedback 켜짐, `sync.persistence.enabled=false` | 중단. Sync·Feedback 메트릭 누적값을 sync-state PVC에 두므로 PVC 없이는 Sync·Feedback Alert가 울리지 않는다 | Helm `fail` |
 
 - D2를 Viewer 시작 검사로도 두는 이유: 외부 ConfigMap(`synctxConfig.create: false`)이나 Docker는 배포 도구가 `.synctx.yaml`을 읽지 않는다. Viewer가 시작할 때 오류 메시지를 남기고 종료하면 어느 배포 방식이든 잡힌다.
+- 경량 실행은 Helm 렌더를 쓰지 않으며 `bundled`에서는 앱의 CDN 의존성 검사를 건너뛴다. Helm의 기존 CDN 상대 경로 검증은 그대로다.
 - D4에서 Marp가 꺼진 Marp 문서에는 버튼이 하나도 남지 않으므로 다운로드 버튼이 나온다.
 
 #### 내부망 CDN을 쓸 때 조건
@@ -363,7 +364,7 @@ POST /api/repos/{id}/webhook        Git push 알림
 | 테마 | 7개 테마 CSS | 있음 (재활용) |
 | Mermaid | 클라이언트 사이드 렌더링 | CDN 방식으로 변경 |
 | 코드 하이라이팅 | highlight.js 구문 강조 | CDN 방식으로 변경 |
-| HTML 다운로드 | 자체 완결형 HTML 생성 | 있음 (재활용) |
+| HTML 다운로드 | 일반 다운로드는 기본 렌더 HTML. 회의 내보내기는 vendor·브라우저 메모 포함 자체 완결형 HTML | 있음 (재활용) |
 | PDF 다운로드 | Marp Service(`/api/marp/convert`)로 변환 | Marp 방식으로 변경 |
 | Marp 연동 | "PDF 변환" / "출판" 버튼 | **신규** |
 | 회의 모드 | `?mode=meeting`: 메모·형광펜·회의 정리, `.md`·메모 포함 HTML 내보내기/가져오기. 서버 판단은 `meeting.py`, 화면은 `static/meeting/`. 회의 문서는 정보 카드(`meeting_card.py`)와 발표 화면 `?mode=present`도 쓰고, 회의 모드 화면은 첫 사용 안내를 보인다(3.6) | **신규 (Phase 8.1a)** |
@@ -839,6 +840,7 @@ synctx-common/src/synctx_common/
 
 ```
 viewer/src/
+├── standalone.py       # 경량 진입점: 설정·번들 자산·주기적 async Git 갱신
 ├── app.py              # FastAPI 앱 (라우트 통합, lifespan, 칸반 보드)
 ├── renderer.py         # Markdown → HTML 렌더링 엔진
 │   ├── render_markdown()
@@ -856,7 +858,7 @@ viewer/src/
     ├── viewer.css      # 화면 틀·3단 배치·반응형
     ├── viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서·회의 진행 상태·안건 소속 절·발표 장 나누기와 키 판단·회의 모드 안내 표시 판단 로직
     ├── viewer.js       # 상단 바·서랍·목차·안건 추적·회의 진행 상태 갱신·회의 모드 안내·발표 화면·알림·확인 창 동작
-    ├── vendor/         # 다운로드 HTML에 인라인으로 넣는 highlight.js·mermaid.js
+    ├── vendor/         # 회의 내보내기·경량 Viewer의 highlight.js·mermaid.js
     └── meeting/
         ├── memo-core.js      # 회의 모드 메모 로직(DOM 무관)
         ├── meeting.js        # 회의 모드 화면(메모 버튼·형광펜·패널·저장)
@@ -1239,7 +1241,7 @@ helm upgrade synctx ./helm/synctx \
 
 ### 10.6 Docker Compose 배포
 
-K8s가 아닌 Docker 서버를 위한 배포 방식이다. Docker Compose만 제공하며 `docker run` 단독 배포는 제공하지 않는다. 서비스 선택은 Compose profile과 옵션 파일(`SYNCTX_SERVICES`)로 한다. 1단계는 Viewer·CDN·Marp·Slides·Draw.io를 지원하고, Sync·Feedback은 2단계에서 다룬다.
+K8s가 아닌 Docker 서버에서 여러 서비스를 함께 실행하는 배포 방식이다. Markdown·회의만 필요한 단일 Viewer 컨테이너는 10.7을 따른다. 서비스 선택은 Compose profile과 옵션 파일(`SYNCTX_SERVICES`)로 한다. 1단계는 Viewer·CDN·Marp·Slides·Draw.io를 지원하고, Sync·Feedback은 2단계에서 다룬다.
 
 ```mermaid
 flowchart LR
@@ -1276,6 +1278,20 @@ flowchart LR
 - 이미지 주소는 `${SYNCTX_IMAGE_PREFIX}<이름>:<태그>`(접두사 기본값 `registry.local:5000/`)이고, `SYNCTX_IMAGE_TAG`는 필수이며 `latest`는 거부한다.
 - 인증 프록시가 없으면 `.synctx.yaml`에 `authz.enabled: false`를 둔다(기본값 `true`라 모든 요청이 403).
 - 사용법은 `scripts/docker/deploy.sh [--env-file] [--secrets-file] [--check]`, `down.sh [--volumes]`, `compose.sh -- <compose 인자>`다. 절차와 Runbook은 production-service-design.md 8.6과 12.7을 참조한다.
+
+### 10.7 경량 Markdown·회의 Viewer
+
+기존 Viewer의 추가 실행 방식이며 새 서비스나 Phase가 아니다. `./run.sh --repo https://git.example/team/docs.git`는 `uv`·Git이 있는 체크아웃에서 Viewer만 실행하고, `./run.sh --docker --build --repo https://git.example/team/docs.git`는 기존 Viewer 이미지를 빌드해 컨테이너 하나로 실행한다. 사전 빌드 이미지는 `--image synctx/viewer:0.6.0-abcdef0`으로 선택한다. `--docker`는 첫 인자이며 `--build`와 `--image`는 함께 쓰지 않는다.
+
+- `standalone.py`가 기존 Viewer를 `/view`에 마운트하고 `asset_source: bundled`, `SYNCTX_ENABLED_SERVICES=viewer`로 실행한다. Marp 앱·CDN 서비스·게이트웨이를 시작하지 않고, 기존 vendor 파일을 재사용한다. 기본 Helm·Compose의 `asset_source`는 `cdn`이다.
+- `--repo` 반복 또는 `--config` 중 하나를 받는다. 생성 프로필은 `collab.enabled: true`, `authz.enabled: false`이며, 명시한 설정 파일의 authz·collab 정책은 유지한다. `--ref`는 `--repo` 전용이며 `--config`와 함께 주면 거부한다. Git URL에 인증정보를 넣지 않고 `GIT_READ_TOKEN`을 참조한다. 로컬 경로는 캐시 ID를 만들기 전에 실제 경로로 정규화한다.
+- 시작 시 clone/fetch 후 기본 60초마다 기존 async Git 메서드로 갱신한다(`--refresh-interval`, 0이면 주기 갱신 끔). 생성 YAML에는 토큰 대신 환경변수 이름만 남긴다.
+- Docker는 기본 `127.0.0.1:18000`을 컨테이너 `0.0.0.0:8000`으로 공개하고, 이름 있는 `synctx-viewer-cache` 볼륨을 `/data/viewer`에 연결한다. `--bind`·`--port`·`--name`·`--volume`으로 바꾼다. 설정 파일과 명시적 로컬 `--repo` 디렉터리만 읽기 전용으로 마운트한다. 로컬 file URL(빈 호스트 또는 `localhost`)은 URL 이스케이프를 해석해 같은 실제 경로로 바꾼다. 다른 file URL 호스트와 `.git` 파일이 있는 linked worktree·submodule은 Docker 실행 전에 거부하고 원격 Git URL을 안내한다. Git 관리 경로를 추가로 마운트하지 않는다. 컨테이너는 root로 돌기 때문에 마운트한 디렉터리마다 `GIT_CONFIG_*`로 `safe.directory`를 등록한다. `docker run --rm`을 `exec`하므로 Ctrl-C로 종료하고 캐시는 남는다.
+- 이미지 기본값은 `${DOCKER_REGISTRY:-synctx}/viewer:0.6.0-<git-sha>`다. `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag <태그>`로만 빌드한다. `--image`도 SemVer-SHA 태그를 요구하고 `latest`는 거부한다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓴다(Docker Hub에서 받지 않음). Python 베이스 이미지는 바꾸지 않는다.
+- Docker는 `GIT_READ_TOKEN`·`SYNCTX_SERVICE_TOKEN`과 추가 `--env NAME`을 값 없이 이름으로 전달한다. 공개 URL 우선순위는 CLI → 명시적 설정 → `SYNCTX_VIEWER_PUBLIC_BASE_URL` → 로컬 바인딩 주소다. Docker는 환경변수가 비어 있으면 호스트 공개 주소를 넣는다. 외부 공개 시 인증 프록시·접근 제한과 실제 `--public-base-url`을 구성한다.
+- 회의 플랫폼은 일반 HTTPS Markdown 링크로 연다. `meeting.channel` 등 필수 메타데이터와 브라우저 localStorage 메모는 유지한다. 일반 HTML 다운로드와 vendor·로컬 메모를 포함하는 회의 내보내기를 구분한다. PDF·Marp 출판은 이 실행 방식에서 제공하지 않는다.
+
+자세한 설치·캐시·환경변수·검증 범위는 local-development.md 0.1과 production-service-design.md 8.7을 따른다.
 
 ## 11. 제약 사항과 고려 사항
 
@@ -1373,8 +1389,9 @@ flowchart LR
 
 ### 배포 옵션 (Phase 번호와 별개)
 
-서비스별 옵션(Helm `<서비스>.enabled`)과 Docker Compose 배포는 새 Phase가 아니라 Phase 1-9 어디에서든 쓰는 배포 방식이다. Phase 번호 체계(1-9)는 바꾸지 않는다.
+서비스별 옵션(Helm `<서비스>.enabled`), Docker Compose와 경량 Viewer 실행은 새 Phase가 아니라 Phase 1-9 어디에서든 쓰는 배포 방식이다. Phase 번호 체계(1-9)는 바꾸지 않는다.
 
+- **경량 Viewer**: 소스 프로세스 또는 단일 Viewer 컨테이너, Markdown·회의 열람 (10.7)
 - **Docker Compose 배포 1단계**: Viewer·CDN·Marp·Slides·Draw.io (구현됨)
 - **Docker Compose 배포 2단계**: Sync·Feedback (미구현)
   - Compose에 `sync`·`feedback` profile 추가. 주기 실행은 서비스 안 반복 실행(`--interval`) 또는 호스트 cron의 `docker compose run --rm` 중 2단계 설계에서 고른다.

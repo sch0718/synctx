@@ -6,7 +6,7 @@ import json
 import html as html_lib
 import logging
 import subprocess
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
 
@@ -68,7 +68,7 @@ def _service_enabled(name: str) -> bool:
 
 def _check_service_dependencies(cfg) -> None:
     cdn_url = cfg.viewer.cdn_base_url
-    if not _service_enabled("cdn") and cdn_url.startswith("/") and not cdn_url.startswith("//"):
+    if cfg.viewer.asset_source == "cdn" and not _service_enabled("cdn") and cdn_url.startswith("/") and not cdn_url.startswith("//"):
         raise RuntimeError(
             f"CDN 서비스가 꺼져 있는데 viewer.cdn_base_url이 상대 경로입니다({cdn_url}). "
             "내부 CDN의 절대 주소를 지정하거나 CDN을 켜세요."
@@ -89,6 +89,8 @@ async def lifespan(application: FastAPI):
         yield
     finally:
         _startup_sync.cancel()
+        with suppress(asyncio.CancelledError):
+            await _startup_sync
 
 
 app = FastAPI(title="synctx-viewer", description="Viewer Service for synctx", version=__version__, lifespan=lifespan)
@@ -100,7 +102,7 @@ register_observability_routes(app, version=__version__, service_name="viewer", r
 async def csp_middleware(request: Request, call_next):
     response = await call_next(request)
     if "text/html" in response.headers.get("content-type", ""):
-        cdn_url = config.viewer.cdn_base_url
+        cdn_url = config.viewer.cdn_base_url if config.viewer.asset_source == "cdn" else ""
         cdn_host = ""
         if cdn_url.startswith(("http://", "https://")):
             from urllib.parse import urlparse
@@ -972,6 +974,15 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         mermaid_theme = THEME_MERMAID.get(theme, "default")
 
         cdn_base = config.viewer.cdn_base_url.rstrip("/")
+        if config.viewer.asset_source == "bundled":
+            asset_base = f"{VIEW_PREFIX}/static/vendor"
+            mermaid_url = f"{asset_base}/mermaid.min.js"
+            highlight_url = f"{asset_base}/highlight.min.js"
+            highlight_css_url = f"{asset_base}/hljs/{hljs_theme}.min.css"
+        else:
+            mermaid_url = f"{cdn_base}/mermaid/10.9.1/mermaid.min.js"
+            highlight_url = f"{cdn_base}/highlight.js/11.9.0/highlight.min.js"
+            highlight_css_url = f"{cdn_base}/highlight.js/11.9.0/styles/{hljs_theme}.min.css"
 
         doc_href = f"{VIEW_PREFIX}/{repo_id}/{quote(path)}"
         presenting = mode == "present" and meeting_ctx.meeting is not None
@@ -1017,7 +1028,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             # 발표 화면은 숨긴 장의 그림이 0 크기로 그려지므로 viewer.js가 보이는 장만 그린다
             mermaid_run = "" if presenting else "mermaid.run();"
             mermaid_scripts = (
-                f'<script src="{cdn_base}/mermaid/10.9.1/mermaid.min.js"></script>\n'
+                f'<script src="{mermaid_url}"></script>\n'
                 f'    <script>mermaid.initialize({{ startOnLoad: false, theme: \'{mermaid_theme}\' }});{mermaid_run}</script>'
             )
         else:
@@ -1080,10 +1091,10 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 </div>
 {_publish_dialog(path) if 'data-action="marp-publish"' in toolbar_buttons else ""}'''
         head_extra = (f"<style>{theme_css}</style>\n"
-                      f'<link rel="stylesheet" href="{cdn_base}/highlight.js/11.9.0/styles/{hljs_theme}.min.css">\n'
+                      f'<link rel="stylesheet" href="{highlight_css_url}">\n'
                       f"{meeting_head}{evidence_head}")
         body_extra = (f'<script type="application/json" id="raw-markdown-json">{_encode_for_script({"markdown": content})}</script>\n'
-                      f'<script src="{cdn_base}/highlight.js/11.9.0/highlight.min.js"></script>\n'
+                      f'<script src="{highlight_url}"></script>\n'
                       f"<script>hljs.highlightAll();</script>\n"
                       f"{mermaid_scripts}\n{meeting_body}{evidence_body}")
         html = ui.page(

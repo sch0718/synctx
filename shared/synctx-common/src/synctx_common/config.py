@@ -158,6 +158,7 @@ class TargetsConfig(BaseModel):
 
 
 class ViewerConfig(BaseModel):
+    asset_source: Literal["cdn", "bundled"] = "cdn"
     repo_cache_path: str = "/data/repos"
     max_render_size_bytes: int = 5242880
     cdn_base_url: str = "/cdn"

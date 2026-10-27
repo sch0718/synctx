@@ -158,7 +158,28 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 
 운영 명령은 `scripts/docker/compose.sh -- ps`처럼 실행한다. 절차 전체는 [운영 서비스 설계](production-service-design.md)의 Docker 배포 Runbook을 참조한다.
 
-### 로컬 실행
+### Markdown·회의 Viewer 빠른 시작
+
+저장소 체크아웃에서 실행한다. 소스 실행은 `uv`·Git·Python 3.13 이상이 필요하고, Docker 실행은 Docker Engine과 Bash가 필요하다. 예시 Git 주소는 실제 접근 가능한 저장소로 바꾼다.
+
+```bash
+./run.sh --repo https://git.example/team/docs.git
+./run.sh --repo https://git.example/team/docs.git --repo https://git.example/team/meetings.git --ref main
+./run.sh --docker --build --repo https://git.example/team/docs.git
+./run.sh --docker --image synctx/viewer:0.6.0-abcdef0 --repo https://git.example/team/docs.git
+```
+
+접속 주소는 http://127.0.0.1:18000/view/ 이다. `--docker`는 첫 번째 인자에 둔다. Docker는 Viewer 컨테이너 하나만 실행하며 `--build`일 때만 기존 빌드 스크립트를 호출한다. 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.6.0-<git-sha>`이고(`DOCKER_REGISTRY` 없이는 로컬 이미지만 쓰고 Docker Hub에서 받지 않는다), `--image`도 SemVer-SHA 태그를 요구한다(`latest` 불가). `--build`와 `--image`는 함께 쓰지 않는다.
+
+`--repo`는 반복할 수 있고, 기존 설정은 `--config ./my.synctx.yaml`로 대신 지정한다. `--repo` 프로필은 회의 모드를 켜고 로컬 열람용으로 인증을 끈다. `--config`는 명시한 인증·협업 정책을 유지한다. Git 토큰은 `GIT_READ_TOKEN` 환경변수로 주며 URL이나 YAML에 값을 넣지 않는다. Docker는 토큰을 변수 이름으로 전달하고, 사용자 정의 `credential_env`는 `--env MY_GIT_TOKEN`으로 전달한다.
+
+Viewer는 기존 `static/vendor/`의 Mermaid·highlight.js를 직접 제공한다(`viewer.asset_source: bundled`, 기본 배포는 `cdn`). Marp를 로드하지 않으며 PDF·Marp 출판은 제공하지 않는다. 일반 HTML 다운로드는 기본 렌더 HTML이고, 회의 모드의 메모 포함 HTML 내보내기는 vendor와 브라우저 메모를 포함한 자체 완결형 사본이다. 회의 플랫폼은 본문의 일반 HTTPS Markdown 링크로 연다. `synctx.meeting.channel`을 포함한 기존 필수 메타데이터와 브라우저별 로컬 메모 저장 방식은 그대로다.
+
+Docker의 로컬 `--repo`는 일반 디렉터리 경로와 `file:///path/to/repo`·`file://localhost/path/to/repo`를 받으며 URL의 `%20` 같은 이스케이프를 해석해 실제 디렉터리를 읽기 전용으로 마운트한다. 다른 file URL 호스트와 `.git`이 파일인 linked worktree·submodule은 실행 전에 거부한다. 이 경우 원격 Git URL을 사용한다.
+
+Docker 캐시는 기본 이름 `synctx-viewer-cache`인 볼륨에 남으며 Ctrl-C로 컨테이너를 종료해도 유지된다. 호스트 포트·바인딩·캐시 이름은 `--port`, `--bind`, `--volume`으로 바꾼다. 외부 공개 시 인증 프록시와 접근 제한을 구성하고 `--public-base-url`을 실제 공개 URL로 지정한다. 자세한 설정·운영·검증 범위는 [로컬 개발 환경](local-development.md) 0.1절과 [운영 설계](production-service-design.md) 8.7절을 따른다.
+
+### Marp를 포함한 로컬 실행
 
 문서 보기·회의 모드·Marp 미리보기만 필요하면 Docker·minikube 없이 `scripts/local/run-viewer.sh`로 Viewer·Marp·CDN 파일을 한 프로세스로 띄운다(http://127.0.0.1:18000/view/). minikube 전체 환경(`scripts/local/setup.sh`)은 [로컬 개발 환경](local-development.md)을 참조한다.
 
@@ -174,8 +195,8 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 - **마크다운 렌더링** — 서버사이드 렌더링 (python-markdown), 7개 테마 지원
 - **Mermaid 다이어그램** — 클라이언트 사이드 렌더링 (CDN Service에서 mermaid.js 로딩)
 - **코드 하이라이팅** — highlight.js 기반 190+ 언어 구문 강조
-- **HTML/PDF 다운로드** — 자체 완결형 HTML, PDF는 Marp Service로 변환
-- **완전 오프라인** — 모든 외부 라이브러리를 CDN Service에서 로딩
+- **HTML/PDF 다운로드** — 일반 HTML은 기본 렌더 HTML, 회의 내보내기는 vendor·메모 포함 자체 완결형 HTML, PDF는 Marp Service로 변환
+- **완전 오프라인** — 기본 배포는 CDN Service, 경량 Viewer는 번들 파일에서 렌더링 라이브러리 로딩
 - **스크럼 보드** — 이슈 마크다운 목록을 버전별 칸반 보드로 렌더링 (`/api/repos/{id}/board/{version}`)
 - **회의 모드** — 회의 문서(`synctx.type: meeting`)에서 메모·형광펜·회의 정리(결정·액션 아이템), `.md`·메모 포함 HTML(읽기 전용) 내보내기와 가져오기. 메모는 브라우저(localStorage)에만 저장 (Phase 8.1a)
 - **회의 정보 카드·발표 화면** — 회의 문서 머리의 일시·진행 상태·안건 카드, `?mode=present` 발표 화면, 회의 모드 첫 사용 안내
@@ -322,6 +343,7 @@ synctx/
 ├── AGENTS.md                          # AI 도구용 프로젝트 지침 (Codex 등)
 ├── CLAUDE.md                          # Claude Code용 프로젝트 지침
 ├── Makefile                           # 빌드/테스트/배포 자동화
+├── run.sh                             # Markdown·회의 Viewer 실행 (--docker 선택)
 ├── pyproject.toml                     # uv workspace (shared·services 묶음)
 ├── uv.lock
 ├── synctx-sample.yaml                 # .synctx.yaml 예시
@@ -345,6 +367,7 @@ synctx/
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   ├── src/
+│   │   │   ├── standalone.py          # 번들 자산·설정 생성·주기적 Git 갱신의 경량 진입점
 │   │   │   ├── app.py                 # FastAPI 서버 (라우트 통합, lifespan, 칸반)
 │   │   │   ├── renderer.py            # Markdown → HTML 렌더링
 │   │   │   ├── linear_inline.py       # Markdown 인라인 처리를 입력 길이에 선형으로 바꿔 끼움
@@ -358,7 +381,7 @@ synctx/
 │   │   │   ├── static/viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서·회의 진행 상태·안건 소속 절·발표 장 나누기와 키 판단 로직
 │   │   │   ├── static/viewer.js       # 상단 바·서랍·목차·안건 추적·회의 진행 상태 갱신·회의 모드 안내·발표 화면·알림·확인 창 동작
 │   │   │   ├── static/meeting/        # 회의 모드 JS(memo-core.js, meeting.js)·근거 말풍선 JS(evidence-core.js, evidence.js)·CSS
-│   │   │   ├── static/vendor/         # 내려받기 HTML에 넣는 highlight.js·mermaid 사본
+│   │   │   ├── static/vendor/         # 회의 내보내기·경량 Viewer의 highlight.js·mermaid 사본
 │   │   │   └── static/style.css       # 사용하지 않는 이전 스타일시트
 │   │   └── tests/                     # pytest 단위·API 테스트, js/(node --test)
 │   │
@@ -506,13 +529,15 @@ synctx/
 │   └── chart.js/4.4.4/
 │
 └── scripts/
-    ├── docker/                        # Docker Compose 배포 스크립트
+    ├── docker/                        # Docker 단일 Viewer·Compose 배포 스크립트
+    │   ├── run-viewer.sh              # 단일 Viewer 컨테이너 실행·기존 스크립트로 빌드 위임
     │   ├── deploy.sh                  # 검사 → 게이트웨이 설정 생성 → up → 꺼진 서비스 정리 → CDN 채우기
     │   ├── down.sh                    # 중지 (--volumes일 때만 볼륨 삭제)
     │   ├── compose.sh                 # 배포와 같은 인자로 docker compose 명령 실행
     │   ├── seed_cdn.py                # cdn 컨테이너 안에서 vendor 파일 채우기
     │   └── _common.sh                 # 공통 함수
     ├── local/                         # 로컬 개발 (minikube, Viewer 단독 실행)
+    │   ├── run-lite.sh                # run.sh의 소스 실행 (Viewer만, uv workspace)
     │   ├── run-viewer.sh              # Docker·minikube 없이 Viewer+Marp+CDN 파일을 한 프로세스로 실행
     │   ├── run_viewer.py              # run-viewer.sh가 실행하는 묶음 앱(/view, /marp, /cdn)
     │   ├── setup.sh                   # minikube 전체 설치 (steps/ 순서 실행)
@@ -534,6 +559,8 @@ synctx/
         ├── test_external_importer.py  # Importer 단위 테스트
         ├── test_helm_options.py       # Helm 서비스 옵션 렌더
         ├── test_docker_deploy.py      # Docker 배포 검사·게이트웨이 설정
+        ├── test_run_viewer_docker.py  # 단일 Viewer 실행 인자·볼륨·토큰·빌드 위임
+        ├── test_run_lite.py           # run.sh·소스 실행 인자 전달
         ├── test_seed_cdn.py
         ├── test_run_viewer.py
         ├── test_motion.py             # 생성한 그림·도움말이 최신인지, 링크가 살아 있는지

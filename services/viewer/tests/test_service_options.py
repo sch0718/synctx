@@ -228,3 +228,10 @@ class TestStartupCheck:
         with pytest.raises(RuntimeError, match="cdn_base_url"):
             with TestClient(viewer_app.app):
                 pass
+
+
+def test_bundled_assets_do_not_require_cdn(monkeypatch):
+    from app import _check_service_dependencies
+    from synctx_common.config import SynctxConfig, ViewerConfig
+    monkeypatch.setenv("SYNCTX_ENABLED_SERVICES", "viewer")
+    _check_service_dependencies(SynctxConfig(viewer=ViewerConfig(asset_source="bundled")))

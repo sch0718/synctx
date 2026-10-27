@@ -267,7 +267,10 @@ class GitRepoManager:
                     self._status = "cloning"
                     self._clone()
                 else:
-                    self._run_git("fetch", "origin", self.profile.default_ref)
+                    self._run_git(
+                        "fetch", "origin",
+                        f"+refs/heads/{self.profile.default_ref}:refs/remotes/origin/{self.profile.default_ref}",
+                    )
                 self._head_sha = self.head_sha()
                 self._status = "ready"
                 self._last_sync_at = datetime.now(timezone.utc)
@@ -286,7 +289,10 @@ class GitRepoManager:
                 # 잠금 순서가 보장되지 않아 첫 clone보다 먼저 올 수 있다
                 if not (self.repo_dir / ".git").exists():
                     self._clone()
-                self._run_git("fetch", "origin", self.profile.default_ref)
+                self._run_git(
+                    "fetch", "origin",
+                    f"+refs/heads/{self.profile.default_ref}:refs/remotes/origin/{self.profile.default_ref}",
+                )
                 self._head_sha = self.head_sha()
                 self._status = "ready"
                 self._last_sync_at = datetime.now(timezone.utc)

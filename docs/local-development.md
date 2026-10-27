@@ -1,8 +1,55 @@
 # 로컬 개발 환경 (minikube)
 
-이 문서는 synctx를 로컬 minikube 클러스터에서 실행하는 방법을 설명한다.
+이 문서는 경량 Viewer, Marp 포함 로컬 프로세스, minikube 클러스터의 실행 방법을 설명한다.
 
-## 0. Viewer만 가볍게 실행 (Docker·minikube 없이)
+## 0. 클러스터 없이 실행
+
+### 0.1 Markdown·회의 Viewer (소스 또는 단일 Docker 컨테이너)
+
+소스 실행은 저장소 체크아웃·`uv`·Git·Python 3.13 이상이 필요하다. 체크아웃 위치에서 다음과 같이 실행하며, URL은 실제 저장소 주소로 바꾼다. 최초 의존성 설치와 이미지 빌드는 네트워크가 필요하므로 폐쇄망 반입 전에 준비한다. 실행 중에는 지정한 Git 서버만 사용하며 브라우저 렌더링에 외부 CDN을 쓰지 않는다.
+
+```bash
+./run.sh --repo https://git.example/team/docs.git
+./run.sh --repo "../meeting docs" --ref main --refresh-interval 30
+./run.sh --config "./my configs/viewer.yaml" --port 18100
+
+# Docker Engine 실행 필요. Viewer 이미지만 기존 빌드 스크립트로 빌드
+./run.sh --docker --build --repo https://git.example/team/docs.git
+# 준비된 이미지 사용: 호스트 Python·uv·Git 불필요
+./run.sh --docker --image synctx/viewer:0.6.0-abcdef0 --repo https://git.example/team/docs.git
+```
+
+접속 주소는 http://127.0.0.1:18000/view/ 이다. 루트 `run.sh`의 첫 인자가 `--docker`면 `scripts/docker/run-viewer.sh`, 그 밖에는 `scripts/local/run-lite.sh`가 같은 `services/viewer/src/standalone.py`를 실행한다. Docker는 Compose·게이트웨이 없이 컨테이너 하나를 포그라운드로 실행한다. 준비된 이미지에는 standalone 코드와 vendor 파일이 있어야 하며, 이미지와 실행 스크립트를 같은 커밋에서 준비한다. `--image` 실행은 Git 메타데이터가 없는 스크립트 묶음에서도 가능하다.
+
+| 인자 | 의미·기본값 |
+|------|------------|
+| `--repo URL_OR_PATH` | 반복 가능. `--config`와 함께 쓸 수 없음. `--ref` 기본 `main` |
+| `--ref REF` | `--repo`로 만드는 저장소의 브랜치. `--config`와 함께 주면 거부한다(설정 파일의 `default_ref`를 쓴다) |
+| `--config FILE` | 저장소가 하나 이상인 `.synctx.yaml`. 명시한 인증·협업 설정 유지 |
+| `--refresh-interval SECONDS` | 시작 시 clone/fetch 뒤 기본 60초마다 갱신. `0`이면 주기 갱신 끔 |
+| `--public-base-url URL` | 내보내기 원문 링크의 공개 주소 |
+| 소스 `--host`, `--port`, `--cache-dir` | `127.0.0.1`, `18000`, `~/.cache/synctx/lite` |
+| Docker `--bind`, `--port` | 호스트 `127.0.0.1:18000` 공개. 컨테이너는 `0.0.0.0:8000` 고정 |
+| Docker `--name`, `--volume` | `synctx-viewer`, `synctx-viewer-cache` (이름 있는 캐시 볼륨) |
+| Docker `--image IMAGE` | 사전 빌드 이미지. `0.6.0-abcdef0` 같은 SemVer-SHA 태그 필수 |
+| Docker `--build` | 기본 이미지 빌드. `--image`와 함께 쓸 수 없음 |
+| Docker `--env NAME` | 추가 환경변수 이름만 전달. `NAME=value`와 실행 스크립트가 정하는 `SYNCTX_*`·`GIT_CONFIG_*` 이름은 거부 |
+
+- `--repo`로 생성하는 프로필은 `collab.enabled: true`, `authz.enabled: false`이고 HTTP(S) Git 인증은 `GIT_READ_TOKEN`을 참조한다. `--config`의 명시한 `authz`·저장소별 `collab`은 그대로 유지한다. 토큰을 URL에 넣으면 앱이 거부한다. 원격 URL·ref·갱신 간격 등 앱 인자 오류와 clone/auth 오류는 포그라운드 실행 로그에서 확인한다.
+- 토큰은 실행 전 환경변수로 제공한다. Docker는 `GIT_READ_TOKEN`·`SYNCTX_SERVICE_TOKEN`을 이름만으로 전달하며, 사용자 정의 `credential_env`라면 `--env MY_GIT_TOKEN`을 추가한다. 값은 명령 인자·생성 YAML에 기록하지 않는다. Marp가 없으므로 쓰기 토큰은 필요 없다.
+- 상대 경로는 호출한 디렉터리 기준이며 공백이 있으면 따옴표로 감싼다. 로컬 `--repo` 디렉터리는 실제 경로로 정규화한 뒤 Docker 안에서도 같은 절대 경로에 읽기 전용으로 마운트한다(상위 디렉터리는 마운트하지 않음). `--config`는 `/etc/synctx/standalone.yaml`에 읽기 전용 마운트한다. Docker의 로컬 `--repo`는 `file:///path/to/repo`와 `file://localhost/path/to/repo`도 실제 디렉터리로 정규화하며 `%20` 같은 URL 이스케이프를 해석한다. 그 밖의 file URL 호스트는 거부한다. `.git`이 파일인 linked worktree·submodule은 외부 Git 관리 디렉터리를 마운트해야 하므로 지원하지 않는다. 원격 Git URL을 대신 사용한다. Docker의 설정 파일 안 저장소 URL은 컨테이너에서 접근 가능한 Git URL을 사용한다. 호스트 로컬 저장소는 명시적 `--repo`로 지정한다. bind 구문 때문에 설정 파일 경로에 콜론은 쓸 수 없다.
+- 소스 캐시와 Docker `/data/viewer`에는 생성 설정과 `repos/`가 남는다. Docker에서 Ctrl-C로 종료하면 `--rm`으로 컨테이너만 지워지고 볼륨은 재실행 때 재사용한다. 다른 캐시를 쓰려면 `--volume another-viewer-cache`를 지정한다. 메모는 이 볼륨이 아니라 브라우저 localStorage에 있어 주소·포트·브라우저가 달라지면 별도로 보관된다.
+- `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag 0.6.0-<git-sha>`만 호출한다. 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.6.0-<git-sha>`이며 `DOCKER_REGISTRY=registry.local:5000/synctx`처럼 접두사를 바꾸면 빌드와 실행에 함께 적용된다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 Docker Hub에서 받지 않도록 `--pull never`로 실행하고, 로컬에 이미지가 없으면 Docker를 실행하기 전에 `--build`나 `--image`를 쓰라고 안내한다. `DOCKER_REGISTRY`를 지정했거나 `--image`를 준 경우는 Docker 기본 pull 정책을 따른다. `latest`·태그 없는 이미지는 거부한다. 베이스 이미지는 기존 `python:3.13.16-slim-trixie` 그대로다.
+- 공개 URL 우선순위는 `--public-base-url` → 설정의 명시적 `runtime.public_base_url` → `SYNCTX_VIEWER_PUBLIC_BASE_URL` → 소스 바인딩 주소다. Docker는 환경변수가 비어 있으면 호스트 공개 주소를 넣는다(`0.0.0.0`·`::`는 링크에서 loopback으로 변환). 외부 사용자는 실제 URL을 `--public-base-url https://docs.example`로 지정한다.
+- 기본 loopback 공개를 유지한다. `--bind 0.0.0.0` 등으로 외부에 열 때는 TLS·인증 프록시와 방화벽을 먼저 구성하고, 프록시만 Viewer에 접근할 수 있게 제한한다. `--repo` 프로필에는 사용자 인증이 없고 `--config`의 인증을 자동으로 끄지 않는다. 기존 authz가 켜져 있으면 신뢰할 수 있는 프록시 헤더가 없을 때 403인 것이 정상이다.
+
+경량 모드는 `viewer.asset_source: bundled`와 `SYNCTX_ENABLED_SERVICES=viewer`를 사용한다. Mermaid·코드 하이라이팅은 기존 `services/viewer/src/static/vendor/`에서 제공하고 Marp·CDN 서비스는 로드하지 않는다. 기존 Helm·Compose의 기본 자산 방식은 `cdn`이다. 일반 HTML 다운로드는 기본 렌더 HTML이며, 회의 모드의 메모 포함 HTML 내보내기(`meeting-export`)는 vendor와 현재 브라우저 메모를 포함한 자체 완결형 사본이다. PDF·Marp 슬라이드 변환·출판은 Marp 포함 실행 방식을 쓴다.
+
+회의 문서는 기존 `synctx.meeting`의 `id`·`title`·`starts_at`·`channel`이 필수다. 회의 입장은 본문에 `[회의 입장](https://meet.example/room)` 같은 일반 HTTPS Markdown 링크를 둔다. 영상 SDK·iframe 통합·서버 메모 동기화는 추가하지 않는다. 브라우저 메모·형광펜과 내보내기/가져오기를 그대로 사용한다.
+
+자동 테스트는 fake Docker로 인자·볼륨·토큰 전달·빌드 위임을 검증한다. 실제 이미지 빌드·daemon·아키텍처·인증 프록시·Git 서버 연결은 대상 환경에서 별도 확인한다. 소스와 Docker에서 같은 Markdown·회의 문서, 주기 갱신, 내보내기, 종료 후 캐시 재사용을 확인한다.
+
+### 0.2 Marp를 포함한 로컬 프로세스 (Docker·minikube 없이)
 
 문서 보기, 회의 모드, 모션 그래픽(`synctx-html`), Marp 슬라이드 미리보기·PDF만 필요하면 클러스터 없이 프로세스 하나로 띄운다.
 

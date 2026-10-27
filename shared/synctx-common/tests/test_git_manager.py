@@ -560,3 +560,33 @@ def test_sanitize_git_text_masks_url_userinfo(tmp_path):
     assert manager._sanitize_git_text("fatal: https://ghp_abc123@github.com/o/r.git") == "fatal: https://***@github.com/o/r.git"
     assert manager._sanitize_git_text("https://user:pw@host/r.git") == "https://user:***@host/r.git"
     assert manager._sanitize_git_text("see https://host/r.git and a@b.com") == "see https://host/r.git and a@b.com"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("storage_mode", ["full", "shallow", "blobless", "treeless"])
+@pytest.mark.parametrize("method", ["ensure", "fetch"])
+async def test_cached_clone_acquires_changed_default_branch_and_force_updates(tmp_path, remote, storage_mode, method):
+    bare, work, first = remote
+    original = _manager(tmp_path, bare, storage_mode=storage_mode)
+    await original.ensure()
+    assert original.status == "ready"
+
+    _git(work, "checkout", "-q", "-b", "release")
+    (work / "docs/a.md").write_text("release\n")
+    _git(work, "commit", "-qam", "release document")
+    _git(work, "push", "-q", "origin", "release")
+    release_sha = _git(work, "rev-parse", "HEAD")
+
+    changed = _manager(tmp_path, bare, storage_mode=storage_mode, default_ref="release")
+    assert changed.repo_dir == original.repo_dir
+    await getattr(changed, method)()
+    assert changed.status == "ready"
+    assert changed.head_sha_value == release_sha
+    assert changed.read_file_text("docs/a.md") == "release\n"
+
+    # Remote-tracking refs must also follow a force push after the branch switch.
+    _git(work, "push", "-q", "--force", "origin", f"{first}:refs/heads/release")
+    await getattr(changed, method)()
+    assert changed.status == "ready"
+    assert changed.head_sha_value == first
+    assert changed.read_file_text("docs/a.md") == "v1\n"
