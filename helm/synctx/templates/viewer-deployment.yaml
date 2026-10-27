@@ -31,6 +31,20 @@ spec:
           env:
             - name: SYNCTX_ENABLED_SERVICES
               value: {{ include "synctx.enabledServices" . | quote }}
+            {{- $render := .Values.viewer.renderTokenSecret | default dict }}
+            {{- if or $render.create $render.existingSecret }}
+            - name: SYNCTX_RENDER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $render.existingSecret | default (printf "%s-viewer-render" (include "synctx.fullname" .)) }}
+                  key: render-secret
+            - name: SYNCTX_RENDER_SECRET_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $render.existingSecret | default (printf "%s-viewer-render" (include "synctx.fullname" .)) }}
+                  key: render-secret-previous
+                  optional: true
+            {{- end }}
             {{- if .Values.synctxConfig.create }}
             - name: SYNCTX_CONFIG_PATH
               value: /etc/synctx/.synctx.yaml

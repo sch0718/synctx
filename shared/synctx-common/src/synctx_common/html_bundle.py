@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from html import escape as _html_escape
 from html import unescape as _html_unescape
 from html.parser import HTMLParser
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 from urllib.parse import unquote, urlsplit
 
 import yaml
@@ -237,12 +237,14 @@ _MEDIA_TAGS = {"video", "audio", "source", "track", "iframe", "frame", "embed", 
 _SVG_REF_TAGS = {"image", "use", "feimage"}
 
 
-def csp_meta(origins) -> str:
+def csp_meta(origins, *, frame_src: Literal["'none'", "'self'"] = "'none'") -> str:
+    if frame_src not in ("'none'", "'self'"):
+        raise ValueError("frame_src는 'none' 또는 'self'여야 합니다")
     hosts = "".join(f" {origin}" for origin in origins)
     policy = (
         f"default-src 'none'; script-src 'unsafe-inline'{hosts}; style-src 'unsafe-inline'{hosts}; "
         f"img-src data:{hosts}; font-src data:{hosts}; connect-src {hosts.strip() or chr(39) + 'none' + chr(39)}; "
-        "frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'"
+        f"frame-src {frame_src}; worker-src 'none'; form-action 'none'; base-uri 'none'"
     )
     return f'<meta http-equiv="Content-Security-Policy" content="{policy}">'
 _MIME_TYPES = {
@@ -315,11 +317,12 @@ def _render_tag(tag: str, attrs, self_closing: bool = False) -> str:
 
 
 class _Bundler(HTMLParser):
-    def __init__(self, read: Reader, entry: str, policy: HtmlEmbedConfig):
+    def __init__(self, read: Reader, entry: str, policy: HtmlEmbedConfig, frame_src: str):
         super().__init__(convert_charrefs=False)
         self.read = read
         self.entry = entry
         self.policy = policy
+        self.frame_src = frame_src
         self.allowed = set(policy.allowed_origins)
         self.files: set = set()
         self.missing: set = set()
@@ -471,6 +474,16 @@ class _Bundler(HTMLParser):
         if tag == "base":
             self.fail("unsupported", "<base> 요소는 지원하지 않습니다")
         for name, value in attrs:
+            if self.frame_src == "'self'" and tag in ("iframe", "frame"):
+                if name == "srcdoc":
+                    self.fail("unsupported", f"<{tag}> 요소의 srcdoc은 지원하지 않습니다")
+                if name == "src":
+                    if not value or classify_url(value) != "relative":
+                        self.fail("unsupported", f"<{tag}> 요소에는 상대 HTML 경로만 쓸 수 있습니다")
+                    self.path_of(value, self.entry)
+                    if posixpath.splitext(urlsplit(value.strip()).path)[1].lower() not in (".html", ".htm"):
+                        self.fail("unsupported", f"<{tag}> 요소에는 상대 HTML 경로만 쓸 수 있습니다")
+                    continue
             if not value:
                 continue
             if tag in _MEDIA_TAGS and name in ("src", "srcset", "srcdoc", "data", "poster"):
@@ -640,12 +653,16 @@ class _Bundler(HTMLParser):
             self.fail("unsupported", "defer 스크립트는 module이나 외부 defer 스크립트와 함께 쓸 수 없습니다")
         if self.missing:
             self.fail("missing_file", "찾을 수 없는 파일: " + ", ".join(sorted(self.missing)))
-        self.out.insert(self.meta_at, csp_meta(self.policy.allowed_origins))
+        self.out.insert(self.meta_at, csp_meta(self.policy.allowed_origins, frame_src=self.frame_src))
         return "".join(self.out)
 
 
-def bundle(read: Reader, entry: str, policy: HtmlEmbedConfig) -> BundleResult:
-    parser = _Bundler(read, entry, policy)
+def bundle(
+    read: Reader, entry: str, policy: HtmlEmbedConfig, *, frame_src: Literal["'none'", "'self'"] = "'none'",
+) -> BundleResult:
+    if frame_src not in ("'none'", "'self'"):
+        raise ValueError("frame_src는 'none' 또는 'self'여야 합니다")
+    parser = _Bundler(read, entry, policy, frame_src)
     source = parser.load_text(entry)
     if source is None:
         parser.fail("missing_file", f"찾을 수 없는 파일: {entry}")
@@ -672,6 +689,18 @@ def repo_reader(manager, ref: Optional[str] = None) -> Reader:
             resolved.append(manager.resolve_ref(ref))
         try:
             return manager.read_resolved(path, resolved[0])
+        except subprocess.CalledProcessError as exc:
+            raise FileNotFoundError(path) from exc
+        except ValueError as exc:
+            raise BundleError("unsupported", f"읽을 수 없는 경로입니다: {path}") from exc
+
+    return read
+
+
+def resolved_reader(manager, resolved: str) -> Reader:
+    def read(path: str) -> bytes:
+        try:
+            return manager.read_resolved(path, resolved)
         except subprocess.CalledProcessError as exc:
             raise FileNotFoundError(path) from exc
         except ValueError as exc:

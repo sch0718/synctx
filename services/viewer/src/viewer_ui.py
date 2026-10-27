@@ -214,6 +214,33 @@ def _doc_href(view_prefix, repo_id, path, ref) -> str:
     return f"{view_prefix}/{quote(repo_id, safe='')}/{quote(path)}{query}"
 
 
+def render_html_links(*, view_prefix, repo_id, path, ref_param) -> str:
+    href = f"{view_prefix}/{quote(repo_id, safe='')}/{quote(path)}?mode=render"
+    return (f'<a class="btn" data-action="render-open" href="{esc(href + ref_param)}">렌더링</a>'
+            f'<a class="btn" data-action="render-new-tab" href="{esc(href + "&layout=full" + ref_param)}" '
+            'target="_blank" rel="noopener noreferrer">새 탭</a>')
+
+
+def render_html_view(*, frame_url, view_prefix, repo_id, path, ref_param, full=False) -> str:
+    href = f"{view_prefix}/{quote(repo_id, safe='')}/{quote(path)}"
+    source = href + ("?" + ref_param.lstrip("&") if ref_param else "")
+    new_tab = href + "?mode=render&layout=full" + ref_param
+    full_attr = ' data-render-full="true"' if full else ""
+    return f'''<main id="main" class="html-render" tabindex="-1" data-html-render data-render-layout="fit" data-render-aspect="16/9"{full_attr}>
+  <div data-render-bars>
+    <p class="render-warning" role="note">저장소의 HTML과 스크립트를 실행합니다. 유효 시간이 지나면 원래 Viewer 화면을 새로 고치세요.</p>
+    <div class="render-toolbar" role="toolbar" aria-label="HTML 보기">
+      <button type="button" class="btn" data-action="render-fit" aria-pressed="true">화면 맞춤</button>
+      <button type="button" class="btn" data-action="render-ratio" aria-pressed="false">비율 고정</button>
+      <button type="button" class="btn" data-action="render-fullscreen">전체 화면</button>
+      <a class="btn" data-action="render-new-tab" href="{esc(new_tab)}" target="_blank" rel="noopener noreferrer">새 탭</a>
+      <a class="btn" href="{esc(source)}">소스 보기</a>
+    </div>
+  </div>
+  <div data-render-stage><iframe data-render-frame title="{esc(path)}" sandbox="allow-scripts" src="{esc(frame_url)}"></iframe></div>
+</main>'''
+
+
 def error_body(kind, *, view_prefix, repo_id=None, path=None, ref=None, suggestions=(), download_href=None) -> str:
     title, guide = ERROR_COPY[kind]
     parts = [f'<main id="main" class="error-page" tabindex="-1">',

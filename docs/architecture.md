@@ -336,6 +336,10 @@ flowchart TD
 
 문서 화면(`_render_file_response`)의 처리 순서는 렌더 → `_sanitize_html` → 근거 판정·표시(회의 문서만) → `rewrite_links`(접두어 매핑) → `embed_view.fill`이다. 근거 판정은 링크를 고치기 전 원문 href를 해석하므로 메모 포함 HTML 내보내기도 같은 함수를 쓴다(3.6). `rewrite_links`는 상대 `img src`와 `img`·`<picture>`의 `source srcset`(다크 모드 그림 등, 후보마다 설명자 유지)을 `/raw/<저장소>/…`로, 상대 Markdown 링크를 `/view/<저장소>/…`로 바꾼다.
 
+설계: `.html`·`.htm`은 기본 소스 보기를 유지하고, `repositories[].html_embed.enabled`와 별도 opt-in `render_files`(신규, 기본 false)가 모두 true인 저장소에만 `?mode=render` 화면을 추가한다. 이 opt-in은 모든 `.html`·`.htm`과 모든 브랜치의 실행 신뢰를 뜻한다. 경고·도구 막대·iframe으로 구성하고, 새 탭도 같은 화면의 `layout=full`을 쓴다. iframe의 앱 내부 경로는 `/render/{token}/{repo_id}/{path}`(공개 주소 `/view/render/…`)이며 상대 링크·`target=pf`를 유지해 같은 커밋 SHA의 중첩 문서를 연다. 토큰·`render_token` 모듈·`bundle(frame_src=…)`·`viewer.render_token_ttl_seconds`(기본 14400초)는 신규 설계다. `resolve_ref()`는 현재 `origin/<브랜치>`를 돌려주므로 새 `GitRepoManager.resolve_commit_sha()`로 SHA를 확정하고 WP1의 `resolved_reader(manager, sha)`로 읽는다. 토큰은 `v1.{exp}.{ref_b64}.{sha}.{signature}`이며 서명 입력은 `render|v1|{repo_id}|{ref}|{sha}|{exp}`다. ref는 UTF-8 1~255바이트를 패딩 없는 base64url로 싣는다(정규형·최대 길이는 상세 설계 14.2). 파드별 clone이므로 `/render`에서 SHA가 없으면 서명된 ref를 fetch한 뒤 같은 SHA를 다시 확인하고 여전히 없으면 404·새로 고침 안내를 낸다. XWiki·Sync Engine은 기존 합본 기본값을 쓴다.
+
+렌더 화면만 Viewer CSP를 `frame-src 'self'`로 바꾸고 XFO `DENY`는 유지한다. `/render`는 authz → 토큰 → `Sec-Fetch-Dest`(`iframe`·`frame`만) → 신뢰 정책 → HTML 확장자 → 경로 → SHA 존재·필요 시 ref fetch → 읽기 전 `blob_size_resolved(path, sha)` 크기를 확인해 SHA로 읽고, 성공·오류(JSON 포함) 모두 `sandbox allow-scripts`·`no-referrer`·`nosniff`·`no-store` 헤더를 쓴다. 출처 `null`인 조상이 중첩 프레임을 막으므로 `frame-ancestors`·XFO는 넣지 않는다. 다른 Viewer HTML 화면의 `frame-src 'none'`·`DENY`는 유지한다. 현행 XFO는 `text/html`에만 붙으므로 `/api` JSON·`/raw`에는 없다. 같은 출처 `/cdn`·`/marp`·`/slides`·`/drawio`도 프레임 대상이며 sandbox는 물려받지만 합본 meta CSP의 네트워크 제한은 물려받지 않는다. 운영 SSO 중첩 쿠키 시험과 실패 시 대안, `runtime.public_base_url`로 만든 `/view/render/` 경로 소스의 CSP 매칭, Viewer 전용 저장소의 기존 XWiki 전용 계정 요건 완화는 결정 필요다. 설정 해제는 Viewer 재시작 후 적용하고 운영 키는 공유 Secret으로 유지한다. route·응답 표식으로 standalone·K8s 경로를 식별한다. 세부 보안·검증·작업 묶음은 `html-embed-design.md` 13~14장에 둔다(미구현).
+
 ### 3.2 API
 
 ```
@@ -351,6 +355,8 @@ GET /api/repos/{id}/board/{version} 스크럼 보드(칸반) HTML
 GET /raw/{id}/{path}                원본 파일(이미지 등 본문이 참조하는 파일)
 POST /api/repos/{id}/webhook        Git push 알림
 ```
+
+추가 설계(미구현): `GET /render/{token}/{repo_id}/{path}`는 렌더 화면 iframe 전용이며, `/view/{repo_id}/{path}?mode=render&layout=full`은 새 탭 화면이다. 토큰은 권한·두 플래그를 확인한 Viewer 화면 생성 함수에서 발급하며 이를 공유하는 `render_file` API 응답에도 실릴 수 있다. 토큰 전용 발급 API는 두지 않는다.
 
 `/raw/`는 png·jpg·gif·webp·svg를 그 이미지 형식으로, 나머지는 `application/octet-stream`으로 준다. 저장소의 SVG는 스크립트를 담을 수 있으므로 `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`와 `X-Content-Type-Options: nosniff`를 붙여 주소를 직접 열어도 실행되지 않게 한다.
 
@@ -370,7 +376,7 @@ POST /api/repos/{id}/webhook        Git push 알림
 | 회의 모드 | `?mode=meeting`: 메모·형광펜·회의 정리, `.md`·메모 포함 HTML 내보내기/가져오기. 서버 판단은 `meeting.py`, 화면은 `static/meeting/`. 회의 문서는 정보 카드(`meeting_card.py`)와 발표 화면 `?mode=present`도 쓰고, 회의 모드 화면은 첫 사용 안내를 보인다(3.6) | **신규 (Phase 8.1a)** |
 | 근거 미리보기·근거 모음 | 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선(미리보기)과 문서 끝 근거 모음으로 보임. 서버 판단은 `evidence.py`, 화면은 `static/meeting/evidence*.js·css`. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리킴(3.6) | **신규 (Phase 8.1b)** |
 | front matter 분리 | 렌더링 전에 front matter를 본문에서 떼어 냄(일반 보기 포함) | **신규 (Phase 8.1a)** |
-| 인터랙티브 HTML 임베드 | ` ```synctx-html ` 블록을 `synctx_common.html_bundle`로 합본해 CSP meta가 든 sandbox srcdoc iframe으로 렌더링. sanitizer 뒤에 자리표시를 채운다(`embed_view.py`) | **신규 (Phase 9)** |
+| 인터랙티브 HTML 임베드 | ` ```synctx-html ` 블록을 `synctx_common.html_bundle`로 합본해 CSP meta가 든 sandbox srcdoc iframe으로 렌더링. sanitizer 뒤에 자리표시를 채운다(`embed_view.py`). 추가 설계: `enabled`·`render_files`를 함께 켠 HTML `mode=render`, Viewer 화면의 블록 크게 보기 오버레이(다운로드 제외) | **신규 (Phase 9)** |
 
 ### 3.4 Marp 연동
 
@@ -1384,6 +1390,7 @@ flowchart LR
 3. Viewer 렌더링·CSP·다운로드
 4. Sync Engine 변환과 다시 처리할 조건(역참조 색인, 합본 반영 해시, 정책 지문)
 5. 메트릭·Alert, 운영 문서 (Sync CronJob 메트릭은 Pushgateway로 수집)
+6. 추가 설계(미구현): Viewer 전용 `mode=render`·서명 토큰·동일 SHA 중첩 프레임, `frame_src`·CSP 예외, 화면 맞춤·전체 화면·블록 크게 보기, 공유 키 배포·교체와 렌더 메트릭. 기존 `synctx-html` 블록의 Viewer·XWiki 실효 정책 동등성은 유지한다
 
 설계: `docs/html-embed-design.md`. Viewer(Phase 1)와 XWiki Sync(Phase 3)에 의존한다.
 

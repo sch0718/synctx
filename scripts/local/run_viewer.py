@@ -36,6 +36,7 @@ def build_local_config(values_file: Path, port: int, cache_dir: Path) -> dict:
     base = f"http://127.0.0.1:{port}"
     config.setdefault("runtime", {})["public_base_url"] = base
     viewer = config.setdefault("viewer", {})
+    viewer.setdefault("render_token_ttl_seconds", 14400)
     viewer["cdn_base_url"] = "/cdn"
     viewer["marp_service_url"] = f"{base}/marp"
     # 컨테이너 기본값(/data/...)은 macOS에서 쓸 수 없는 경로라 사용자 캐시로 옮긴다
@@ -146,7 +147,7 @@ def main() -> None:
     import uvicorn
 
     print(f"synctx Viewer: http://127.0.0.1:{args.port}/view/  (설정: {config_path})")
-    uvicorn.run(create_app(), host="127.0.0.1", port=args.port, log_level="info")
+    uvicorn.run(create_app(), host="127.0.0.1", port=args.port, log_level="info", log_config=None)
 
 
 if __name__ == "__main__":

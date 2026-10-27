@@ -26,6 +26,11 @@ synctxConfig:
 # 서비스별 배포 여부. 꺼진 서비스는 리소스와 Ingress 경로를 만들지 않는다.
 viewer:
   enabled: true
+  renderTokenSecret:
+    create: false
+    existingSecret: ""
+    current: ""
+    previous: ""
   image:
     repository: synctx/viewer
     tag: "0.6.0"

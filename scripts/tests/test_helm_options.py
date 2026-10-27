@@ -327,3 +327,106 @@ def test_notes_warn_when_slides_without_marp():
     )
     assert result.returncode == 0, result.stderr
     assert "Marp가 꺼져 있습니다" in result.stdout.split("NOTES:", 1)[1]
+
+
+def _viewer_container(docs):
+    deployment = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "synctx-viewer")
+    return deployment["spec"]["template"]["spec"]["containers"][0]
+
+
+def test_production_without_render_has_no_render_secret_reference():
+    docs = _docs("-f", str(CHART / "values-production.yaml"))
+    deployment = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "synctx-viewer")
+    assert deployment["spec"]["replicas"] == 2
+    env = {e["name"] for e in _viewer_container(docs)["env"]}
+    assert not {"SYNCTX_RENDER_SECRET", "SYNCTX_RENDER_SECRET_PREVIOUS"} & env
+
+
+def test_production_render_keys_reference_shared_secret():
+    docs = _docs(
+        "-f", str(CHART / "values-production.yaml"),
+        "--set", "viewer.renderTokenSecret.existingSecret=synctx-viewer-render",
+    )
+    env = {e["name"]: e for e in _viewer_container(docs)["env"]}
+    assert env["SYNCTX_RENDER_SECRET"]["valueFrom"]["secretKeyRef"] == {
+        "name": "synctx-viewer-render", "key": "render-secret",
+    }
+    assert env["SYNCTX_RENDER_SECRET_PREVIOUS"]["valueFrom"]["secretKeyRef"] == {
+        "name": "synctx-viewer-render", "key": "render-secret-previous", "optional": True,
+    }
+    assert ("Secret", "synctx-viewer-render") not in _names(docs)
+
+
+@pytest.mark.parametrize("previous", ["", "previous-render-key-" + "p" * 32])
+def test_render_secret_create_and_configmap_separation(tmp_path, previous):
+    current = "current-render-key-" + "c" * 32
+    values = _values_file(tmp_path, yaml.safe_dump({
+        "viewer": {"renderTokenSecret": {"create": True, "current": current, "previous": previous}},
+        "synctxConfig": {"create": True, "data": "viewer:\n  render_token_ttl_seconds: 14400\n"},
+    }))
+    docs = _docs("-f", values)
+    secret = next(d for d in docs if d["kind"] == "Secret" and d["metadata"]["name"] == "synctx-viewer-render")
+    assert secret["type"] == "Opaque"
+    assert secret["stringData"] == {"render-secret": current, **({"render-secret-previous": previous} if previous else {})}
+    env = {e["name"]: e for e in _viewer_container(docs)["env"]}
+    assert env["SYNCTX_RENDER_SECRET"]["valueFrom"]["secretKeyRef"]["name"] == secret["metadata"]["name"]
+    assert env["SYNCTX_RENDER_SECRET_PREVIOUS"]["valueFrom"]["secretKeyRef"]["optional"] is True
+    for doc in docs:
+        if doc["kind"] != "Secret":
+            serialized = yaml.safe_dump(doc)
+            assert current not in serialized
+            assert not previous or previous not in serialized
+
+
+@pytest.mark.parametrize("flags,message", [
+    ("create=true,current=test,existingSecret=external", "existingSecret"),
+    ("create=true", "current"),
+    ("previous=previous-only", "current"),
+])
+def test_invalid_render_secret_options_fail(flags, message):
+    result = _render("--set", ",".join("viewer.renderTokenSecret." + flag for flag in flags.split(",")))
+    assert result.returncode != 0
+    assert message in result.stderr
+
+
+@pytest.mark.parametrize("replicas,embed,secret,create,ok", [
+    (2, {"enabled": True, "render_files": True}, "", False, False),
+    (2, {"enabled": True, "render_files": True}, "shared-render", False, True),
+    (2, {"enabled": True, "render_files": True}, "", True, True),
+    (2, {"enabled": True}, "", False, True),
+    (2, {"enabled": False, "render_files": True}, "", False, True),
+    (1, {"enabled": True, "render_files": True}, "", False, True),
+])
+def test_render_replicas_require_shared_key_only_when_opted_in(tmp_path, replicas, embed, secret, create, ok):
+    values = _values_file(tmp_path, yaml.safe_dump({
+        "viewer": {"replicaCount": replicas, "renderTokenSecret": {
+            "existingSecret": secret, "create": create, "current": "c" * 32 if create else "",
+        }},
+        "synctxConfig": {"create": True, "data": yaml.safe_dump({"repositories": [
+            {"id": "plain"}, {"id": "render", "html_embed": embed},
+        ]})},
+    }))
+    result = _render("-f", str(CHART / "values-production.yaml"), "-f", values)
+    assert (result.returncode == 0) is ok, result.stderr
+    if not ok:
+        assert "renderTokenSecret" in result.stderr
+
+
+def test_default_render_has_no_render_key_env():
+    assert not any(name.startswith("SYNCTX_RENDER_SECRET") for name in _viewer_env(_docs()))
+
+
+@pytest.mark.parametrize("ttl", [0, -1, 1.5, True, "14400", "bad", None, [], {}])
+def test_invalid_render_ttl_fails(tmp_path, ttl):
+    values = _values_file(tmp_path, yaml.safe_dump({"synctxConfig": {
+        "create": True, "data": yaml.safe_dump({"viewer": {"render_token_ttl_seconds": ttl}}),
+    }}))
+    result = _render("-f", values)
+    assert result.returncode != 0
+    assert "render_token_ttl_seconds" in result.stderr
+
+
+@pytest.mark.parametrize("viewer", [{}, {"render_token_ttl_seconds": 1}, {"render_token_ttl_seconds": 14400}])
+def test_valid_or_missing_render_ttl_passes(tmp_path, viewer):
+    values = _values_file(tmp_path, yaml.safe_dump({"synctxConfig": {"create": True, "data": yaml.safe_dump({"viewer": viewer})}}))
+    _docs("-f", values)

@@ -11,15 +11,16 @@ from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, Query
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from synctx_common.config import HtmlEmbedConfig, load_config
 from synctx_common.frontmatter import parse_frontmatter
 from synctx_common.git_manager import GitRepoManager
-from synctx_common.html_bundle import repo_reader
+from synctx_common.html_bundle import BundleError, bundle, repo_reader, resolved_reader
 from synctx_common.logging import configure_logging
-from synctx_common.observability import register_observability_routes
+from synctx_common.observability import html_render_total, register_observability_routes
+from synctx_common.render_token import RenderTokenError, issue_render_token, load_render_keys, verify_render_token
 from renderer import NO_TITLE_FALLBACK, render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
 
 import embed_view
@@ -34,6 +35,7 @@ configure_logging(service_name="viewer")
 VIEW_PREFIX = "/view"
 
 config = load_config()
+render_key, render_previous_key = load_render_keys()
 logger = logging.getLogger(__name__)
 
 
@@ -100,7 +102,26 @@ register_observability_routes(app, version=__version__, service_name="viewer", r
 
 @app.middleware("http")
 async def csp_middleware(request: Request, call_next):
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        if getattr(request.scope.get("route"), "endpoint", None) is not render_html:
+            raise
+        logger.exception("html_render_failed")
+        response = JSONResponse(status_code=500, content={"detail": "HTML을 불러오지 못했습니다"})
+    if getattr(request.scope.get("route"), "endpoint", None) is render_html:
+        response.headers.update({
+            "Content-Security-Policy": "sandbox allow-scripts",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+        })
+        if "X-Frame-Options" in response.headers:
+            del response.headers["X-Frame-Options"]
+        return response
+    render_screen = response.headers.get("X-Synctx-Html-Render") == "true"
+    if "X-Synctx-Html-Render" in response.headers:
+        del response.headers["X-Synctx-Html-Render"]
     if "text/html" in response.headers.get("content-type", ""):
         cdn_url = config.viewer.cdn_base_url if config.viewer.asset_source == "cdn" else ""
         cdn_host = ""
@@ -112,6 +133,7 @@ async def csp_middleware(request: Request, call_next):
             cdn_host = f" {cdn_url}"
             
         embed_hosts = "".join(f" {origin}" for origin in config.html_embed.allowed_origins)
+        frame_src = "'self'" if render_screen else "'none'"
         csp = (
             f"default-src 'self'; "
             f"script-src 'self' 'unsafe-inline'{cdn_host}{embed_hosts}; "
@@ -119,7 +141,7 @@ async def csp_middleware(request: Request, call_next):
             f"img-src 'self' data:{cdn_host}{embed_hosts}; "
             f"font-src 'self' data:{cdn_host}{embed_hosts}; "
             f"connect-src 'self'{cdn_host}{embed_hosts}; "
-            f"frame-src 'none'; "
+            f"frame-src {frame_src}; "
             f"object-src 'none'"
         )
         response.headers["Content-Security-Policy"] = csp
@@ -645,7 +667,7 @@ async def search_documents(q: str | None = None, repo: str | None = None, ref: s
 
 # ── View Routes ──
 
-RESERVED_PATHS = {"api", "raw", "static", "search", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
+RESERVED_PATHS = {"api", "raw", "render", "static", "search", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
 
 
 def _repo_known(repo_id: str) -> bool:
@@ -830,6 +852,9 @@ def _build_toolbar(repo_id: str, path: str, is_md: bool, front_matter: dict, ref
             buttons.append('<button type="button" class="btn" data-action="marp-publish">출판…</button>')
     if path.endswith(".drawio") and _service_enabled("drawio"):
         buttons.append('<a class="btn" href="/drawio/" target="_blank" rel="noopener">Draw.io</a>')
+    policy = _html_embed_policy(repo_id)
+    if PurePosixPath(path).suffix.lower() in (".html", ".htm") and policy.enabled and policy.render_files:
+        buttons.append(ui.render_html_links(view_prefix=VIEW_PREFIX, repo_id=repo_id, path=path, ref_param=ref_param))
     links = [f'<a href="{html_lib.escape(download)}">원본</a>']
     if is_md:
         links.append(f'<a href="{html_lib.escape(download + "&format=html")}">HTML</a>')
@@ -906,13 +931,39 @@ def _build_evidence(html: str, repo_id: str, path: str, manager: GitRepoManager,
         return None
 
 
-def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
+def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None, layout: str | None = None):
     manager = get_repo_manager(repo_id)
     effective_ref = ref if ref and ref != manager.profile.default_ref else None
     ui_ref = effective_ref or ""
     ref_param = f"&ref={quote(ref, safe='')}" if ref else ""
     ref_param_first = f"?ref={quote(ref, safe='')}" if ref else ""
     try:
+        policy = _html_embed_policy(repo_id)
+        if mode == "render" and PurePosixPath(path).suffix.lower() in (".html", ".htm") and policy.enabled and policy.render_files:
+            if layout not in (None, "full"):
+                raise HTTPException(status_code=422, detail="유효하지 않은 렌더 레이아웃입니다")
+            path = manager.validate_path(path)
+            token_ref = ref or manager.profile.default_ref
+            sha = manager.resolve_commit_sha(token_ref)
+            manager.blob_size_resolved(path, sha)
+            token = issue_render_token(repo_id, token_ref, sha, key=render_key,
+                                       ttl_seconds=config.viewer.render_token_ttl_seconds)
+            frame_url = _view_url(f"render/{token}/{quote(repo_id, safe='')}/{quote(path)}")
+            if theme not in THEME_CSS:
+                theme = "github-light"
+            full = layout == "full"
+            body = ui.render_html_view(frame_url=frame_url, view_prefix=VIEW_PREFIX, repo_id=repo_id,
+                                       path=path, ref_param=ref_param, full=full)
+            if not full:
+                body = ui.render_mobile_nav(controls=_nav_controls(repo_id, ref, theme)) + body
+            html = ui.page(
+                view_prefix=VIEW_PREFIX, title=PurePosixPath(path).name, theme=theme,
+                header="" if full else _shell_header(repo_id, ref, theme), body=body,
+                repo_id=repo_id, ref=ui_ref,
+                page_class="page-doc page-html-render" + (" page-render-full" if full else ""),
+                theme_via_query=True,
+            )
+            return HTMLResponse(content=html, headers={"X-Synctx-Html-Render": "true"})
         try:
             blob_size = manager.file_size(path, ref=effective_ref)
         except Exception:
@@ -1114,8 +1165,8 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 
 
 @app.get("/api/repos/{repo_id}/render", dependencies=[Depends(verify_viewer_access)])
-def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
-    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
+def render_file(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None, layout: str | None = None):
+    return _render_file_response(repo_id, path, theme, ref=ref, mode=mode, layout=layout)
 
 
 @app.get("/api/repos/{repo_id}/meeting-export", dependencies=[Depends(verify_viewer_access)])
@@ -1257,14 +1308,74 @@ def render_board(repo_id: str, version: str):
         raise HTTPException(status_code=400, detail="Failed to build board")
 
 
+def _render_html_error(status_code: int, message: str) -> HTMLResponse:
+    return HTMLResponse(status_code=status_code, content=(
+        '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>HTML 렌더링 오류</title></head>'
+        f'<body><p>{html_lib.escape(message)}</p></body></html>'
+    ))
+
+
+@app.get("/render/{token}/{repo_id}/{path:path}")
+def render_html(request: Request, token: str, repo_id: str, path: str) -> HTMLResponse:
+    verify_viewer_access(request.headers.get("X-Forwarded-Groups", ""))
+    known = _repo_known(repo_id)
+
+    def count(result):
+        html_render_total.labels(repo_id=repo_id if known else "unknown", result=result).inc()
+
+    try:
+        ref, sha = verify_render_token(token, repo_id, key=render_key, previous_key=render_previous_key)
+        if not known:
+            raise RenderTokenError("알 수 없는 저장소입니다")
+    except RenderTokenError as exc:
+        count("denied_token")
+        message = ("유효 시간이 지났습니다. 원래 Viewer 화면을 새로 고치세요" if "만료" in str(exc) else
+                   "문서 주소 또는 토큰이 유효하지 않습니다. 원래 Viewer 화면에서 다시 여세요")
+        return _render_html_error(403, message)
+    if request.headers.get("Sec-Fetch-Dest") not in ("iframe", "frame"):
+        count("denied_dest")
+        return _render_html_error(403, "Viewer의 렌더 화면에서 여세요")
+    policy = _html_embed_policy(repo_id)
+    if not policy.enabled or not policy.render_files:
+        count("disabled")
+        return _render_html_error(403, "이 저장소는 HTML 렌더링이 허용되지 않습니다")
+    if PurePosixPath(path).suffix.lower() not in (".html", ".htm"):
+        count("not_html")
+        return _render_html_error(415, "HTML 파일만 렌더링할 수 있습니다")
+    manager = get_repo_manager(repo_id)
+    try:
+        path = manager.validate_path(path)
+    except ValueError:
+        return _render_html_error(400, "유효하지 않은 문서 경로입니다")
+    try:
+        manager.ensure_commit_available(ref, sha)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="커밋을 찾을 수 없습니다. 원래 Viewer 화면을 새로 고침하세요")
+    try:
+        size = manager.blob_size_resolved(path, sha)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        raise HTTPException(status_code=404, detail="파일을 찾을 수 없습니다")
+    if size > policy.max_bundle_bytes:
+        count("too_large")
+        return _render_html_error(413, "HTML 파일이 합본 크기 상한을 넘습니다")
+    try:
+        result = bundle(resolved_reader(manager, sha), path, policy, frame_src="'self'")
+    except BundleError as exc:
+        count("bundle_error")
+        status = 413 if exc.reason == "too_large" else 404 if exc.reason == "missing_file" else 422
+        return _render_html_error(status, f"HTML을 불러오지 못했습니다: {exc}")
+    count("ok")
+    return HTMLResponse(content=result.html)
+
+
 # catch-all이므로 다른 모든 라우트 뒤에 등록해야 한다.
 @app.get("/{repo_id}/{path:path}", dependencies=[Depends(verify_viewer_access)])
-def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None):
+def render_permalink(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None, layout: str | None = None):
     if repo_id in RESERVED_PATHS:
         raise HTTPException(status_code=404, detail="Not found")
     if not _repo_known(repo_id):
         return _html_error(404, "repo_missing", repo_id=repo_id, theme=theme)
     try:
-        return _render_file_response(repo_id, path, theme, ref=ref, mode=mode)
+        return _render_file_response(repo_id, path, theme, ref=ref, mode=mode, layout=layout)
     except HTTPException as exc:
         return _file_error_page(repo_id, path, ref, exc.status_code, theme)

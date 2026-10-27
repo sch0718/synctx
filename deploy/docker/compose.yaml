@@ -22,9 +22,15 @@ services:
       SYNCTX_CONFIG_PATH: /etc/synctx/.synctx.yaml
       SYNCTX_ENABLED_SERVICES: ${SYNCTX_SERVICES:?SYNCTX_SERVICES를 지정하세요}
       GIT_READ_TOKEN: ${GIT_READ_TOKEN:-}
+      SYNCTX_RENDER_SECRET:
+      SYNCTX_RENDER_SECRET_PREVIOUS:
+      SYNCTX_RENDER_SECRET_FILE:
+      SYNCTX_RENDER_SECRET_PREVIOUS_FILE:
     volumes:
       - ${SYNCTX_CONFIG_FILE:?SYNCTX_CONFIG_FILE을 지정하세요}:/etc/synctx/.synctx.yaml:ro
       - viewer-repos:/data/repos
+      - ${SYNCTX_RENDER_SECRET_FILE_MOUNT:-/dev/null}:/run/secrets/synctx-render-secret:ro
+      - ${SYNCTX_RENDER_SECRET_PREVIOUS_FILE_MOUNT:-/dev/null}:/run/secrets/synctx-render-secret-previous:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 10s

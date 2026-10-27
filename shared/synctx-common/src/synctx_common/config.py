@@ -75,6 +75,7 @@ class PlatformHtmlEmbedConfig(BaseModel):
 
 class HtmlEmbedConfig(BaseModel):
     enabled: bool = False
+    render_files: bool = False
     allowed_origins: List[str] = Field(default_factory=list)
     max_bundle_bytes: int = Field(default=2097152, gt=0)
     xwiki_credential_env: Optional[str] = None
@@ -161,6 +162,7 @@ class ViewerConfig(BaseModel):
     asset_source: Literal["cdn", "bundled"] = "cdn"
     repo_cache_path: str = "/data/repos"
     max_render_size_bytes: int = 5242880
+    render_token_ttl_seconds: int = Field(default=14400, gt=0)
     cdn_base_url: str = "/cdn"
     marp_service_url: str = "http://synctx-marp:8000"
 

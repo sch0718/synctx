@@ -12,6 +12,32 @@ NOW = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
 REPOS = [SimpleNamespace(id="r1", name="회의 자료", default_ref="main"), SimpleNamespace(id="r2", name='a"<b>', default_ref="main")]
 
 
+def test_html_render_links_escape_repo_path_and_ref():
+    markup = ui.render_html_links(view_prefix="/view", repo_id='r"<x>', path='docs/한글"<x>.HTML',
+                                  ref_param="&ref=feat%2Fa%26b")
+    assert 'data-action="render-open" href="/view/r%22%3Cx%3E/docs/%ED%95%9C%EA%B8%80%22%3Cx%3E.HTML?mode=render&amp;ref=feat%2Fa%26b"' in markup
+    assert '?mode=render&amp;layout=full&amp;ref=feat%2Fa%26b' in markup
+    assert 'target="_blank" rel="noopener noreferrer"' in markup
+    assert '<x>' not in markup
+
+
+@pytest.mark.parametrize("full", [False, True])
+def test_html_render_view_dom_and_escaping(full):
+    markup = ui.render_html_view(frame_url='/view/render/token/r/a.html?x="<bad>&y=1', view_prefix="/view",
+                                 repo_id='r"<x>', path='a"<bad>.html', ref_param="&ref=a%26b", full=full)
+    assert 'data-html-render data-render-layout="fit" data-render-aspect="16/9"' in markup
+    assert ('data-render-full="true"' in markup) == full
+    assert 'data-render-bars' in markup and 'data-render-stage' in markup
+    assert 'data-render-frame title="a&quot;&lt;bad&gt;.html" sandbox="allow-scripts"' in markup
+    assert 'src="/view/render/token/r/a.html?x=&quot;&lt;bad&gt;&amp;y=1"' in markup
+    assert 'data-action="render-fit" aria-pressed="true"' in markup
+    assert 'data-action="render-ratio" aria-pressed="false"' in markup
+    assert 'data-action="render-fullscreen"' in markup
+    assert 'href="/view/r%22%3Cx%3E/a%22%3Cbad%3E.html?mode=render&amp;layout=full&amp;ref=a%26b"' in markup
+    assert 'target="_blank" rel="noopener noreferrer"' in markup
+    assert '<bad>' not in markup and '<x>' not in markup
+
+
 @pytest.mark.parametrize("delta,expected", [
     (timedelta(seconds=30), "방금"),
     (timedelta(minutes=5), "5분 전"),

@@ -877,10 +877,132 @@
     });
   }
 
+  function initRender() {
+    var root = $('[data-html-render]');
+    if (!root) return;
+    var bars = $all('[data-render-bars]', root);
+    var fullscreen = $('[data-action="render-fullscreen"]', root);
+    function measureBars() {
+      var height = bars.reduce(function (sum, bar) { return sum + bar.getBoundingClientRect().height; }, 0);
+      var header = $('.shell-header');
+      if (header && document.fullscreenElement !== root && root.getAttribute('data-render-full') !== 'true') {
+        height += header.getBoundingClientRect().height;
+      }
+      root.style.setProperty('--render-bars-height', height + 'px');
+    }
+    function setLayout(layout) {
+      layout = layout === 'ratio' ? 'ratio' : 'fit';
+      root.setAttribute('data-render-layout', layout);
+      $all('[data-action="render-fit"], [data-action="render-ratio"]', root).forEach(function (button) {
+        button.setAttribute('aria-pressed', String(button.getAttribute('data-action') === 'render-' + layout));
+      });
+    }
+    function syncFullscreen() {
+      if (fullscreen) {
+        fullscreen.setAttribute('aria-pressed', String(!!document.fullscreenElement));
+      }
+      measureBars();
+    }
+    root.style.setProperty('--render-aspect', String(core.renderAspectRatio(root.getAttribute('data-render-aspect'))));
+    setLayout(root.getAttribute('data-render-layout'));
+    syncFullscreen();
+    window.addEventListener('resize', measureBars);
+    if ('ResizeObserver' in window) {
+      var observer = new ResizeObserver(measureBars);
+      bars.forEach(function (bar) { observer.observe(bar); });
+    }
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    root.addEventListener('click', async function (e) {
+      var el = e.target.closest('[data-action]');
+      var action = el && el.getAttribute('data-action');
+      if (action === 'render-fit' || action === 'render-ratio') {
+        e.preventDefault();
+        setLayout(action === 'render-ratio' ? 'ratio' : 'fit');
+      } else if (action === 'render-fullscreen') {
+        e.preventDefault();
+        try {
+          if (document.fullscreenElement) {
+            if (typeof document.exitFullscreen !== 'function') throw new Error('Fullscreen API unavailable');
+            await document.exitFullscreen();
+          } else {
+            if (typeof root.requestFullscreen !== 'function') throw new Error('Fullscreen API unavailable');
+            await root.requestFullscreen();
+          }
+        } catch (err) {
+          window.synctxToast({ kind: 'error', title: '전체 화면을 전환할 수 없습니다', body: '브라우저의 전체 화면 지원과 권한을 확인하세요.' });
+        }
+      }
+    });
+  }
+
+  function initEmbedExpand() {
+    if (!$('[data-html-embed]')) return;
+    var expanded = null;
+    var opener = null;
+    var scrollY = 0;
+    function close() {
+      if (!expanded) return;
+      expanded.removeAttribute('data-embed-expanded');
+      document.body.classList.remove('embed-scroll-lock');
+      expanded = null;
+      if (opener) opener.focus({ preventScroll: true });
+      window.scrollTo(0, scrollY);
+      opener = null;
+    }
+    document.addEventListener('click', function (e) {
+      var el = e.target.closest('[data-action]');
+      var action = el && el.getAttribute('data-action');
+      if (action !== 'embed-expand' && action !== 'embed-close') return;
+      var container = el.closest('[data-html-embed]');
+      if (!container) return;
+      e.preventDefault();
+      if (action === 'embed-close') {
+        if (container === expanded) close();
+      } else if (container !== expanded) {
+        close();
+        opener = el;
+        scrollY = window.scrollY;
+        expanded = container;
+        expanded.setAttribute('data-embed-expanded', 'true');
+        document.body.classList.add('embed-scroll-lock');
+        var button = $('[data-action="embed-close"]', expanded);
+        if (button) button.focus({ preventScroll: true });
+      }
+    });
+    document.addEventListener('keydown', function (e) {
+      if (!expanded || e.isComposing || e.keyCode === 229) return;
+      if ($('dialog[open], [aria-modal="true"]:not([hidden])')) return;
+      if (e.key === 'Escape') {
+        if (document.body.classList.contains('page-present')) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        close();
+      } else if (e.key === 'Tab') {
+        var focusable = $all('a[href], button, input, select, textarea, iframe, [tabindex], [contenteditable="true"]', expanded).filter(function (el) {
+          return el.tabIndex >= 0 && !el.matches(':disabled') && !el.closest('[inert]') && el.getClientRects().length && window.getComputedStyle(el).visibility !== 'hidden';
+        });
+        if (!focusable.length) { e.preventDefault(); return; }
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (!expanded.contains(document.activeElement) || (e.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first).focus({ preventScroll: true });
+        }
+        e.stopImmediatePropagation();
+      }
+    }, true);
+    document.addEventListener('focusin', function (e) {
+      if (!expanded || expanded.contains(e.target) || $('dialog[open], [aria-modal="true"]:not([hidden])')) return;
+      var button = $('[data-action="embed-close"]', expanded);
+      if (button) button.focus({ preventScroll: true });
+    });
+  }
+
   function initKeys() {
     document.addEventListener('keydown', function (e) {
       // 발표 화면은 서랍·찾기·목차를 숨기므로 그것을 여는 단축키를 쓰지 않는다
       if (document.body.classList.contains('page-present')) return;
+      if ($('[data-embed-expanded="true"]')) return;
       var tag = e.target.tagName;
       var typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable;
       if (e.key === 'Escape') {
@@ -904,6 +1026,8 @@
   loadBranches();
   initNav();
   initClicks();
+  initRender();
+  initEmbedExpand();
   initKeys();
   initTree();
   initFinder();

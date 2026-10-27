@@ -74,7 +74,7 @@ REPO_COUNT=0
 APP_ARGS=()
 REPO_MOUNTS=()
 MOUNTED_REPOS=()
-ENV_NAMES=(GIT_READ_TOKEN SYNCTX_SERVICE_TOKEN)
+ENV_NAMES=(GIT_READ_TOKEN SYNCTX_SERVICE_TOKEN SYNCTX_RENDER_SECRET SYNCTX_RENDER_SECRET_PREVIOUS)
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
@@ -93,7 +93,7 @@ while [[ $# -gt 0 ]]; do
             require_value "$@"
             [[ "$2" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || fail "--env expects a variable name, never NAME=value"
             case "$2" in
-                SYNCTX_ENABLED_SERVICES|SYNCTX_VIEWER_PUBLIC_BASE_URL|SYNCTX_CONFIG_PATH|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*)
+                SYNCTX_ENABLED_SERVICES|SYNCTX_VIEWER_PUBLIC_BASE_URL|SYNCTX_CONFIG_PATH|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*|SYNCTX_RENDER_SECRET_FILE|SYNCTX_RENDER_SECRET_PREVIOUS_FILE|SYNCTX_RENDER_SECRET_FILE_MOUNT|SYNCTX_RENDER_SECRET_PREVIOUS_FILE_MOUNT)
                     fail "--env cannot override launcher-managed variables" ;;
             esac
             ENV_NAMES+=("$2"); shift 2 ;;
@@ -156,6 +156,22 @@ PORT=$((10#$PORT))
 [[ "$PORT" -ge 1 && "$PORT" -le 65535 ]] || fail "port must be between 1 and 65535"
 [[ "$NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail "invalid container name"
 [[ "$VOLUME" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]+$ ]] || fail "--volume must be a named Docker volume"
+
+RENDER_ARGS=()
+for env_name in SYNCTX_RENDER_SECRET SYNCTX_RENDER_SECRET_PREVIOUS; do
+    file_name="${env_name}_FILE"
+    if [[ -n "${!file_name:-}" ]]; then
+        [[ -z "${!env_name:-}" ]] || fail "${env_name} and ${file_name} are mutually exclusive"
+        host_file="${!file_name}"
+        [[ "$host_file" != *:* ]] || fail "${file_name} path cannot contain a colon"
+        [[ -f "$host_file" && -r "$host_file" ]] || fail "${file_name} file does not exist or is unreadable"
+        host_file="$(cd "$(dirname "$host_file")" && pwd -P)/$(basename "$host_file")"
+        [[ "$host_file" != *:* ]] || fail "${file_name} path cannot contain a colon"
+        target=/run/secrets/synctx-render-secret
+        [[ "$env_name" != SYNCTX_RENDER_SECRET_PREVIOUS ]] || target=/run/secrets/synctx-render-secret-previous
+        RENDER_ARGS+=(--volume "${host_file}:${target}:ro" --env "${file_name}=${target}")
+    fi
+done
 
 # Docker publication needs a literal IP, rather than a hostname or host:port.
 if [[ "$BIND" == *:* ]]; then
@@ -226,6 +242,7 @@ DOCKER_ARGS=(run --rm --name "$NAME" --publish "$PUBLICATION" --volume "${VOLUME
 [[ "$LOCAL_ONLY" == false ]] || DOCKER_ARGS+=(--pull never)
 [[ -z "$CONFIG" ]] || DOCKER_ARGS+=(--volume "${CONFIG}:/etc/synctx/standalone.yaml:ro")
 DOCKER_ARGS+=(${REPO_MOUNTS[@]+"${REPO_MOUNTS[@]}"})
+DOCKER_ARGS+=(${RENDER_ARGS[@]+"${RENDER_ARGS[@]}"})
 for env_name in "${ENV_NAMES[@]}"; do
     DOCKER_ARGS+=(--env "$env_name")
 done

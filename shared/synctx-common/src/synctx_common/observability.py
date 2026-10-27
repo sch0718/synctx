@@ -49,6 +49,13 @@ html_bundle_total = Counter(
     registry=registry,
 )
 
+html_render_total = Counter(
+    "synctx_html_render_total",
+    "Total HTML file renders",
+    ["repo_id", "result"],
+    registry=registry,
+)
+
 # ── CDN metrics ──
 cdn_bytes_served_total = Counter(
     "synctx_cdn_bytes_served_total",
@@ -128,8 +135,13 @@ feedback_last_success_timestamp = Gauge(
 )
 
 
-def _normalize_path(path: str) -> str:
+def _normalize_path(path: str, route=None) -> str:
     """Collapse path parameters to reduce cardinality."""
+    if getattr(route, "path", None) in (
+        "/render/{token}/{repo_id}/{path:path}",
+        "/view/render/{token}/{repo_id}/{path:path}",
+    ):
+        return "/render/{token}/{repo_id}/{path}"
     parts = path.strip("/").split("/")
     normalized = []
     for i, part in enumerate(parts):
@@ -156,7 +168,7 @@ def register_observability_routes(
         response = await call_next(request)
         duration = time.perf_counter() - start
 
-        path = _normalize_path(request.url.path)
+        path = _normalize_path(request.url.path, request.scope.get("route"))
         http_requests_total.labels(
             service=svc, method=request.method, path=path, status=response.status_code
         ).inc()

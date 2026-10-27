@@ -79,6 +79,28 @@ load_env_files() {
     GENERATED_DIR="$(abs_path "${SYNCTX_GENERATED_DIR:-./.generated}")"
     GATEWAY_CONF="${GENERATED_DIR}/gateway.conf"
     export SYNCTX_GENERATED_DIR="$GENERATED_DIR"
+    prepare_render_secrets
+}
+
+prepare_render_secrets() {
+    local name file_name mount_name host_file target
+    for name in SYNCTX_RENDER_SECRET SYNCTX_RENDER_SECRET_PREVIOUS; do
+        file_name="${name}_FILE"
+        mount_name="${file_name}_MOUNT"
+        printf -v "$mount_name" '%s' /dev/null
+        export "$mount_name"
+        if [ -n "${!file_name:-}" ]; then
+            [ -z "${!name:-}" ] || fail "${name}와 ${file_name}은 함께 지정할 수 없습니다"
+            host_file="$(abs_path "${!file_name}")"
+            [[ "$host_file" != *:* ]] || fail "${file_name} 경로에는 콜론을 쓸 수 없습니다"
+            [ -f "$host_file" ] && [ -r "$host_file" ] || fail "${file_name} 파일이 없거나 읽을 수 없습니다"
+            target=/run/secrets/synctx-render-secret
+            [ "$name" != SYNCTX_RENDER_SECRET_PREVIOUS ] || target=/run/secrets/synctx-render-secret-previous
+            printf -v "$mount_name" '%s' "$host_file"
+            printf -v "$file_name" '%s' "$target"
+            export "$file_name"
+        fi
+    done
 }
 
 # SYNCTX_SERVICES를 정해진 순서의 ENABLED 배열로 바꾼다

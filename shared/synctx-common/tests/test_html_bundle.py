@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from synctx_common.config import HtmlEmbedConfig
-from synctx_common.html_bundle import BundleError, bundle, repo_reader, resolve_path
+from synctx_common.html_bundle import BundleError, bundle, repo_reader, resolve_path, resolved_reader
 
 ORIGIN = "https://cdn.synctx.local"
 POLICY = HtmlEmbedConfig(enabled=True, allowed_origins=[ORIGIN])
@@ -616,4 +616,139 @@ def test_stylesheet_link_toggle_semantics_are_rejected(link):
     files = {"m/index.html": page(link), "m/dark.css": "p{}"}
     with pytest.raises(BundleError) as exc:
         bundle(reader(files), "m/index.html", POLICY)
+    assert exc.value.reason == "unsupported"
+
+
+def test_resolved_reader_only_reads_the_supplied_snapshot():
+    manager = MagicMock()
+    manager.read_resolved.return_value = b"snapshot"
+    manager.resolve_ref.side_effect = AssertionError("must not resolve or fetch")
+    read = resolved_reader(manager, "a" * 40)
+    assert read("m/a.js") == b"snapshot"
+    assert read("m/b.css") == b"snapshot"
+    assert [call[0] for call in manager.method_calls] == ["read_resolved", "read_resolved"]
+    assert [call.args for call in manager.read_resolved.call_args_list] == [
+        ("m/a.js", "a" * 40), ("m/b.css", "a" * 40),
+    ]
+
+
+def test_resolved_reader_maps_git_failure_to_the_missing_path():
+    manager = MagicMock()
+    error = subprocess.CalledProcessError(128, ["git", "show"])
+    manager.read_resolved.side_effect = error
+    with pytest.raises(FileNotFoundError) as exc:
+        resolved_reader(manager, "a" * 40)("m/missing.html")
+    assert exc.value.args == ("m/missing.html",)
+    assert exc.value.__cause__ is error
+    manager.resolve_ref.assert_not_called()
+
+
+def test_resolved_reader_maps_invalid_path_to_unsupported():
+    manager = MagicMock()
+    error = ValueError("Invalid path")
+    manager.read_resolved.side_effect = error
+    with pytest.raises(BundleError) as exc:
+        resolved_reader(manager, "a" * 40)("../outside.html")
+    assert exc.value.reason == "unsupported"
+    assert "../outside.html" in str(exc.value)
+    assert exc.value.__cause__ is error
+
+
+@pytest.mark.parametrize("origins", [[], [ORIGIN], [ORIGIN, "https://other.synctx.local:8443"]])
+def test_frame_src_only_changes_the_frame_csp_directive(origins):
+    default = csp_meta(origins)
+    assert csp_meta(origins, frame_src="'none'") == default
+    assert csp_meta(origins, frame_src="'self'") == default.replace("frame-src 'none'", "frame-src 'self'")
+    policy = HtmlEmbedConfig(enabled=True, allowed_origins=origins)
+    files = {"m/index.html": page(body='<iframe name="panel"></iframe>')}
+    original = bundle(reader(files), "m/index.html", policy)
+    assert bundle(reader(files), "m/index.html", policy, frame_src="'none'") == original
+    rendered = bundle(reader(files), "m/index.html", policy, frame_src="'self'")
+    assert rendered.html == original.html.replace("frame-src 'none'", "frame-src 'self'")
+    assert rendered.files == original.files
+
+
+@pytest.mark.parametrize("frame_src", ["none", "self", "*", "https://cdn.synctx.local", "'self'; script-src *", "", None])
+def test_invalid_frame_src_is_rejected_before_reading(frame_src):
+    with pytest.raises(ValueError):
+        csp_meta([ORIGIN], frame_src=frame_src)
+    read = MagicMock()
+    with pytest.raises(ValueError):
+        bundle(read, "m/index.html", POLICY, frame_src=frame_src)
+    read.assert_not_called()
+
+
+@pytest.mark.parametrize("tag", ["iframe", "frame"])
+@pytest.mark.parametrize("src", ["child.html", "./child.htm", "../child.html", "하위/자식.html", "child.HTML", "child.html?v=2#page", "child.htm?file=other.js#x", "child.html#other.js"])
+def test_self_frames_keep_relative_html_src_without_reading_children(tag, src):
+    markup = f'<{tag} name="panel" src="{src}"></{tag}><a href="next.html" target="panel">다음</a>'
+    read = MagicMock(side_effect=reader({"m/index.html": page(body=markup)}))
+    result = bundle(read, "m/index.html", POLICY, frame_src="'self'")
+    assert markup in result.html
+    assert result.files == ("m/index.html",)
+    read.assert_called_once_with("m/index.html")
+
+
+@pytest.mark.parametrize("frame_src", ["'none'", "'self'"])
+@pytest.mark.parametrize("tag", ["iframe", "frame"])
+def test_frames_without_initial_src_pass_in_both_modes(frame_src, tag):
+    markup = f'<{tag} name="panel"></{tag}><a target="panel" href="child.html">열기</a>'
+    result = bundle(reader({"m/index.html": page(body=markup)}), "m/index.html", POLICY, frame_src=frame_src)
+    assert markup in result.html
+    assert result.files == ("m/index.html",)
+
+
+@pytest.mark.parametrize("tag", ["iframe", "frame"])
+@pytest.mark.parametrize("src", ["../../outside.html", "%2e%2e/%2e%2e/outside.htm", "/root.html"])
+def test_self_frames_must_stay_inside_the_repository(tag, src):
+    files = {"m/index.html": page(body=f'<{tag} src="{src}"></{tag}>')}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", POLICY, frame_src="'self'")
+    assert exc.value.reason == "outside_repo"
+    assert exc.value.files == ("m/index.html",)
+    assert exc.value.missing == ()
+
+
+@pytest.mark.parametrize("tag", ["iframe", "frame"])
+@pytest.mark.parametrize(
+    "attrs",
+    [
+        'src="about:blank"', 'src="data:text/html,x"', 'srcdoc="<p>x</p>"',
+        'src="child.html" srcdoc="<p>x</p>"', 'src="child.html" srcdoc=""', 'srcdoc',
+        f'src="{ORIGIN}/child.html"', 'src="http://cdn.synctx.local/child.html"',
+        'src="//cdn.synctx.local/child.html"', 'src="https://["', 'src="javascript:alert(1)"',
+        'src="#child.html"', 'src="?file=child.html"', 'src="child.js"',
+        'src="child.js?file=child.html"', 'src="child.js#child.html"', 'src="child"',
+        'src=""', 'src', 'src=" "', 'src="child%00.html"', 'src="child%0a.html"',
+        'src="child.html" srcset="other.html"',
+    ],
+)
+def test_self_mode_still_rejects_unsupported_frame_sources(tag, attrs):
+    files = {"m/index.html": page(body=f'<{tag} {attrs}></{tag}>')}
+    with pytest.raises(BundleError) as exc:
+        bundle(reader(files), "m/index.html", POLICY, frame_src="'self'")
+    assert exc.value.reason == "unsupported"
+
+
+@pytest.mark.parametrize("tag", ["iframe", "frame"])
+def test_default_and_explicit_none_keep_rejecting_initial_frame_src(tag):
+    files = {"m/index.html": page(body=f'<{tag} name="panel" src="child.html"></{tag}>')}
+    for kwargs in ({}, {"frame_src": "'none'"}):
+        with pytest.raises(BundleError) as exc:
+            bundle(reader(files), "m/index.html", POLICY, **kwargs)
+        assert exc.value.reason == "unsupported"
+
+
+@pytest.mark.parametrize("frame_src", ["'none'", "'self'"])
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<video src="child.html"></video>', '<audio src="a.mp3"></audio>',
+        '<source src="a.mp4">', '<track src="a.vtt">', '<embed src="a.html">',
+        '<object data="a.html"></object>', '<base href="/">',
+    ],
+)
+def test_other_media_and_base_restrictions_are_unchanged(frame_src, markup):
+    with pytest.raises(BundleError) as exc:
+        bundle(reader({"m/index.html": page(body=markup)}), "m/index.html", POLICY, frame_src=frame_src)
     assert exc.value.reason == "unsupported"

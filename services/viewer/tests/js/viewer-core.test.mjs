@@ -379,3 +379,38 @@ test('파일 목록 상태 문구', () => {
   assert.equal(core.finderFileStatus('r', [], false), null);
   assert.equal(core.finderFileStatus('', null, false), null);
 });
+
+test('렌더 높이는 막대 높이를 빼고 0 이상으로 제한한다', () => {
+  assert.equal(core.renderViewportHeight(900, 120), 780);
+  assert.equal(core.renderViewportHeight(900.5, 120.25), 780.25);
+  assert.equal(core.renderViewportHeight(900, 0), 900);
+  assert.equal(core.renderViewportHeight(900, 900), 0);
+  assert.equal(core.renderViewportHeight(900, 1000), 0);
+  assert.equal(core.renderViewportHeight(0, 120), 0);
+});
+
+test('유효하지 않은 렌더 높이는 0으로 처리한다', () => {
+  for (const value of [undefined, null, '', '900', true, {}, [], NaN, Infinity, -Infinity, -1]) {
+    assert.equal(core.renderViewportHeight(value, 100), 0);
+    assert.equal(core.renderViewportHeight(900, value), 900);
+  }
+  assert.equal(core.renderViewportHeight(), 0);
+});
+
+test('렌더 비율은 양수 숫자와 공백을 포함한 W/H를 받는다', () => {
+  assert.equal(core.renderAspectRatio('16/9'), 16 / 9);
+  assert.equal(core.renderAspectRatio(' 4 / 3 '), 4 / 3);
+  assert.equal(core.renderAspectRatio('\t9 / 16\n'), 9 / 16);
+  assert.equal(core.renderAspectRatio('1.5 / .5'), 3);
+  assert.equal(core.renderAspectRatio('1/1'), 1);
+  assert.equal(core.renderAspectRatio(2.4), 2.4);
+  assert.equal(core.renderAspectRatio(Number.MIN_VALUE), Number.MIN_VALUE);
+});
+
+test('잘못된 렌더 비율과 0으로 나누기는 16/9로 복구한다', () => {
+  for (const value of [undefined, null, true, {}, [], NaN, Infinity, -Infinity, 0, -1,
+    '', ' ', '1.5', '16:9', '16/9/2', '16px/9', '16/0', '0/9', '-16/9', '16/-9',
+    'NaN/9', 'Infinity/9', '1e3/9', '1 6/9', '0x10/9', `${'9'.repeat(400)}/9`, `1/0.${'0'.repeat(400)}1`]) {
+    assert.equal(core.renderAspectRatio(value), 16 / 9);
+  }
+});

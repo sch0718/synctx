@@ -64,7 +64,7 @@ def test_one_container_uses_loopback_named_cache_and_standalone(docker, tmp_path
     assert values(args, "--publish") == ["127.0.0.1:18000:8000"]
     assert values(args, "--volume") == ["synctx-viewer-cache:/data/viewer"]
     assert values(args, "--name") == ["synctx-viewer"]
-    assert values(args, "--env") == ["GIT_READ_TOKEN", "SYNCTX_SERVICE_TOKEN", "SYNCTX_VIEWER_PUBLIC_BASE_URL", "SYNCTX_ENABLED_SERVICES=viewer"]
+    assert values(args, "--env") == ["GIT_READ_TOKEN", "SYNCTX_SERVICE_TOKEN", "SYNCTX_RENDER_SECRET", "SYNCTX_RENDER_SECRET_PREVIOUS", "SYNCTX_VIEWER_PUBLIC_BASE_URL", "SYNCTX_ENABLED_SERVICES=viewer"]
     sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
     assert f"synctx/viewer:0.6.0-{sha}" in args
     assert args[args.index("python") + 1] == "/app/services/viewer/src/standalone.py"
@@ -120,6 +120,60 @@ def test_tokens_pass_by_name_without_values(docker, tmp_path):
     assert result.returncode == 0, result.stderr
     assert "CUSTOM_GIT_TOKEN" in values(calls[0]["args"], "--env")
     assert "fake-secret" not in json.dumps(calls) + result.stdout + result.stderr
+
+
+def test_render_keys_are_forwarded_by_name_without_logging(docker, tmp_path):
+    docker.update(SYNCTX_RENDER_SECRET="current-never-print" * 2, SYNCTX_RENDER_SECRET_PREVIOUS="previous-never-print" * 2)
+    result, calls = run(docker, tmp_path, "--repo", REPO_URL)
+    assert result.returncode == 0, result.stderr
+    forwarded = values(calls[0]["args"], "--env")
+    assert "SYNCTX_RENDER_SECRET" in forwarded
+    assert "SYNCTX_RENDER_SECRET_PREVIOUS" in forwarded
+    assert "never-print" not in json.dumps(calls) + result.stdout + result.stderr
+
+
+def test_render_key_files_are_mounted_readonly_at_fixed_paths(docker, tmp_path):
+    for name, filename in [("SYNCTX_RENDER_SECRET_FILE", "synctx-render-secret"),
+                           ("SYNCTX_RENDER_SECRET_PREVIOUS_FILE", "synctx-render-secret-previous")]:
+        host = tmp_path / (filename + " with spaces")
+        host.write_text("file-secret-never-print" * 2)
+        docker[name] = host.name
+    result, calls = run(docker, tmp_path, "--repo", REPO_URL)
+    assert result.returncode == 0, result.stderr
+    args = calls[0]["args"]
+    for name, filename in [("SYNCTX_RENDER_SECRET_FILE", "synctx-render-secret"),
+                           ("SYNCTX_RENDER_SECRET_PREVIOUS_FILE", "synctx-render-secret-previous")]:
+        assert f"{tmp_path / docker[name]}:/run/secrets/{filename}:ro" in values(args, "--volume")
+        assert f"{name}=/run/secrets/{filename}" in values(args, "--env")
+        assert name not in values(args, "--env")
+    assert "file-secret-never-print" not in json.dumps(calls) + result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("name", ["SYNCTX_RENDER_SECRET", "SYNCTX_RENDER_SECRET_PREVIOUS"])
+@pytest.mark.parametrize("scenario", ["both", "missing", "colon", "directory"])
+def test_invalid_render_key_files_fail_before_docker(docker, tmp_path, name, scenario):
+    host = tmp_path / ("key:bad" if scenario == "colon" else "key")
+    if scenario == "directory":
+        host.mkdir()
+    elif scenario != "missing":
+        host.write_text("file-secret-never-print" * 2)
+    docker[name + "_FILE"] = str(host)
+    if scenario == "both":
+        docker[name] = "direct-secret-never-print" * 2
+    result, calls = run(docker, tmp_path, "--repo", REPO_URL)
+    assert result.returncode != 0
+    assert name + "_FILE" in result.stderr
+    assert "secret-never-print" not in result.stdout + result.stderr
+    assert not calls
+
+
+@pytest.mark.parametrize("name", ["SYNCTX_RENDER_SECRET_FILE", "SYNCTX_RENDER_SECRET_PREVIOUS_FILE",
+                                 "SYNCTX_RENDER_SECRET_FILE_MOUNT", "SYNCTX_RENDER_SECRET_PREVIOUS_FILE_MOUNT"])
+def test_render_file_environment_cannot_override_launcher(docker, tmp_path, name):
+    result, calls = run(docker, tmp_path, "--repo", REPO_URL, "--env", name)
+    assert result.returncode != 0
+    assert "launcher-managed" in result.stderr
+    assert not calls
 
 
 def test_public_url_environment_preserved_for_app_fallback(docker, tmp_path):

@@ -121,6 +121,14 @@ def prepare_config(args: argparse.Namespace) -> Path:
         data = load_config(args.config).model_dump(exclude_unset=True)
         if not data.get("repositories"):
             raise SystemExit("configuration must contain at least one repository")
+        source = yaml.safe_load(args.config.read_text())
+        source_viewer = source.get("viewer") or {}
+        if "render_token_ttl_seconds" in source_viewer:
+            data.setdefault("viewer", {})["render_token_ttl_seconds"] = source_viewer["render_token_ttl_seconds"]
+        for repo, original in zip(data["repositories"], source["repositories"]):
+            embed = original.get("html_embed") or {}
+            if "render_files" in embed:
+                repo.setdefault("html_embed", {})["render_files"] = embed["render_files"]
         for repo in data["repositories"]:
             try:
                 _repo(repo["url"])
@@ -164,6 +172,7 @@ def prepare_config(args: argparse.Namespace) -> Path:
             host = f"[{host}]" if ":" in host else host
             runtime["public_base_url"] = f"http://{host}:{args.port}"
     data.setdefault("viewer", {}).update(asset_source="bundled", repo_cache_path=str(cache / "repos"))
+    data["viewer"].setdefault("render_token_ttl_seconds", 14400)
     SynctxConfig.model_validate(data)
     serialized = yaml.safe_dump(data, allow_unicode=True, sort_keys=True)
     fingerprint = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -236,7 +245,7 @@ def main(argv: list[str] | None = None) -> None:
     os.environ["SYNCTX_CONFIG_PATH"] = str(config_path)
     os.environ["SYNCTX_ENABLED_SERVICES"] = "viewer"
     import uvicorn
-    uvicorn.run(create_app(args.refresh_interval), host=args.host, port=args.port, log_level="info")
+    uvicorn.run(create_app(args.refresh_interval), host=args.host, port=args.port, log_level="info", log_config=None)
 
 
 if __name__ == "__main__":

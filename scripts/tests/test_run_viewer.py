@@ -100,3 +100,47 @@ def test_composite_app_serves_viewer_marp_and_cdn(local_app):
         assert root.status_code in (302, 307)
         assert root.headers["location"] == "/view/"
         assert client.get("/drawio/").status_code == 404
+
+
+@pytest.mark.parametrize("ttl", [None, 7200])
+@pytest.mark.parametrize("embed", [None, {"enabled": True}, {"enabled": False, "render_files": True}, {"enabled": True, "render_files": True}])
+def test_local_render_config_preserves_ttl_and_explicit_trust_only(tmp_path, monkeypatch, ttl, embed):
+    monkeypatch.setenv("SYNCTX_RENDER_SECRET", "current-key-never-in-yaml" * 2)
+    monkeypatch.setenv("SYNCTX_RENDER_SECRET_PREVIOUS", "previous-key-never-in-yaml" * 2)
+    data = yaml.safe_load(yaml.safe_load(VALUES)["synctxConfig"]["data"])
+    if ttl is not None:
+        data["viewer"]["render_token_ttl_seconds"] = ttl
+    if embed is not None:
+        data["repositories"][0]["html_embed"] = embed
+    values = tmp_path / "values.yaml"
+    values.write_text(yaml.safe_dump({"synctxConfig": {"data": yaml.safe_dump(data)}}))
+    generated = run_viewer.build_local_config(values, 18000, tmp_path)
+    assert generated["viewer"]["render_token_ttl_seconds"] == (14400 if ttl is None else ttl)
+    assert generated["repositories"][0].get("html_embed") == embed
+    assert "never-in-yaml" not in yaml.safe_dump(generated)
+
+
+def test_local_render_config_does_not_create_key_environment(tmp_path, monkeypatch):
+    for name in ("SYNCTX_RENDER_SECRET", "SYNCTX_RENDER_SECRET_PREVIOUS", "SYNCTX_RENDER_SECRET_FILE", "SYNCTX_RENDER_SECRET_PREVIOUS_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    values = tmp_path / "values.yaml"
+    values.write_text(VALUES)
+    run_viewer.build_local_config(values, 18000, tmp_path)
+    import os
+    assert not any(name.startswith("SYNCTX_RENDER_SECRET") for name in os.environ)
+
+
+def test_main_keeps_synctx_log_masking_by_not_letting_uvicorn_replace_handlers(tmp_path, monkeypatch):
+    import os
+
+    import uvicorn
+
+    captured = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    monkeypatch.setattr(run_viewer, "create_app", lambda *args, **kwargs: object())
+    monkeypatch.setattr(run_viewer, "find_chrome", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["run_viewer.py", "--cache-dir", str(tmp_path), "--values", str(tmp_path / "v.yaml")])
+    monkeypatch.setattr(run_viewer, "build_local_config", lambda *args: {})
+    run_viewer.main()
+    assert "log_config" in captured and captured["log_config"] is None

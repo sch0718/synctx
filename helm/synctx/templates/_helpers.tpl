@@ -71,6 +71,32 @@ CronJob 메트릭을 받는 Pushgateway를 배포할 때 "true".
 서비스 옵션 의존성 검사. 차트가 .synctx.yaml을 만들지 않으면(synctxConfig.create=false) CDN 주소는 Viewer 시작 검사가 맡는다.
 */}}
 {{- define "synctx.validate" -}}
+{{- $render := .Values.viewer.renderTokenSecret | default dict }}
+{{- if and $render.create $render.existingSecret }}
+{{- fail "viewer.renderTokenSecret.create와 existingSecret은 함께 지정할 수 없습니다" }}
+{{- end }}
+{{- if and $render.create (not $render.current) }}
+{{- fail "viewer.renderTokenSecret.create=true이면 current가 필요합니다" }}
+{{- end }}
+{{- if and $render.previous (not $render.current) }}
+{{- fail "viewer.renderTokenSecret.previous만 지정할 수 없습니다. current가 필요합니다" }}
+{{- end }}
+{{- if .Values.synctxConfig.create }}
+{{- $cfg := fromYaml (.Values.synctxConfig.data | default "") }}
+{{- $viewer := get $cfg "viewer" | default dict }}
+{{- if hasKey $viewer "render_token_ttl_seconds" }}
+{{- $ttl := $viewer.render_token_ttl_seconds }}
+{{- if not (and (or (kindIs "float64" $ttl) (kindIs "int" $ttl) (kindIs "int64" $ttl)) (regexMatch "^[0-9]+$" (toString $ttl)) (gt (float64 $ttl) 0.0)) }}
+{{- fail "viewer.render_token_ttl_seconds는 양의 정수여야 합니다" }}
+{{- end }}
+{{- end }}
+{{- range $repo := $cfg.repositories }}
+{{- $embed := $repo.html_embed | default dict }}
+{{- if and (eq (toString $embed.enabled) "true") (eq (toString $embed.render_files) "true") (gt (int $.Values.viewer.replicaCount) 1) (not (or $render.create $render.existingSecret)) }}
+{{- fail "render_files=true인 저장소가 있고 viewer.replicaCount>1이면 viewer.renderTokenSecret의 create 또는 existingSecret이 필요합니다" }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if not (include "synctx.enabledServices" .) }}
 {{- fail "켜진 서비스가 없습니다. viewer·cdn·marp·slides·drawio·sync·feedback 중 하나 이상의 enabled를 true로 두세요" }}
 {{- end }}

@@ -488,6 +488,33 @@ class GitRepoManager:
         """여러 파일을 같은 ref로 읽을 때 fetch를 한 번만 하도록 해석 결과를 돌려준다."""
         return self._resolve_ref(ref)
 
+    def resolve_commit_sha(self, ref: str | None = None) -> str:
+        resolved = self.resolve_ref(ref)
+        result = self._run_git("rev-parse", "--verify", f"{resolved}^{{commit}}")
+        sha = result.stdout.decode("ascii").strip()
+        if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+            raise ValueError("커밋 SHA는 소문자 16진수 40자여야 합니다")
+        return sha
+
+    def ensure_commit_available(self, ref: str, sha: str) -> None:
+        if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+            raise ValueError("커밋 SHA는 소문자 16진수 40자여야 합니다")
+        commit = f"{sha}^{{commit}}"
+        try:
+            self._run_git("cat-file", "-e", commit)
+            return
+        except subprocess.CalledProcessError:
+            pass
+        try:
+            self._run_git("check-ref-format", "--branch", ref)
+            self._run_git("fetch", "origin", f"refs/heads/{ref}:refs/remotes/origin/{ref}")
+        except subprocess.CalledProcessError:
+            pass
+        try:
+            self._run_git("cat-file", "-e", commit)
+        except subprocess.CalledProcessError as exc:
+            raise FileNotFoundError(sha) from exc
+
     def read_file(self, path: str, ref: str | None = None) -> bytes:
         return self.read_resolved(path, self._resolve_ref(ref))
 

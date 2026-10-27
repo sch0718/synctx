@@ -324,3 +324,88 @@ def test_present_escape_leaves_open_evidence_popup_alone():
     js = (STATIC / "viewer.js").read_text(encoding="utf-8")
     present = js.split("function initPresent(")[1].split("\n  }\n")[0]
     assert "data-evidence-pop" in present
+
+
+def _render_js():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    return js.split("function initRender(")[1].split("\n  }\n")[0]
+
+
+def _embed_expand_js():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    return js.split("function initEmbedExpand(")[1].split("\n  }\n")[0]
+
+
+def test_render_and_embed_initializers_preserve_iframe_nodes_and_sources():
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    assert "initRender();" in js and "initEmbedExpand();" in js
+    for block in (_render_js(), _embed_expand_js()):
+        assert not re.search(r"\bsrcdoc\b|\.src\s*=|setAttribute\(['\"]src['\"]", block)
+        for forbidden in ("appendChild", "insertBefore", "cloneNode", "createElement", "innerHTML", "replaceChild", "replaceChildren"):
+            assert forbidden not in block
+
+
+def test_render_measures_bars_and_synchronizes_layout_controls():
+    render = _render_js()
+    for needle in ("[data-html-render]", "if (!root) return;", "[data-render-bars]", "getBoundingClientRect().height",
+                   "--render-bars-height", "'resize', measureBars", "ResizeObserver(measureBars)", "observer.observe(bar)",
+                   "data-render-layout", "'render-fit'", "'render-ratio'", "aria-pressed", "core.renderAspectRatio(", "--render-aspect"):
+        assert needle in render
+    assert "setLayout(root.getAttribute('data-render-layout'))" in render
+    assert "syncFullscreen();" in render
+
+
+def test_render_fullscreen_is_requested_by_click_and_failures_use_toast():
+    render = _render_js()
+    click = render.split("root.addEventListener('click', async function (e) {")[1]
+    assert "await root.requestFullscreen()" in click and "await document.exitFullscreen()" in click
+    assert "typeof root.requestFullscreen !== 'function'" in click
+    assert "typeof document.exitFullscreen !== 'function'" in click
+    assert re.search(r"catch\s*\([^)]*\)\s*\{\s*window\.synctxToast\(", click)
+    failure = click.split("catch (err)")[1]
+    assert "setLayout(" not in failure
+    assert "'fullscreenchange', syncFullscreen" in render
+    assert "fullscreen.setAttribute('aria-pressed', String(!!document.fullscreenElement))" in render
+
+
+def test_embed_expand_restores_focus_and_scroll_and_traps_tab():
+    embed = _embed_expand_js()
+    for needle in ("[data-html-embed]", "'embed-expand'", "'embed-close'", "el.closest('[data-html-embed]')",
+                   "close();", "opener = el", "scrollY = window.scrollY", "setAttribute('data-embed-expanded', 'true')",
+                   "removeAttribute('data-embed-expanded')", "classList.add('embed-scroll-lock')", "classList.remove('embed-scroll-lock')",
+                   "button.focus({ preventScroll: true })", "opener.focus({ preventScroll: true })", "window.scrollTo(0, scrollY)",
+                   "e.key === 'Escape'", "page-present", "dialog[open]", "e.key === 'Tab'", "e.shiftKey",
+                   "expanded.contains(document.activeElement)", "el.tabIndex >= 0", "el.getClientRects().length"):
+        assert needle in embed
+    assert re.search(r"document\.addEventListener\('keydown',[\s\S]*?stopImmediatePropagation[\s\S]*?,\s*true\)", embed)
+    assert "document.addEventListener('focusin'" in embed and "expanded.contains(e.target)" in embed
+    js = (STATIC / "viewer.js").read_text(encoding="utf-8")
+    keys = js.split("function initKeys(")[1].split("\n  }\n")[0]
+    assert "if ($('[data-embed-expanded=\"true\"]')) return;" in keys
+
+
+def test_render_css_sizes_stage_and_fullscreen_without_hiding_bars():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    stage = _rule(css, "[data-html-render] [data-render-stage]")
+    assert "width: 100%" in stage and "height: calc(100vh - var(--render-bars-height, 0px))" in stage
+    ratio = _rule(css, '[data-html-render][data-render-layout="ratio"] [data-render-stage]')
+    assert "aspect-ratio: var(--render-aspect, 1.7778)" in ratio and "max-height:" in ratio
+    frame = _rule(css, "[data-html-render] [data-render-frame]")
+    assert all(needle in frame for needle in ("width: 100%", "height: 100%", "border: 0", "background: #fff", "color: #1f2328"))
+    full = _rule(css, '[data-html-render][data-render-full="true"], [data-html-render]:fullscreen')
+    assert all(needle in full for needle in ("max-width: none", "margin: 0", "padding: 0"))
+    assert "height: calc(100vh - var(--render-bars-height, 0px))" in _rule(css, "[data-html-render]:fullscreen [data-render-stage]")
+    assert not re.search(r"\[data-render-bars\][^{]*\{[^}]*display:\s*none", css)
+
+
+def test_embed_css_expands_above_drawer_and_hides_close_only_when_collapsed():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    expanded = _rule(css, '[data-html-embed][data-embed-expanded="true"]')
+    assert all(needle in expanded for needle in ("position: fixed", "inset: 0", "z-index: 1200", "display: flex",
+                                               "background: var(--bg-card)", "color: var(--text-primary)"))
+    frame = _rule(css, '[data-html-embed][data-embed-expanded="true"] iframe')
+    assert "flex: 1" in frame and "min-height: 0" in frame and "height: 100% !important" in frame and "aspect-ratio: auto !important" in frame
+    assert "display: none" in _rule(css, '[data-html-embed]:not([data-embed-expanded="true"]) [data-action="embed-close"]')
+    close = _rule(css, '[data-html-embed][data-embed-expanded="true"] [data-action="embed-close"]')
+    assert all(needle in close for needle in ("position: absolute", "top:", "right:"))
+    assert "overflow: hidden" in _rule(css, "body.embed-scroll-lock")

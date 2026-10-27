@@ -97,3 +97,49 @@ class TestHTTPInstrumentation:
             service="test", method="GET", path="/healthz", status=200
         )._value.get()
         assert after == before
+
+
+@pytest.mark.parametrize("prefix", ["", "/view"])
+@pytest.mark.parametrize("status", [200, 403, 404, 422])
+def test_render_http_metrics_use_route_template_for_mounted_and_root_apps(prefix, status):
+    from fastapi.responses import JSONResponse
+
+    viewer = FastAPI()
+    register_observability_routes(viewer, version="test", service_name="render-test")
+
+    @viewer.get("/render/{token}/{repo_id}/{path:path}")
+    def render_html(token: str, repo_id: str, path: str):
+        return JSONResponse({"result": "test"}, status_code=status)
+
+    root = FastAPI()
+    root.mount(prefix or "/", viewer)
+    counter = http_requests_total.labels(service="render-test", method="GET",
+                                         path="/render/{token}/{repo_id}/{path}", status=status)
+    before = counter._value.get()
+    client = TestClient(root)
+    for token, repo, path in [("secret-token-a", "repo1", "docs/a.html"), ("secret-token-b", "repo2", "deep/path/b.htm")]:
+        assert client.get(f"{prefix}/render/{token}/{repo}/{path}").status_code == status
+    assert counter._value.get() == before + 2
+    samples = [sample for family in http_requests_total.collect() for sample in family.samples
+               if sample.labels.get("service") == "render-test"]
+    assert all(sample.labels["path"] == "/render/{token}/{repo_id}/{path}" for sample in samples)
+    assert "secret-token" not in repr(samples)
+
+
+def test_render_path_normalization_uses_route_instead_of_url():
+    from types import SimpleNamespace
+    from synctx_common.observability import _normalize_path
+
+    assert _normalize_path("/unrelated", SimpleNamespace(path="/render/{token}/{repo_id}/{path:path}")) == "/render/{token}/{repo_id}/{path}"
+    assert _normalize_path("/unrelated", SimpleNamespace(path="/view/render/{token}/{repo_id}/{path:path}")) == "/render/{token}/{repo_id}/{path}"
+    assert _normalize_path("/render/help", SimpleNamespace(path="/{repo_id}/{path:path}")) == "/render/help"
+
+
+def test_html_render_metric_has_only_bounded_result_and_repo_labels():
+    from synctx_common.observability import html_render_total
+
+    assert html_render_total._labelnames == ("repo_id", "result")
+    metric = html_render_total.labels(repo_id="unknown", result="denied_token")
+    before = metric._value.get()
+    metric.inc()
+    assert metric._value.get() == before + 1

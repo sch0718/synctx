@@ -1,11 +1,14 @@
 """scripts/docker/deploy.sh --check 테스트(검사·게이트웨이 설정 생성)."""
 
 import os
+import json
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "scripts" / "docker" / "deploy.sh"
@@ -381,3 +384,123 @@ def test_compose_wrapper_uses_enabled_profiles(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert set(result.stdout.split()) == {"gateway", "viewer", "cdn", "slides", "slides-git"}
+
+
+RENDER_NAMES = ("SYNCTX_RENDER_SECRET", "SYNCTX_RENDER_SECRET_PREVIOUS")
+
+
+@pytest.mark.parametrize("name", RENDER_NAMES)
+@pytest.mark.parametrize("scenario", ["both", "missing", "directory", "colon"])
+def test_deploy_rejects_invalid_render_files(tmp_path, name, scenario):
+    key = tmp_path / ("key:bad" if scenario == "colon" else "key")
+    if scenario == "directory":
+        key.mkdir()
+    elif scenario != "missing":
+        key.write_text("file-secret-never-print" * 2)
+    options = {name + "_FILE": shlex.quote(str(key))}
+    if scenario == "both":
+        options[name] = "direct-secret-never-print" * 2
+    result, conf = _check(tmp_path, **options)
+    assert result.returncode != 0
+    assert name + "_FILE" in result.stdout + result.stderr
+    assert "secret-never-print" not in result.stdout + result.stderr
+    assert not conf
+
+
+@pytest.mark.parametrize("files", [False, True])
+def test_deploy_render_secrets_do_not_enter_output_config_or_hash(tmp_path, files):
+    import hashlib
+
+    options = {}
+    for name in RENDER_NAMES:
+        if files:
+            key = tmp_path / name
+            key.write_text(name + "-never-print" * 3)
+            options[name + "_FILE"] = str(key)
+        else:
+            options[name] = name + "-never-print" * 3
+    result, calls = _deploy_with_fake_docker(tmp_path, 0, **options)
+    assert any(" up " in f" {call} " for call in calls)
+    output = result.stdout + result.stderr + "\n".join(calls)
+    assert "never-print" not in output
+    generated = tmp_path / "generated"
+    assert "never-print" not in "".join(path.read_text() for path in generated.iterdir() if path.is_file())
+    config = tmp_path / "synctx.yaml"
+    assert "never-print" not in config.read_text()
+    expected = hashlib.sha256(config.read_bytes()).hexdigest()
+    assert f"설정 해시: {expected}" in result.stdout
+    for name in RENDER_NAMES:
+        if files:
+            (tmp_path / name).write_text("changed-key-never-print" * 3)
+        else:
+            options[name] = "changed-key-never-print" * 3
+    changed, _ = _check(tmp_path, **options)
+    assert changed.returncode == 0, changed.stdout + changed.stderr
+    assert f"설정 해시: {expected}" in changed.stdout
+
+
+def _compose_render_config(tmp_path, options):
+    env_file = _write_env(tmp_path, options)
+    result = subprocess.run(
+        ["bash", str(WRAPPER), "--env-file", str(env_file), "--secrets-file", str(tmp_path / "none.env"),
+         "--", "config", "--format", "json"],
+        capture_output=True, text=True, env=_clean_env(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)["services"]["viewer"]
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+def test_compose_null_render_keys_match_bare_name_passthrough_when_unset(tmp_path):
+    viewer = _compose_render_config(tmp_path, {})
+    names = [name + suffix for name in RENDER_NAMES for suffix in ("", "_FILE")]
+    for name in names:
+        assert viewer["environment"].get(name) is None
+        assert viewer["environment"].get(name) != ""
+    compose = yaml.safe_load(COMPOSE.read_text())
+    compose["services"]["viewer"]["environment"] = [
+        name if value is None else f"{name}={value}"
+        for name, value in compose["services"]["viewer"]["environment"].items()
+    ]
+    comparison = tmp_path / "bare-names.yaml"
+    comparison.write_text(yaml.safe_dump(compose))
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(comparison), "--env-file", str(tmp_path / "synctx.env"),
+         "--profile", "viewer", "config", "--format", "json"],
+        capture_output=True, text=True, env=_clean_env(tmp_path),
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["services"]["viewer"]["environment"] == viewer["environment"]
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+def test_compose_passes_current_and_previous_direct_keys(tmp_path):
+    options = {name: name + "-test-key" * 4 for name in RENDER_NAMES}
+    viewer = _compose_render_config(tmp_path, options)
+    for name in RENDER_NAMES:
+        assert viewer["environment"][name] == options[name]
+        assert viewer["environment"].get(name + "_FILE") is None
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+@pytest.mark.parametrize("previous", [False, True])
+def test_compose_mounts_render_key_files_and_remaps_environment(tmp_path, previous):
+    options = {}
+    mounts = {}
+    for name, filename in zip(RENDER_NAMES, ("synctx-render-secret", "synctx-render-secret-previous")):
+        if name.endswith("PREVIOUS") and not previous:
+            continue
+        key = tmp_path / (filename + " with spaces")
+        key.write_text("file-key-never-serialize" * 2)
+        options[name + "_FILE"] = shlex.quote(str(key))
+        mounts[name] = (key, "/run/secrets/" + filename)
+    viewer = _compose_render_config(tmp_path, options)
+    for name, (host, target) in mounts.items():
+        assert viewer["environment"][name + "_FILE"] == target
+        assert viewer["environment"].get(name) is None
+        mount = next(v for v in viewer["volumes"] if v["target"] == target)
+        assert mount["source"] == str(host)
+        assert mount["read_only"] is True
+    if not previous:
+        assert viewer["environment"].get("SYNCTX_RENDER_SECRET_PREVIOUS_FILE") is None
+    assert "file-key-never-serialize" not in json.dumps(viewer)

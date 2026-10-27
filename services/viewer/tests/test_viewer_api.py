@@ -1264,3 +1264,488 @@ class TestErrorResponsesHideExceptionText:
         assert resp.status_code == 502
         assert resp.json()["detail"] == "Repository refresh failed"
         assert self.SECRET not in resp.text and self.SECRET not in caplog.text
+
+
+RENDER_SHA = "a" * 40
+RENDER_RESULTS = ("ok", "denied_token", "denied_dest", "disabled", "not_html", "too_large", "bundle_error")
+
+
+@pytest.fixture
+def html_render(client, mock_repo_manager, monkeypatch):
+    from types import SimpleNamespace
+
+    import app as viewer_app
+    from synctx_common.git_manager import GitRepoManager
+    from synctx_common.render_token import issue_render_token
+
+    policy = viewer_app.config.repositories[0].html_embed
+    policy.enabled = True
+    policy.render_files = True
+    policy.max_bundle_bytes = 4096
+    monkeypatch.setattr(viewer_app, "render_key", b"k" * 32)
+    monkeypatch.setattr(viewer_app, "render_previous_key", None)
+    manager = mock_repo_manager
+    manager.validate_path.side_effect = lambda path: GitRepoManager.validate_path(manager, path)
+    manager.resolve_commit_sha.return_value = RENDER_SHA
+    manager.blob_size_resolved.return_value = 100
+    files = {
+        "docs/index.html": b'<html><head><title>HTML</title></head><body><script src="app.js"></script><iframe name="pf" src="next.htm"></iframe><a href="next.htm" target="pf">next</a></body></html>',
+        "docs/app.js": b"window.snapshot = 1;",
+        "docs/next.htm": b"<html><body>next snapshot</body></html>",
+    }
+    manager.read_resolved.side_effect = lambda path, sha: files[path]
+    manager.read_file_text.return_value = "<html><body>source</body></html>"
+    token = issue_render_token("test-repo", "main", RENDER_SHA, key=viewer_app.render_key)
+    return SimpleNamespace(client=client, manager=manager, app=viewer_app, policy=policy, files=files,
+                           token=token, url=f"/render/{token}/test-repo/docs/index.html")
+
+
+def _assert_render_headers(response):
+    assert response.headers["Content-Security-Policy"] == "sandbox allow-scripts"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert "X-Frame-Options" not in response.headers
+
+
+def _render_counts(repo_id="test-repo"):
+    from synctx_common.observability import html_render_total
+
+    return {result: html_render_total.labels(repo_id=repo_id, result=result)._value.get() for result in RENDER_RESULTS}
+
+
+class TestHtmlRenderRoute:
+    @pytest.mark.parametrize("dest", ["iframe", "frame"])
+    def test_success_keeps_frames_and_uses_one_sha(self, html_render, dest):
+        env = html_render
+        before = _render_counts()
+        response = env.client.get(env.url, headers={"Sec-Fetch-Dest": dest})
+        assert response.status_code == 200
+        _assert_render_headers(response)
+        assert '<iframe name="pf" src="next.htm">' in response.text
+        assert '<a href="next.htm" target="pf">' in response.text
+        assert "frame-src 'self'" in response.text
+        assert "window.snapshot = 1;" in response.text
+        env.manager.ensure_commit_available.assert_called_once_with("main", RENDER_SHA)
+        env.manager.blob_size_resolved.assert_called_once_with("docs/index.html", RENDER_SHA)
+        assert [call.args for call in env.manager.read_resolved.call_args_list] == [
+            ("docs/index.html", RENDER_SHA), ("docs/app.js", RENDER_SHA),
+        ]
+        env.manager.resolve_ref.assert_not_called()
+        env.manager.resolve_commit_sha.assert_not_called()
+        after = _render_counts()
+        assert {r: after[r] - before[r] for r in RENDER_RESULTS} == {r: int(r == "ok") for r in RENDER_RESULTS}
+
+    @pytest.mark.parametrize("case,status,result", [
+        ("token", 403, "denied_token"),
+        ("no_dest", 403, "denied_dest"),
+        ("document", 403, "denied_dest"),
+        ("image", 403, "denied_dest"),
+        ("enabled", 403, "disabled"),
+        ("render_files", 403, "disabled"),
+        ("extension", 415, "not_html"),
+        ("pre_size", 413, "too_large"),
+        ("bundle_size", 413, "bundle_error"),
+    ])
+    def test_failures_and_result_counters(self, html_render, monkeypatch, case, status, result):
+        from synctx_common.html_bundle import BundleError
+
+        env = html_render
+        url = env.url
+        headers = {"Sec-Fetch-Dest": "iframe"}
+        if case == "token":
+            url = url.replace(env.token, "invalid")
+        elif case == "no_dest":
+            headers = {}
+        elif case in ("document", "image"):
+            headers["Sec-Fetch-Dest"] = case
+        elif case in ("enabled", "render_files"):
+            setattr(env.policy, case, False)
+        elif case == "extension":
+            url = url.replace("index.html", "index.txt")
+        elif case == "pre_size":
+            env.manager.blob_size_resolved.return_value = env.policy.max_bundle_bytes + 1
+        elif case == "bundle_size":
+            monkeypatch.setattr(env.app, "bundle", MagicMock(side_effect=BundleError("too_large", "大")))
+        before = _render_counts()
+        response = env.client.get(url, headers=headers)
+        assert response.status_code == status
+        _assert_render_headers(response)
+        after = _render_counts()
+        assert {r: after[r] - before[r] for r in RENDER_RESULTS} == {r: int(r == result) for r in RENDER_RESULTS}
+        env.manager.read_resolved.assert_not_called()
+        if case != "pre_size" and case != "bundle_size":
+            env.manager.ensure_commit_available.assert_not_called()
+
+    @pytest.mark.parametrize("case,status", [("authz", 403), ("sha", 404), ("file", 404), ("validation", 422), ("unexpected", 500)])
+    def test_json_errors_have_render_headers_and_no_result_count(self, html_render, monkeypatch, case, status):
+        from fastapi import Depends
+        from fastapi.routing import APIRoute
+
+        env = html_render
+        if case == "authz":
+            env.app.config.authz.enabled = True
+        elif case == "sha":
+            env.manager.ensure_commit_available.side_effect = FileNotFoundError("secret")
+        elif case == "file":
+            env.manager.blob_size_resolved.side_effect = FileNotFoundError("secret")
+        elif case == "unexpected":
+            env.manager.blob_size_resolved.side_effect = RuntimeError("secret")
+        else:
+            def validate(number: int):
+                return number
+
+            route = APIRoute("/render/{token}/{repo_id}/{path:path}", env.app.render_html,
+                             dependencies=[Depends(validate)])
+            monkeypatch.setattr(env.app.app.router, "routes", [route, *env.app.app.router.routes])
+        before = _render_counts()
+        response = env.client.get(env.url, headers={"Sec-Fetch-Dest": "iframe"})
+        assert response.status_code == status
+        assert response.headers["content-type"] == "application/json"
+        _assert_render_headers(response)
+        assert _render_counts() == before
+        assert "secret" not in response.text
+        if case == "sha":
+            assert "새로 고침" in response.json()["detail"]
+
+    def test_authz_headers_and_admin_role(self, html_render):
+        env = html_render
+        env.app.config.authz.enabled = True
+        env.app.config.authz.role_mappings.viewer = ["viewer-role"]
+        env.app.config.authz.role_mappings.platform_admin = ["admin-role"]
+        for role in ("viewer-role", "admin-role"):
+            response = env.client.get(env.url, headers={"Sec-Fetch-Dest": "iframe", "X-Forwarded-Groups": f"other, {role}"})
+            assert response.status_code == 200
+
+    def test_authz_failure_precedes_token_validation(self, html_render, monkeypatch):
+        env = html_render
+        env.app.config.authz.enabled = True
+        verify = MagicMock(side_effect=AssertionError("authz must run first"))
+        monkeypatch.setattr(env.app, "verify_render_token", verify)
+        response = env.client.get(env.url.replace(env.token, "invalid"))
+        assert response.status_code == 403
+        _assert_render_headers(response)
+        verify.assert_not_called()
+
+    def test_validation_order(self, html_render, monkeypatch):
+        from synctx_common.render_token import RenderTokenError
+
+        env = html_render
+        events = []
+
+        def access(groups):
+            events.append("authz")
+
+        def token(*args, **kwargs):
+            events.append("token")
+            return "main", RENDER_SHA
+
+        def policy(repo_id):
+            events.append("policy")
+            return env.policy
+
+        def path(value):
+            events.append("path")
+            return value
+
+        monkeypatch.setattr(env.app, "verify_viewer_access", access)
+        monkeypatch.setattr(env.app, "verify_render_token", token)
+        monkeypatch.setattr(env.app, "_html_embed_policy", policy)
+        env.manager.validate_path.side_effect = path
+        env.manager.ensure_commit_available.side_effect = lambda *args: events.append("sha")
+        env.manager.blob_size_resolved.side_effect = lambda *args: events.append("size") or 100
+        original_bundle = env.app.bundle
+
+        def bundle(*args, **kwargs):
+            events.append("bundle")
+            return original_bundle(*args, **kwargs)
+
+        monkeypatch.setattr(env.app, "bundle", bundle)
+        assert env.client.get(env.url, headers={"Sec-Fetch-Dest": "iframe"}).status_code == 200
+        assert events == ["authz", "token", "policy", "path", "sha", "size", "bundle"]
+        events.clear()
+        assert env.client.get(env.url).status_code == 403
+        assert events == ["authz", "token"]
+        events.clear()
+        monkeypatch.setattr(env.app, "verify_render_token", MagicMock(side_effect=RenderTokenError("bad")))
+        assert env.client.get(env.url).status_code == 403
+        assert events == ["authz"]
+
+    @pytest.mark.parametrize("reason,status", [("too_large", 413), ("missing_file", 404), ("unsupported", 422), ("outside_repo", 422)])
+    def test_bundle_errors_escape_message(self, html_render, monkeypatch, reason, status):
+        from synctx_common.html_bundle import BundleError
+
+        env = html_render
+        monkeypatch.setattr(env.app, "bundle", MagicMock(side_effect=BundleError(reason, '<img src=x onerror="bad"> & reason')))
+        response = env.client.get(env.url, headers={"Sec-Fetch-Dest": "iframe"})
+        assert response.status_code == status
+        assert '<img' not in response.text
+        assert '&lt;img src=x onerror=&quot;bad&quot;&gt; &amp; reason' in response.text
+        _assert_render_headers(response)
+
+    def test_actual_bundle_dependency_size_is_bundle_error(self, html_render):
+        env = html_render
+        env.files["docs/app.js"] = b"x" * env.policy.max_bundle_bytes
+        before = _render_counts()
+        response = env.client.get(env.url, headers={"Sec-Fetch-Dest": "iframe"})
+        assert response.status_code == 413
+        assert _render_counts()["bundle_error"] == before["bundle_error"] + 1
+        assert _render_counts()["too_large"] == before["too_large"]
+
+    def test_missing_bundle_dependency_returns_404(self, html_render):
+        import subprocess
+
+        env = html_render
+
+        def read(path, sha):
+            if path == "docs/app.js":
+                raise subprocess.CalledProcessError(128, ["git", "show"])
+            return env.files[path]
+
+        env.manager.read_resolved.side_effect = read
+        before = _render_counts()
+        response = env.client.get(env.url, headers={"Sec-Fetch-Dest": "iframe"})
+        assert response.status_code == 404
+        assert "docs/app.js" in response.text
+        _assert_render_headers(response)
+        assert _render_counts()["bundle_error"] == before["bundle_error"] + 1
+
+    @pytest.mark.parametrize("suffix", ["HTML", "HtM"])
+    def test_extension_ignores_case(self, html_render, suffix):
+        env = html_render
+        path = f"docs/index.{suffix}"
+        env.files[path] = b"<html><body>ok</body></html>"
+        assert env.client.get(env.url.replace("docs/index.html", path), headers={"Sec-Fetch-Dest": "iframe"}).status_code == 200
+
+    @pytest.mark.parametrize("url_repo", ["other", "test-repo"])
+    def test_unknown_repo_is_denied_and_label_is_bounded(self, html_render, url_repo):
+        from synctx_common.render_token import issue_render_token
+
+        env = html_render
+        token = issue_render_token(url_repo, "main", RENDER_SHA, key=env.app.render_key)
+        before = _render_counts("unknown")
+        response = env.client.get(f"/render/{token}/other/docs/index.html", headers={"Sec-Fetch-Dest": "iframe"})
+        assert response.status_code == 403
+        assert _render_counts("unknown")["denied_token"] == before["denied_token"] + 1
+        env.manager.ensure_commit_available.assert_not_called()
+
+    def test_root_escape_and_expiry_have_distinct_guidance(self, html_render):
+        from synctx_common.render_token import issue_render_token
+
+        env = html_render
+        root_escape = env.client.get(f"/render/{env.token}/test-repo/../other/index.html", headers={"Sec-Fetch-Dest": "iframe"})
+        expired_token = issue_render_token("test-repo", "main", RENDER_SHA, key=env.app.render_key, now=1, ttl_seconds=1)
+        expired = env.client.get(env.url.replace(env.token, expired_token), headers={"Sec-Fetch-Dest": "iframe"})
+        assert root_escape.status_code == expired.status_code == 403
+        assert "문서 주소 또는 토큰이 유효하지 않습니다" in root_escape.text
+        assert "유효 시간이 지났습니다" in expired.text
+        assert "유효 시간이 지났습니다" not in root_escape.text
+        assert "새로 고치세요" in expired.text
+
+    @pytest.mark.parametrize("prefix", ["", "/view"])
+    def test_mount_headers_and_http_metric_path(self, html_render, prefix):
+        from synctx_common.observability import http_requests_total
+        from standalone import create_app
+
+        env = html_render
+        app = env.app.app
+        if prefix:
+            app = create_app(viewer=env.app, refresh_interval=0)
+        metric = http_requests_total.labels(service="viewer", method="GET", path="/render/{token}/{repo_id}/{path}", status=200)
+        before = metric._value.get()
+        response = TestClient(app).get(prefix + env.url, headers={"Sec-Fetch-Dest": "iframe"})
+        assert response.status_code == 200
+        _assert_render_headers(response)
+        assert metric._value.get() == before + 1
+        assert not any(env.token in sample.labels.get("path", "") for family in http_requests_total.collect() for sample in family.samples)
+
+    @pytest.mark.parametrize("encoded", ["../secret.html", "%2e%2e/secret.html"])
+    def test_path_rejection_with_direct_asgi_request(self, html_render, encoded):
+        import asyncio
+        from urllib.parse import unquote
+
+        env = html_render
+        raw_path = f"/render/{env.token}/test-repo/{encoded}"
+        messages = []
+
+        async def request():
+            received = False
+
+            async def receive():
+                nonlocal received
+                if not received:
+                    received = True
+                    return {"type": "http.request", "body": b""}
+                await asyncio.Event().wait()
+
+            async def send(message):
+                messages.append(message)
+
+            scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"}, "method": "GET",
+                     "scheme": "http", "path": unquote(raw_path), "raw_path": raw_path.encode(), "query_string": b"",
+                     "root_path": "", "headers": [(b"host", b"testserver"), (b"sec-fetch-dest", b"iframe")],
+                     "server": ("testserver", 80), "client": ("testclient", 123), "http_version": "1.1"}
+            await env.app.app(scope, receive, send)
+
+        before = _render_counts()
+        asyncio.run(request())
+        start = next(m for m in messages if m["type"] == "http.response.start")
+        body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body").decode()
+        assert start["status"] == 400
+        assert "secret" not in body and "Invalid path" not in body
+        env.manager.validate_path.assert_called_once_with("../secret.html")
+        env.manager.ensure_commit_available.assert_not_called()
+        assert _render_counts() == before
+
+
+class TestHtmlRenderScreen:
+    @pytest.mark.parametrize("endpoint", ["/test-repo/docs/index.html", "/api/repos/test-repo/render?path=docs/index.html"])
+    @pytest.mark.parametrize("layout", [None, "full"])
+    def test_render_screen_token_dom_and_csp(self, html_render, monkeypatch, endpoint, layout):
+        import html
+        import re
+        from urllib.parse import parse_qs, urlsplit
+        from synctx_common.render_token import verify_render_token
+
+        env = html_render
+        issue = MagicMock(wraps=env.app.issue_render_token)
+        monkeypatch.setattr(env.app, "issue_render_token", issue)
+        monkeypatch.setattr(env.app, "load_render_keys", MagicMock(side_effect=AssertionError("request key reload")))
+        before = _render_counts()
+        params = {"mode": "render"}
+        if layout:
+            params["layout"] = layout
+        if "?" in endpoint:
+            params["path"] = "docs/index.html"
+        response = env.client.get(endpoint, params=params)
+        assert response.status_code == 200
+        assert "frame-src 'self'" in response.headers["Content-Security-Policy"]
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert "X-Synctx-Html-Render" not in response.headers
+        assert 'data-html-render data-render-layout="fit" data-render-aspect="16/9"' in response.text
+        assert 'data-render-bars' in response.text and 'data-render-stage' in response.text
+        assert 'data-action="render-fit" aria-pressed="true"' in response.text
+        assert 'data-action="render-ratio" aria-pressed="false"' in response.text
+        assert 'data-action="render-fullscreen"' in response.text
+        assert "HTML과 스크립트를 실행합니다" in response.text and "새로 고치세요" in response.text
+        frame = re.search(r'<iframe data-render-frame[^>]*src="([^"]+)"', response.text).group(1)
+        assert 'sandbox="allow-scripts"' in response.text
+        assert frame.startswith("/view/render/")
+        token = frame.split("/")[3]
+        assert verify_render_token(token, "test-repo", key=env.app.render_key) == ("main", RENDER_SHA)
+        issue.assert_called_once_with("test-repo", "main", RENDER_SHA, key=env.app.render_key,
+                                      ttl_seconds=env.app.config.viewer.render_token_ttl_seconds)
+        env.manager.resolve_commit_sha.assert_called_once_with("main")
+        env.manager.read_file_text.assert_not_called()
+        env.manager.read_resolved.assert_not_called()
+        assert _render_counts() == before
+        link = re.search(r'data-action="render-new-tab" href="([^"]+)" target="_blank" rel="noopener noreferrer"', response.text).group(1)
+        assert parse_qs(urlsplit(html.unescape(link)).query) == {"mode": ["render"], "layout": ["full"]}
+        if layout == "full":
+            assert 'data-render-full="true"' in response.text
+            assert "page-render-full" in response.text
+            assert 'id="shell-nav"' not in response.text
+            assert '<header' not in response.text
+        else:
+            assert 'data-render-full="true"' not in response.text
+            assert 'id="shell-nav"' in response.text
+            assert '<header' in response.text
+
+    @pytest.mark.parametrize("mode", [None, "source", "meeting"])
+    def test_source_has_links_without_issuing_token_and_ignores_layout(self, html_render, monkeypatch, mode):
+        env = html_render
+        issue = MagicMock(side_effect=AssertionError("source must not issue"))
+        monkeypatch.setattr(env.app, "issue_render_token", issue)
+        params = {"layout": "unrecognized", "ref": "feat/a&b"}
+        if mode:
+            params["mode"] = mode
+        response = env.client.get("/test-repo/docs/index.html", params=params)
+        assert response.status_code == 200
+        assert 'data-action="render-open" href="/view/test-repo/docs/index.html?mode=render&amp;ref=feat%2Fa%26b"' in response.text
+        assert 'data-action="render-new-tab" href="/view/test-repo/docs/index.html?mode=render&amp;layout=full&amp;ref=feat%2Fa%26b" target="_blank" rel="noopener noreferrer"' in response.text
+        assert 'data-render-frame' not in response.text
+        assert '/view/render/' not in response.text
+        assert "frame-src 'none'" in response.headers["Content-Security-Policy"]
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert "&lt;html&gt;" in response.text
+        issue.assert_not_called()
+        env.manager.resolve_commit_sha.assert_not_called()
+
+    @pytest.mark.parametrize("enabled,render_files,path", [
+        (False, False, "index.html"), (True, False, "index.html"), (False, True, "index.htm"),
+        (True, True, "script.js"), (True, True, "readme.md"),
+    ])
+    def test_non_renderable_mode_render_keeps_normal_csp_and_no_buttons(self, html_render, monkeypatch, enabled, render_files, path):
+        env = html_render
+        env.policy.enabled = enabled
+        env.policy.render_files = render_files
+        monkeypatch.setattr(env.app, "issue_render_token", MagicMock(side_effect=AssertionError("not enabled")))
+        response = env.client.get(f"/test-repo/docs/{path}", params={"mode": "render", "layout": "full"})
+        assert response.status_code == 200
+        assert 'data-html-render' not in response.text
+        assert 'data-action="render-open"' not in response.text
+        assert 'data-action="render-new-tab"' not in response.text
+        assert "frame-src 'none'" in response.headers["Content-Security-Policy"]
+        assert response.headers["X-Frame-Options"] == "DENY"
+
+    @pytest.mark.parametrize("failure", ["resolve_commit_sha", "blob_size_resolved"])
+    def test_error_screen_never_widens_csp(self, html_render, monkeypatch, failure):
+        env = html_render
+        getattr(env.manager, failure).side_effect = FileNotFoundError("missing")
+        issue = MagicMock(side_effect=AssertionError("error screen must not issue"))
+        monkeypatch.setattr(env.app, "issue_render_token", issue)
+        response = env.client.get("/test-repo/docs/index.html?mode=render")
+        assert response.status_code != 200
+        assert "frame-src 'none'" in response.headers["Content-Security-Policy"]
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert 'data-render-frame' not in response.text
+        issue.assert_not_called()
+
+    def test_invalid_render_layout_rejected(self, html_render):
+        response = html_render.client.get("/api/repos/test-repo/render?path=docs/index.html&mode=render&layout=ratio")
+        assert response.status_code == 422
+        html_render.manager.resolve_commit_sha.assert_not_called()
+
+    def test_selected_branch_token_pins_reads_after_branch_moves(self, html_render):
+        import re
+        from synctx_common.render_token import verify_render_token
+
+        env = html_render
+        env.app.config.viewer.render_token_ttl_seconds = 300
+        response = env.client.get("/test-repo/docs/index.html", params={"mode": "render", "ref": "feature/a"})
+        assert response.status_code == 200
+        frame = re.search(r'<iframe data-render-frame[^>]*src="([^"]+)"', response.text).group(1)
+        token = frame.split("/")[3]
+        assert verify_render_token(token, "test-repo", key=env.app.render_key) == ("feature/a", RENDER_SHA)
+        env.manager.resolve_commit_sha.assert_called_once_with("feature/a")
+        env.manager.resolve_commit_sha.return_value = "b" * 40
+        first = env.client.get(frame.removeprefix("/view"), headers={"Sec-Fetch-Dest": "iframe"})
+        second = env.client.get(frame.removeprefix("/view").replace("index.html", "next.htm") + "?ref=elsewhere",
+                                headers={"Sec-Fetch-Dest": "frame"})
+        assert first.status_code == second.status_code == 200
+        assert "next snapshot" in second.text
+        assert all(call.args[1] == RENDER_SHA for call in env.manager.read_resolved.call_args_list)
+        assert all(call.args == ("feature/a", RENDER_SHA) for call in env.manager.ensure_commit_available.call_args_list)
+        env.manager.resolve_ref.assert_not_called()
+        env.manager.resolve_commit_sha.assert_called_once()
+
+    def test_standalone_screen_uses_working_public_frame_url(self, html_render):
+        import re
+        from standalone import create_app
+
+        env = html_render
+        client = TestClient(create_app(viewer=env.app, refresh_interval=0))
+        screen = client.get("/view/test-repo/docs/index.html?mode=render&layout=full")
+        assert screen.status_code == 200
+        frame_url = re.search(r'<iframe data-render-frame[^>]*src="([^"]+)"', screen.text).group(1)
+        assert frame_url.startswith("/view/render/")
+        frame = client.get(frame_url, headers={"Sec-Fetch-Dest": "iframe"})
+        assert frame.status_code == 200
+        _assert_render_headers(frame)
+        assert screen.headers["X-Frame-Options"] == "DENY"
+
+    def test_render_path_text_in_source_does_not_trigger_header_exception(self, html_render):
+        response = html_render.client.get("/test-repo/docs/render/index.html")
+        assert response.status_code == 200
+        assert "frame-src 'none'" in response.headers["Content-Security-Policy"]
+        assert response.headers["X-Frame-Options"] == "DENY"

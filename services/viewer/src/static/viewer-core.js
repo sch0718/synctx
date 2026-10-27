@@ -251,6 +251,24 @@
   var MEETING_GUIDE_HIDDEN = 'hidden';
   function meetingGuideAutoOpen(stored) { return stored !== MEETING_GUIDE_HIDDEN; }
 
+  function renderViewportHeight(viewportHeight, barsHeight) {
+    if (typeof viewportHeight !== 'number' || !isFinite(viewportHeight) || viewportHeight < 0) return 0;
+    if (typeof barsHeight !== 'number' || !isFinite(barsHeight) || barsHeight < 0) barsHeight = 0;
+    return Math.max(0, viewportHeight - barsHeight);
+  }
+
+  function renderAspectRatio(aspect) {
+    var fallback = 16 / 9;
+    if (typeof aspect === 'number') return isFinite(aspect) && aspect > 0 ? aspect : fallback;
+    if (typeof aspect !== 'string') return fallback;
+    var parts = /^\s*(\d+(?:\.\d*)?|\.\d+)\s*\/\s*(\d+(?:\.\d*)?|\.\d+)\s*$/.exec(aspect);
+    if (!parts) return fallback;
+    var width = Number(parts[1]);
+    var height = Number(parts[2]);
+    var ratio = width / height;
+    return isFinite(width) && isFinite(height) && isFinite(ratio) && width > 0 && height > 0 && ratio > 0 ? ratio : fallback;
+  }
+
   root.SynctxViewerCore = {
     RECENT_LIMIT: RECENT_LIMIT,
     matchFiles: matchFiles,
@@ -271,5 +289,7 @@
     presentKeyAction: presentKeyAction,
     MEETING_GUIDE_HIDDEN: MEETING_GUIDE_HIDDEN,
     meetingGuideAutoOpen: meetingGuideAutoOpen,
+    renderViewportHeight: renderViewportHeight,
+    renderAspectRatio: renderAspectRatio,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -13,6 +13,20 @@ _SECRET_PATTERN = re.compile(
     r"(token|password|secret|api_key|credential|auth)[=:]\s*\S+",
     re.IGNORECASE,
 )
+_RENDER_TOKEN_PATTERN = re.compile(r'''(/render/)[^/\s?"'<>\\]+''')
+
+
+def _mask_render_tokens(value: str) -> str:
+    return _RENDER_TOKEN_PATTERN.sub(r"\1***", value)
+
+
+class RenderTokenFormatter(logging.Formatter):
+    def __init__(self, formatter):
+        super().__init__()
+        self.formatter = formatter
+
+    def format(self, record):
+        return _mask_render_tokens(self.formatter.format(record))
 
 
 class SynctxJsonFormatter(JsonFormatter):
@@ -43,7 +57,7 @@ class SynctxJsonFormatter(JsonFormatter):
         for key, value in log_record.items():
             if isinstance(value, str):
                 log_record[key] = _SECRET_PATTERN.sub(r"\1=***", value)
-        return super().serialize_log_record(log_record)
+        return _mask_render_tokens(super().serialize_log_record(log_record))
 
 
 def configure_logging(service_name: str = "", level: str | None = None) -> None:
@@ -64,12 +78,18 @@ def configure_logging(service_name: str = "", level: str | None = None) -> None:
 
     if log_format == "text":
         handler.setFormatter(
-            logging.Formatter(f"%(asctime)s [{service_name}] %(levelname)s %(name)s: %(message)s")
+            RenderTokenFormatter(logging.Formatter(f"%(asctime)s [{service_name}] %(levelname)s %(name)s: %(message)s"))
         )
     else:
         handler.setFormatter(SynctxJsonFormatter(service_name=service_name))
 
     root.addHandler(handler)
+
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        for access_handler in logging.getLogger(name).handlers:
+            formatter = access_handler.formatter or logging.Formatter()
+            if not isinstance(formatter, RenderTokenFormatter):
+                access_handler.setFormatter(RenderTokenFormatter(formatter))
 
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)

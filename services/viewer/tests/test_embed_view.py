@@ -194,3 +194,58 @@ def test_metric_counts_results(monkeypatch):
     client.get("/test-repo/docs/reconfig.md")
     after = html_bundle_total.labels(service="viewer", repo_id="test-repo", result="ok")._value.get()
     assert after == before + 1
+
+
+def test_viewer_wraps_existing_iframe_with_expand_and_hidden_close(monkeypatch):
+    from html.parser import HTMLParser
+
+    class Elements(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+            self.found = []
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if "data-html-embed" in attrs:
+                self.stack.append(tag)
+            if self.stack:
+                self.found.append((tag, attrs))
+
+        def handle_endtag(self, tag):
+            if self.stack and tag == self.stack[-1]:
+                self.stack.pop()
+
+    client = _client(monkeypatch, **{"test-repo": _manager()})
+    response = client.get("/test-repo/docs/reconfig.md")
+    parser = Elements()
+    parser.feed(response.text)
+    elements = parser.found
+    assert len([attrs for tag, attrs in elements if "data-html-embed" in attrs]) == 1
+    frame = next(attrs for tag, attrs in elements if tag == "iframe")
+    assert frame["class"] == "synctx-html"
+    assert frame["sandbox"] == "allow-scripts"
+    assert frame["title"] == "모션"
+    assert "window.v = 1;" in frame["srcdoc"]
+    expand = next(attrs for tag, attrs in elements if attrs.get("data-action") == "embed-expand")
+    close = next(attrs for tag, attrs in elements if attrs.get("data-action") == "embed-close")
+    assert expand["type"] == close["type"] == "button"
+    assert "hidden" not in expand and "hidden" in close
+
+
+def test_download_has_no_viewer_controls_and_keeps_none_frame_policy(monkeypatch):
+    client = _client(monkeypatch, **{"test-repo": _manager()})
+    response = client.get("/api/repos/test-repo/download?path=docs/reconfig.md&format=html")
+    assert response.status_code == 200
+    assert '<iframe class="synctx-html"' in response.text
+    assert "data-html-embed" not in response.text
+    assert "embed-expand" not in response.text and "embed-close" not in response.text
+    assert "frame-src &#x27;none&#x27;" in response.text
+
+
+def test_disabled_or_failed_blocks_have_no_expand_controls(monkeypatch):
+    client = _client(monkeypatch, **{"plain-repo": _manager(), "test-repo": _manager(files={})})
+    for repo in ("plain-repo", "test-repo"):
+        response = client.get(f"/{repo}/docs/reconfig.md")
+        assert "data-html-embed" not in response.text
+        assert "embed-expand" not in response.text and "embed-close" not in response.text

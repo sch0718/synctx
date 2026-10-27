@@ -47,6 +47,11 @@ def render_block(text, md_path, policy: HtmlEmbedConfig, read, source_href, down
     except BundleError as exc:
         return render_notice(ERROR_PREFIX + str(exc), block.src, source_href(block.src)), exc.reason
     iframe = to_iframe(result, block.aspect, block.height, block.title)
+    if not download:
+        iframe = ('<div data-html-embed>'
+                  '<button type="button" class="btn" data-action="embed-expand">크게 보기</button>'
+                  '<button type="button" class="btn" data-action="embed-close" hidden>닫기</button>'
+                  f'{iframe}</div>')
     if download and policy.allowed_origins:
         iframe = render_notice(CDN_NOTICE, None) + iframe
     return iframe, "ok"

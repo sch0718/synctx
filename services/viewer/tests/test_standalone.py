@@ -306,3 +306,51 @@ def test_config_with_invalid_repository_url_exits_without_leaking_secret(tmp_pat
     with pytest.raises(SystemExit) as exc:
         runtime().prepare_config(args)
     assert "secret" not in str(exc.value.code)
+
+
+@pytest.mark.parametrize("ttl", [None, 7200])
+@pytest.mark.parametrize("embed", [None, {"enabled": True}, {"enabled": False, "render_files": True}, {"enabled": True, "render_files": True}])
+def test_render_config_preserves_ttl_and_explicit_trust_only(tmp_path, monkeypatch, ttl, embed):
+    monkeypatch.setenv("SYNCTX_RENDER_SECRET", "current-never-in-config" * 2)
+    monkeypatch.setenv("SYNCTX_RENDER_SECRET_PREVIOUS", "previous-never-in-config" * 2)
+    source = {"repositories": [{"id": "docs", "name": "Docs", "url": "https://git.example/docs.git"}]}
+    if ttl is not None:
+        source["viewer"] = {"render_token_ttl_seconds": ttl}
+    if embed is not None:
+        source["repositories"][0]["html_embed"] = embed
+    config = tmp_path / "input.yaml"
+    config.write_text(yaml.safe_dump(source))
+    before = config.read_bytes()
+    args = runtime().parse_args(["--config", str(config), "--cache-dir", str(tmp_path / "cache")])
+    generated_path = runtime().prepare_config(args)
+    generated = yaml.safe_load(generated_path.read_text())
+    assert generated["viewer"]["render_token_ttl_seconds"] == (14400 if ttl is None else ttl)
+    assert generated["repositories"][0].get("html_embed") == embed
+    assert "never-in-config" not in generated_path.read_text()
+    assert config.read_bytes() == before
+
+
+def test_generated_repo_defaults_ttl_without_trust_or_key_environment(tmp_path, monkeypatch):
+    import os
+    for name in ("SYNCTX_RENDER_SECRET", "SYNCTX_RENDER_SECRET_PREVIOUS", "SYNCTX_RENDER_SECRET_FILE", "SYNCTX_RENDER_SECRET_PREVIOUS_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    args = runtime().parse_args(["--repo", "https://git.example/docs.git", "--cache-dir", str(tmp_path)])
+    generated = yaml.safe_load(runtime().prepare_config(args).read_text())
+    assert generated["viewer"]["render_token_ttl_seconds"] == 14400
+    assert "html_embed" not in generated["repositories"][0]
+    assert not any(name.startswith("SYNCTX_RENDER_SECRET") for name in os.environ)
+
+
+def test_main_keeps_synctx_log_masking_by_not_letting_uvicorn_replace_handlers(tmp_path, monkeypatch):
+    import os
+
+    import uvicorn
+
+    captured = {}
+    module = runtime()
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    monkeypatch.setattr(module, "create_app", lambda *args, **kwargs: object())
+    monkeypatch.setattr(module, "prepare_config", lambda args: tmp_path / "synctx.yaml")
+    module.main(["--repo", "https://git.example/a/docs.git", "--cache-dir", str(tmp_path)])
+    assert "log_config" in captured and captured["log_config"] is None

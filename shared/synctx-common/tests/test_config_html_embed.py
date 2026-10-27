@@ -6,6 +6,7 @@ from synctx_common.config import (
     PlatformHtmlEmbedConfig,
     RepoProfile,
     SynctxConfig,
+    ViewerConfig,
     normalize_origin,
 )
 
@@ -17,9 +18,11 @@ def _repo(**html_embed):
 def test_defaults():
     repo = RepoProfile(id="r", name="R", url="https://git.test/r.git")
     assert repo.html_embed.enabled is False
+    assert repo.html_embed.render_files is False
     assert repo.html_embed.allowed_origins == []
     assert repo.html_embed.max_bundle_bytes == 2097152
     assert SynctxConfig().html_embed.allowed_origins == []
+    assert SynctxConfig().viewer.render_token_ttl_seconds == 14400
 
 
 def test_origins_are_normalized_and_deduplicated():
@@ -100,3 +103,24 @@ def test_dedicated_account_is_optional_without_xwiki_or_when_disabled():
         {"targets": _xwiki_target(), "repositories": [_repo(enabled=True, xwiki_credential_env="XWIKI_HTML_CRED")]}
     )
     assert cfg.repositories[0].html_embed.xwiki_credential_env == "XWIKI_HTML_CRED"
+
+
+@pytest.mark.parametrize("ttl", [1, 60, 14400, 86400])
+def test_render_token_ttl_accepts_positive_values(ttl):
+    assert ViewerConfig(render_token_ttl_seconds=ttl).render_token_ttl_seconds == ttl
+    cfg = SynctxConfig.model_validate({"viewer": {"render_token_ttl_seconds": ttl}})
+    assert cfg.viewer.render_token_ttl_seconds == ttl
+
+
+@pytest.mark.parametrize("ttl", [0, -1, -14400])
+def test_render_token_ttl_rejects_zero_and_negative_values(ttl):
+    with pytest.raises(ValidationError):
+        ViewerConfig(render_token_ttl_seconds=ttl)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("render_files", [False, True])
+def test_html_embed_and_render_files_are_independent_opt_ins(enabled, render_files):
+    cfg = SynctxConfig.model_validate({"repositories": [_repo(enabled=enabled, render_files=render_files)]})
+    assert cfg.repositories[0].html_embed.enabled is enabled
+    assert cfg.repositories[0].html_embed.render_files is render_files

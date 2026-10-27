@@ -590,3 +590,131 @@ async def test_cached_clone_acquires_changed_default_branch_and_force_updates(tm
     assert changed.status == "ready"
     assert changed.head_sha_value == first
     assert changed.read_file_text("docs/a.md") == "v1\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ref", [None, "main", "feature/render"])
+@pytest.mark.parametrize("storage_mode", ["full", "shallow"])
+async def test_resolve_commit_sha_keeps_snapshot_after_later_fetch(tmp_path, remote, ref, storage_mode):
+    bare, work, _ = remote
+    manager = _manager(tmp_path, bare, storage_mode=storage_mode)
+    await manager.ensure()
+    branch = ref or "main"
+    if branch != "main":
+        _git(work, "checkout", "-q", "-b", branch)
+        (work / "docs/a.md").write_text("branch snapshot\n")
+        _git(work, "commit", "-qam", "branch snapshot")
+        _git(work, "push", "-q", "origin", branch)
+    expected_sha = _git(work, "rev-parse", "HEAD")
+    expected_content = (work / "docs/a.md").read_bytes()
+
+    snapshot = manager.resolve_commit_sha(ref)
+
+    assert snapshot == expected_sha
+    assert len(snapshot) == 40 and snapshot == snapshot.lower()
+    (work / "docs/a.md").write_text("after snapshot\n")
+    _git(work, "commit", "-qam", "after snapshot")
+    _git(work, "push", "-q", "origin", branch)
+    if branch == "main":
+        await manager.fetch()
+    else:
+        manager.resolve_ref(branch)
+    assert manager.resolve_commit_sha(ref) != snapshot
+    assert manager.read_resolved("docs/a.md", snapshot) == expected_content
+    assert manager.read_resolved("docs/a.md", f"origin/{branch}") == b"after snapshot\n"
+
+
+@pytest.mark.parametrize("stdout", [b"a" * 39, b"a" * 64, b"A" * 40, b"g" * 40, b"a" * 40 + b"\nother", b"\xff" * 40])
+def test_resolve_commit_sha_rejects_invalid_git_output(tmp_path, monkeypatch, stdout):
+    manager = _manager(tmp_path, tmp_path / "origin.git")
+    calls = []
+    monkeypatch.setattr(manager, "resolve_ref", lambda ref: "origin/main")
+
+    def run(*args):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    monkeypatch.setattr(manager, "_run_git", run)
+    with pytest.raises(ValueError):
+        manager.resolve_commit_sha()
+    assert calls == [("rev-parse", "--verify", "origin/main^{commit}")]
+
+
+@pytest.mark.asyncio
+async def test_ensure_commit_available_skips_fetch_when_present(tmp_path, remote, monkeypatch):
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    sha = manager.resolve_commit_sha()
+    original = manager._run_git
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_run_git", run)
+    assert manager.ensure_commit_available("main", sha) is None
+    assert calls == [("cat-file", "-e", f"{sha}^{{commit}}")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ref", ["main", "feature/render"])
+async def test_ensure_commit_available_fetches_even_default_branch_and_rechecks_sha(tmp_path, remote, monkeypatch, ref):
+    bare, work, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    if ref != "main":
+        _git(work, "checkout", "-q", "-b", ref)
+    (work / "docs/a.md").write_text("new remote commit\n")
+    _git(work, "commit", "-qam", "new remote commit")
+    _git(work, "push", "-q", "origin", ref)
+    sha = _git(work, "rev-parse", "HEAD")
+    original = manager._run_git
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_run_git", run)
+    assert manager.ensure_commit_available(ref, sha) is None
+    assert calls == [
+        ("cat-file", "-e", f"{sha}^{{commit}}"),
+        ("check-ref-format", "--branch", ref),
+        ("fetch", "origin", f"refs/heads/{ref}:refs/remotes/origin/{ref}"),
+        ("cat-file", "-e", f"{sha}^{{commit}}"),
+    ]
+    assert manager.read_resolved("docs/a.md", sha) == b"new remote commit\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ref", ["main", "missing-branch"])
+async def test_ensure_commit_available_reports_missing_sha_after_fetch(tmp_path, remote, monkeypatch, ref):
+    bare, _, _ = remote
+    manager = _manager(tmp_path, bare)
+    await manager.ensure()
+    original = manager._run_git
+    calls = []
+    sha = "a" * 40
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_run_git", run)
+    with pytest.raises(FileNotFoundError) as exc:
+        manager.ensure_commit_available(ref, sha)
+    assert exc.value.args == (sha,)
+    assert calls[0] == calls[-1] == ("cat-file", "-e", f"{sha}^{{commit}}")
+    assert ("fetch", "origin", f"refs/heads/{ref}:refs/remotes/origin/{ref}") in calls
+
+
+@pytest.mark.parametrize("sha", ["a" * 64, "A" * 40, "--help", "HEAD", "a" * 40 + "\n"])
+def test_ensure_commit_available_rejects_invalid_sha_before_git(tmp_path, monkeypatch, sha):
+    manager = _manager(tmp_path, tmp_path / "origin.git")
+    calls = []
+    monkeypatch.setattr(manager, "_run_git", lambda *args: calls.append(args))
+    with pytest.raises(ValueError):
+        manager.ensure_commit_available("main", sha)
+    assert calls == []
