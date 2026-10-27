@@ -241,9 +241,9 @@ authz:
 | `OUTBOUND_SMTP_CREDENTIAL` | Outbound Feedback Exporter | approved mail gateway send |
 | `OUTBOUND_FEEDBACK_HMAC_KEY` | Outbound Feedback Exporter, External Importer | event signature |
 | `OUTBOUND_FEEDBACK_HASH_SALT` | Outbound Feedback Exporter | changed_by pseudonymization |
-| `SYNCTX_RENDER_SECRET` | Viewer (추가 설계, 미구현) | 렌더 토큰 발급·검증. UTF-8 인코딩 뒤 32바이트 이상, 복수 인스턴스·프로세스는 공유 키 필수 |
-| `SYNCTX_RENDER_SECRET_PREVIOUS` | Viewer (추가 설계, 미구현) | 검증 전용 보조 키, 32바이트 이상. 보통 이전 키이며 교체 준비 단계에는 다음 키를 미리 넣음 |
-| `SYNCTX_RENDER_SECRET_FILE`·`SYNCTX_RENDER_SECRET_PREVIOUS_FILE` | Viewer (추가 설계, 미구현) | 해당 키의 mounted UTF-8 파일 경로. 직접 값과 동시 지정은 시작 오류 |
+| `SYNCTX_RENDER_SECRET` | Viewer (렌더 보기) | 렌더 토큰 발급·검증. UTF-8 인코딩 뒤 32바이트 이상, 복수 인스턴스·프로세스는 공유 키 필수 |
+| `SYNCTX_RENDER_SECRET_PREVIOUS` | Viewer (렌더 보기) | 검증 전용 보조 키, 32바이트 이상. 보통 이전 키이며 교체 준비 단계에는 다음 키를 미리 넣음 |
+| `SYNCTX_RENDER_SECRET_FILE`·`SYNCTX_RENDER_SECRET_PREVIOUS_FILE` | Viewer (렌더 보기) | 해당 키의 mounted UTF-8 파일 경로. 직접 값과 동시 지정은 시작 오류 |
 | `SYNCTX_SERVICE_TOKEN` | internal API | service-to-service. 값이 있을 때만 Viewer webhook이 `X-Service-Token` 헤더를 검사한다(현재 Helm·Compose는 주입하지 않음) |
 
 모든 Secret은 env 또는 mounted file로만 전달한다. 로그에는 credential 값과 credential이 포함된 URL을 출력하지 않는다.
@@ -275,7 +275,7 @@ CDN 업로드는 운영에서 `cdn-admin` 권한을 요구하는 방식으로 �
 - 스크립트 권한은 신뢰 저장소 전용 XWiki 계정(`repositories[].html_embed.xwiki_credential_env`)에만 대상 공간 한정으로 준다. 기본 동기화 계정에는 주지 않는다. XWiki가 작성자 권한으로 매크로를 실행하므로, 비신뢰 저장소가 본문에 직접 쓴 매크로는 기본 계정 권한으로 걸러진다. 프로그래밍 권한과 `attachment.download.whitelist` 변경은 하지 않는다.
 - 잔여 위험: iframe 자신의 주소 이동(`location.href`)과 WebRTC는 CSP·sandbox로 막을 수 없다. 신뢰 저장소 지정으로만 통제한다.
 
-HTML 렌더 보기 추가 설계(미구현, 상세는 `html-embed-design.md` 14장):
+HTML 렌더 보기(PR #63, 상세는 `html-embed-design.md` 14장):
 
 - 기본 소스 보기를 유지하고 `enabled`와 별도 opt-in `html_embed.render_files`(신규, 기본 false)가 모두 true인 저장소만 `mode=render`·`/render`를 연다. `enabled`만 켠 기존 저장소의 실행 범위는 확대하지 않는다. 두 플래그를 켜면 저장소 전체 `.html`·`.htm`과 모든 브랜치가 실행 대상이다. XWiki·Sync Engine은 바꾸지 않으며 Viewer·XWiki의 실효 정책 동등성은 `synctx-html` 블록에 한정한다.
 - 토큰은 `v1.{exp}.{ref_b64}.{sha}.{signature}`다. ref는 `origin/` 없는 브랜치명(생략 시 기본 브랜치), UTF-8 1~255바이트를 패딩 없는 base64url(2~340자)로 싣는다. 토큰 최대 419자, exp는 선행 0 없는 양의 ASCII 숫자 1~11자리, SHA는 소문자 16진수 40자다. SHA-256 object-format(64자) 저장소는 미지원이다. 서명은 `render|v1|{repo_id}|{ref}|{sha}|{exp}`의 HMAC-SHA256 앞 16바이트를 패딩 없는 base64url로 인코딩한다. exp는 원문 숫자 문자열 그대로, ref는 디코딩 원문을 쓰고 정규형·길이·전체 일치 정규식은 `html-embed-design.md` 14.2를 따른다. `path`는 서명하지 않아 같은 저장소·SHA 안 이동을 허용한다. 권한·두 플래그를 확인한 화면 생성 함수에서 발급하며 이를 공유하는 `render_file` API 응답에도 실릴 수 있다. 토큰 전용 발급 API는 두지 않는다.
@@ -289,7 +289,7 @@ HTML 렌더 보기 추가 설계(미구현, 상세는 `html-embed-design.md` 14�
 - `'self'`는 같은 출처 전체를 허용한다. `csp_middleware`는 `text/html`에만 CSP·XFO를 붙이므로 `/api` JSON·`/raw`에는 XFO가 없다. 같은 호스트의 `/cdn`·`/marp`·`/slides`·`/drawio`도 프레임에 들어갈 수 있으며 CDN은 XFO·CSP가 없고 SVG 업로드도 허용한다. 이 문서들은 sandbox는 물려받지만 합본 meta CSP의 네트워크 제한은 물려받지 않는 위험이 남는다. `config.runtime.public_base_url`(`app.py:158`)로 만든 `https://host/view/render/` 경로 소스로 좁히는 대안은 결정 필요다. sandbox 문서에서의 경로 매칭은 미확인이다.
 - 앱·접근 로그는 토큰 경로를 마스킹한다. 인그레스·EFK 로그에 남는 토큰의 위험은 알리고 수용하며 접근권한·보존 기간으로 관리한다. Edge·Firefox·Safari, 헤드리스 전체 화면 동작은 미확인이다. 신뢰 저장소·폐쇄망·외부 네트워크 금지와 기존 잔여 위험 통제는 유지한다.
 
-운영 전제 / 구현 전 시험(운영 SSO는 미확인): `pf`의 조상에 출처 `null`인 sandbox 문서가 있어 `Sec-Fetch-Site`가 cross-site가 되고 `SameSite=Lax`·`Strict` 인증 쿠키가 빠져 로그인으로 리다이렉트될 수 있다. 실제 운영 SSO 쿠키의 `SameSite`·`Secure` 속성으로 Viewer → 첫 sandbox 문서 → `pf` 대상의 2단계 중첩 요청과 링크 클릭을 시험하고 쿠키 송신·리다이렉트·인증 헤더를 확인한다. 로컬·무인증(`authz.enabled=false`) 사용은 이 전제와 무관하며 실제 Chromium에서 동작을 확인했다.
+운영 전제 / 운영 시험(운영 SSO는 미확인, PR #63 이후 남은 결정 C1): `pf`의 조상에 출처 `null`인 sandbox 문서가 있어 `Sec-Fetch-Site`가 cross-site가 되고 `SameSite=Lax`·`Strict` 인증 쿠키가 빠져 로그인으로 리다이렉트될 수 있다. 실제 운영 SSO 쿠키의 `SameSite`·`Secure` 속성으로 Viewer → 첫 sandbox 문서 → `pf` 대상의 2단계 중첩 요청과 링크 클릭을 시험하고 쿠키 송신·리다이렉트·인증 헤더를 확인한다. 로컬·무인증(`authz.enabled=false`) 사용은 이 전제와 무관하며 실제 Chromium에서 동작을 확인했다.
 
 실패 시 아래 대안은 결정 필요이며 아직 선택하지 않았다(상세 `html-embed-design.md` 14.12).
 
@@ -349,7 +349,7 @@ repositories:
       enabled: false   # 모든 Viewer 사용자에게 공개 가능한 저장소에만 true (회의 모드·협업 연동 대상)
     html_embed:
       enabled: false
-      render_files: false   # 추가 설계(미구현), enabled와 모두 true여야 Viewer 렌더 보기 허용
+      render_files: false   # enabled와 모두 true여야 Viewer 렌더 보기 허용
       allowed_origins: []
       max_bundle_bytes: 2097152
       xwiki_credential_env: null   # enabled: true이고 최상위 targets.xwiki가 있으면 Viewer 전용 저장소에도 필수(예: XWIKI_HTML_CREDENTIAL), 기본 동기화 계정과 달라야 함
@@ -410,7 +410,7 @@ viewer:
   asset_source: cdn                     # cdn(기본) | bundled(경량 실행에서 강제)
   repo_cache_path: "/data/repos"
   max_render_size_bytes: 5242880
-  render_token_ttl_seconds: 14400        # 추가 설계(미구현), 양의 정수, 기본 4시간
+  render_token_ttl_seconds: 14400        # 양의 정수, 기본 4시간
   cdn_base_url: "https://synctx.internal/cdn"
   marp_service_url: "http://synctx-marp:8000"   # PDF 다운로드 때 Viewer가 부르는 Marp 내부 주소
 
@@ -488,11 +488,11 @@ outbound_feedback:
 
 `html_embed`의 출처는 `https://호스트[:포트]`만 허용하고, 저장소 목록은 최상위 목록의 부분집합이어야 한다. 어기면 서비스가 시작되지 않는다. 신뢰 저장소(`enabled: true`)는 운영자만 지정한다(3.6).
 
-`repositories[].html_embed.render_files: bool = False`·`viewer.render_token_ttl_seconds`는 플랫폼 설정의 추가 설계이며 현재 모델에 없다. 렌더 보기·`/render`는 `enabled`·`render_files`가 모두 true여야 한다. 저장소 안 `.synctx.yaml`로는 켤 수 없다. 현행 공통 validator는 최상위 `targets.xwiki`가 있고 저장소가 `enabled`이면 Viewer 전용 저장소에도 기본 계정과 다른 `xwiki_credential_env`를 요구한다(`config.py:281-292`). 실제 XWiki 게시 대상에만 요구하는 방안(대상 판정·라우팅 변경 검증 필요), Viewer 설정 검사를 분리하는 방안(서비스별 설정 계약 관리 증가)은 결정 필요이며 현행 요건은 유지한다.
+`repositories[].html_embed.render_files: bool = False`·`viewer.render_token_ttl_seconds`는 플랫폼 설정이다. 렌더 보기·`/render`는 `enabled`·`render_files`가 모두 true여야 한다. 저장소 안 `.synctx.yaml`로는 켤 수 없다. 현행 공통 validator는 최상위 `targets.xwiki`가 있고 저장소가 `enabled`이면 Viewer 전용 저장소에도 기본 계정과 다른 `xwiki_credential_env`를 요구한다(`config.py:281-292`). 실제 XWiki 게시 대상에만 요구하는 방안(대상 판정·라우팅 변경 검증 필요), Viewer 설정 검사를 분리하는 방안(서비스별 설정 계약 관리 증가)은 결정 필요이며 현행 요건은 유지한다.
 
 `SYNCTX_RENDER_SECRET`·`SYNCTX_RENDER_SECRET_PREVIOUS`는 YAML에 값으로 넣지 않고 환경변수 또는 각각의 `_FILE` 변형으로 mounted UTF-8 파일을 참조한다(3.4). 같은 키의 직접 값·파일 동시 지정, 파일 읽기 실패, 32바이트 미만 키, 이전 키만 지정은 시작 오류다. 파일은 마지막 줄바꿈 하나(LF 또는 CRLF)만 제거한다. 키 생성은 `openssl rand -base64 32`를 쓰고 출력 텍스트 자체를 UTF-8 키로 사용하며 다시 디코딩하지 않는다. 현재 키 지정이 없으면 시작 때 무작위 32바이트를 만들어 단일 인스턴스·로컬에서 쓰고 재시작하면 기존 토큰은 무효다. 단일 파드도 롤링 중 구·신 파드 무작위 키가 공존하면 간헐 실패하므로 운영 렌더는 유지되는 공유 Secret을 쓴다. 복수 인스턴스·프로세스는 공유 현재 키가 필수이고 교체 중 보조 키도 공유한다. PREVIOUS는 보통 이전 키지만 교체 준비 단계에는 다음 키를 담는 검증 전용 슬롯이다.
 
-배포 추가 설계: Helm `viewer.renderTokenSecret`의 `create`·`existingSecret`·`current`·`previous`와 Secret 키 `render-secret`·`render-secret-previous`를 Viewer 환경변수에 연결한다. `create`·`existingSecret` 중복은 거부하고, 공유 키 참조 없는 복수 파드는 `render_files: true` 저장소가 하나라도 있을 때만 거부한다. 렌더를 쓰지 않는 기존 운영 업그레이드에는 후자 검증을 적용하지 않는다. `values-production.yaml`에는 렌더 키 참조를 두지 않는다. 렌더를 켜는 운영 배포가 `--set viewer.renderTokenSecret.existingSecret=<Secret 이름>` 또는 별도 values로 지정하며, 지정하지 않으면 Viewer 파드는 Secret 없이 뜬다. TTL은 `synctxConfig.data`의 `viewer`에 둔다. Docker Compose·`scripts/docker/run-viewer.sh`는 두 키와 `_FILE` 변형을 전달하고 파일 경로 사용 시 해당 파일을 마운트한다. `scripts/local/run_viewer.py`·`scripts/local/run-lite.sh`(실제 생성은 `standalone.py`)는 TTL을 자동 생성 설정에 반영한다. 키를 생성 YAML에 기록하거나 `enabled`·`render_files`를 자동으로 켜지 않는다. 구현 파일별 소유권은 `html-embed-design.md` 13장 WP4를 따른다.
+렌더 보기 배포: Helm `viewer.renderTokenSecret`의 `create`·`existingSecret`·`current`·`previous`와 Secret 키 `render-secret`·`render-secret-previous`를 Viewer 환경변수에 연결한다. `create`·`existingSecret` 중복은 거부하고, 공유 키 참조 없는 복수 파드는 `render_files: true` 저장소가 하나라도 있을 때만 거부한다. 렌더를 쓰지 않는 기존 운영 업그레이드에는 후자 검증을 적용하지 않는다. `values-production.yaml`에는 렌더 키 참조를 두지 않는다. 렌더를 켜는 운영 배포가 `--set viewer.renderTokenSecret.existingSecret=<Secret 이름>` 또는 별도 values로 지정하며, 지정하지 않으면 Viewer 파드는 Secret 없이 뜬다. TTL은 `synctxConfig.data`의 `viewer`에 둔다. Docker Compose·`scripts/docker/run-viewer.sh`는 두 키와 `_FILE` 변형을 전달하고 파일 경로 사용 시 해당 파일을 마운트한다. `scripts/local/run_viewer.py`·`scripts/local/run-lite.sh`(실제 생성은 `standalone.py`)는 TTL을 자동 생성 설정에 반영한다. 키를 생성 YAML에 기록하거나 `enabled`·`render_files`를 자동으로 켜지 않는다. 구현 파일별 소유권은 `html-embed-design.md` 13장 WP4를 따른다.
 
 `force_push_policy` 값은 다음 중 하나다.
 
@@ -828,12 +828,12 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | GET | `/api/search?q=&repo=&ref=` | viewer | 본문 검색(`{"query", "repos": [{"id", "name", "status", "truncated", "matches": [{"path", "line", "before", "match", "after"}]}]}`). `repo`가 없으면 모든 저장소. 검색어 2~100글자·줄바꿈 없음, `ref`는 `repo`와 함께만 쓰며 어기면 400, 모르는 저장소 404 |
 | GET | `/search?q=&repo=&ref=&ref_repo=` | viewer | 본문 검색 결과 HTML 페이지(`search`는 예약 경로) |
 | GET | `/api/repos/{repo_id}/render?ref=&path=&theme=&mode=` | viewer | Markdown HTML 렌더링 |
-| GET | `/render/{token}/{repo_id}/{path}` | viewer + 렌더 토큰 | 추가 설계(미구현). iframe 전용 HTML 합본. 상대 링크도 같은 토큰 SHA 사용. 공개 주소는 `/view/render/…` |
+| GET | `/render/{token}/{repo_id}/{path}` | viewer + 렌더 토큰 | iframe 전용 HTML 합본. 상대 링크도 같은 토큰 SHA 사용. 공개 주소는 `/view/render/…` |
 | GET | `/raw/{repo_id}/{path}?ref=` | viewer | 원본 파일. png·jpg·gif·webp·svg는 그 이미지 형식, 나머지는 `application/octet-stream`. SVG에는 스크립트를 막는 CSP(`default-src 'none'; style-src 'unsafe-inline'; sandbox`)와 `nosniff` |
 | GET | `/api/repos/{repo_id}/download?path=&format=raw\|html\|pdf&ref=` | viewer | 원본·변환 다운로드(기본 `raw`, `pdf`는 Marp 호출) |
 | GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음, 근거 모음·말풍선 포함). 회의 모드 조건 불충족 404 |
 | GET | `/api/repos/{repo_id}/board/{version}` | viewer | 스크럼 보드 HTML |
-| GET | `/`, `/{repo_id}?ref=&path=`, `/{repo_id}/{path}?ref=&theme=&mode=` | viewer | 화면 경로: 저장소 목록, 폴더 화면, 문서 화면(`mode=meeting` 회의 모드, `mode=present` 발표 화면). 추가 설계: 신뢰 저장소 HTML의 `mode=render`, 새 탭 `layout=full` |
+| GET | `/`, `/{repo_id}?ref=&path=`, `/{repo_id}/{path}?ref=&theme=&mode=` | viewer | 화면 경로: 저장소 목록, 폴더 화면, 문서 화면(`mode=meeting` 회의 모드, `mode=present` 발표 화면, 신뢰 저장소 HTML의 `mode=render`, 새 탭 `layout=full`) |
 | POST | `/api/repos/{repo_id}/webhook` | viewer + service token | Git push 알림(저장소 fetch). `SYNCTX_SERVICE_TOKEN`이 있으면 `X-Service-Token`이 같아야 한다 |
 
 보안:
@@ -845,8 +845,8 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - HTML은 sanitization 또는 신뢰 저장소 정책 중 하나를 명시한다. 운영 기본값은 신뢰 저장소 + CSP다.
 - 저장소의 SVG는 `/raw/`에서 `image/svg+xml`로 주되 `sandbox` CSP와 `nosniff`를 붙인다. 본문의 `<img>`로는 스크립트가 원래 실행되지 않고, 주소를 직접 열어도 sandbox 때문에 실행되지 않는다.
 - `synctx-html` 블록은 sanitizer를 거친 뒤 자리표시를 sandbox iframe으로 채운다. 본문에 직접 쓴 `<iframe>`·`<script>`는 계속 지운다. CSP는 `font-src`에 `data:`, 각 지시어에 최상위 `html_embed.allowed_origins`를 더한다.
-- 추가 설계: 실제 `mode=render` 화면만 `frame-src 'self'`로 바꾸고 XFO `DENY`는 유지한다. 나머지 Viewer HTML 화면은 `frame-src 'none'`·XFO `DENY`를 유지한다. `/render`는 `scope["route"]`의 경로 함수·이름 또는 응답 표식으로 식별하고 `csp_middleware`의 CSP·XFO 덮어쓰기에서 제외해 JSON 오류에도 3.6의 헤더를 쓴다. standalone Mount 아래 `/view/render/…`와 K8s `/render/…` 양쪽을 처리하며 경로 문자열만으로 판별하지 않는다. 소스 보기의 "렌더링 / 새 탭에서 렌더링" 버튼은 `enabled`·`render_files`가 모두 true인 저장소의 HTML에만 보인다. 새 탭은 같은 `mode=render&layout=full` 화면이며 `/render`를 직접 열지 않는다.
-- 추가 설계: `/render`의 토큰·요청 대상·신뢰 거부는 403, 비HTML은 415, 경로 거부는 400, 크기 초과는 413, 파일 없음은 404다. `BundleError`는 크기 413·누락 404·그 밖의 합본 실패 422로 이스케이프한 오류 HTML을 낸다. 토큰 만료는 원래 Viewer 화면 새로 고침 안내를 준다. 루트 초과 `../`가 다른 repo_id로 풀려 서명이 불일치하면 "문서 주소 또는 토큰이 유효하지 않습니다. 원래 Viewer 화면에서 다시 여세요"로 구분한다. 오류에도 같은 sandbox·no-referrer·no-store 헤더를 붙인다. 크게 보기 래퍼·버튼은 Viewer 화면에만 넣고 `download?format=html`에는 넣지 않는다.
+- 렌더 보기: 실제 `mode=render` 화면만 `frame-src 'self'`로 바꾸고 XFO `DENY`는 유지한다. 나머지 Viewer HTML 화면은 `frame-src 'none'`·XFO `DENY`를 유지한다. `/render`는 `scope["route"]`의 경로 함수·이름 또는 응답 표식으로 식별하고 `csp_middleware`의 CSP·XFO 덮어쓰기에서 제외해 JSON 오류에도 3.6의 헤더를 쓴다. standalone Mount 아래 `/view/render/…`와 K8s `/render/…` 양쪽을 처리하며 경로 문자열만으로 판별하지 않는다. 소스 보기의 "렌더링 / 새 탭에서 렌더링" 버튼은 `enabled`·`render_files`가 모두 true인 저장소의 HTML에만 보인다. 새 탭은 같은 `mode=render&layout=full` 화면이며 `/render`를 직접 열지 않는다.
+- 렌더 보기: `/render`의 토큰·요청 대상·신뢰 거부는 403, 비HTML은 415, 경로 거부는 400, 크기 초과는 413, 파일 없음은 404다. `BundleError`는 크기 413·누락 404·그 밖의 합본 실패 422로 이스케이프한 오류 HTML을 낸다. 토큰 만료는 원래 Viewer 화면 새로 고침 안내를 준다. 루트 초과 `../`가 다른 repo_id로 풀려 서명이 불일치하면 "문서 주소 또는 토큰이 유효하지 않습니다. 원래 Viewer 화면에서 다시 여세요"로 구분한다. 오류에도 같은 sandbox·no-referrer·no-store 헤더를 붙인다. 크게 보기 래퍼·버튼은 Viewer 화면에만 넣고 `download?format=html`에는 넣지 않는다.
 - 회의 메모는 서버로 보내지 않는다. 브라우저 localStorage에만 저장하고, `<script>` 안 JSON은 `<`·`>`·`&`·U+2028·U+2029를 유니코드 이스케이프로 인코딩한다.
 - 회의 문서의 근거 발췌는 같은 저장소와 `synctx.meeting.references`가 가리키는 **설정에 있는 저장소**의 Git blob만 읽는다. 없는 저장소·파일, `..`으로 저장소 루트를 벗어나는 경로, 제어 문자나 점으로 시작하는 경로 조각, `viewer.max_render_size_bytes`를 넘는 파일은 근거로 쓰지 않는다. Viewer 권한은 저장소 단위가 아니라 `viewer` 역할 하나라 다른 저장소 발췌를 보여 줘도 권한이 넓어지지 않는다. 한 문서에서 처리하는 근거 링크는 200개, 서로 다른 근거 파일은 50개까지다.
 - 근거 발췌는 렌더링한 뒤 **발췌 전용 허용 목록 정화**를 거친다. 허용 태그(문단·강조·코드·인용·목록·표·제목·`hr`·`span`·`div`) 밖의 태그는 글자만 남기고, `script`·`style`·`iframe`·`object`·`embed`·`template`·`noscript`는 내용째 지우며, 모든 속성을 지운다(표의 숫자 `colspan`·`rowspan`만 남김). `a`는 글자만, `img`는 `[그림: alt]` 글자로 바꾸므로 `javascript:` 링크·외부 이미지·`style`이 남지 않는다. 말풍선·근거 모음 데이터는 `<script type="application/json">` 안에서 위 유니코드 이스케이프로 넣고, 메모 포함 HTML의 근거 부분에는 외부 참조(`http(s):`)가 없다.
@@ -1247,7 +1247,7 @@ scripts/docker/deploy.sh [--env-file 경로] [--secrets-file 경로] [--check]
 
 Secret, token, Basic Auth, signed URL은 마스킹한다.
 
-추가 설계: `/render/` 뒤 토큰 세그먼트는 앱·uvicorn 접근 로그의 text/JSON·예외·인자형 URL 모두에서 가린다. 공개 `/view/render/`도 포함한다. 현재 키=값 마스킹만으로는 경로 토큰을 가릴 수 없다. route·응답 표식과 Mount 정보를 써서 standalone `/view/render/…`·K8s `/render/…`를 함께 식별하고 원문 URL도 마스킹한다. 인그레스·EFK에 남는 토큰은 위험을 알리고 수용한다(3.6).
+`/render/` 뒤 토큰 세그먼트는 앱·uvicorn 접근 로그의 text/JSON·예외·인자형 URL 모두에서 가린다. 공개 `/view/render/`도 포함한다. 키=값 마스킹만으로는 경로 토큰을 가릴 수 없으므로 text·JSON 포매터가 최종 출력에서 `/render/` 뒤 세그먼트를 `***`로 바꾼다(`synctx_common.logging`). 인그레스·EFK에 남는 토큰은 위험을 알리고 수용한다(3.6).
 
 ### 9.2 Metrics
 
@@ -1267,10 +1267,10 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `synctx_feedback_redacted_fields_total` (반출 이벤트에서 뺀 필드 수, 이벤트의 `ignored_fields` 개수 합)
 - `synctx_feedback_mail_failures_total`
 - `synctx_feedback_last_success_timestamp` (실패 없이 끝난 실행의 시각)
-- `synctx_html_render_total{repo_id, result}` (추가 설계·제안, 미구현. `result`: `ok`, `denied_token`, `denied_dest`, `disabled`, `not_html`, `too_large`, `bundle_error`. `too_large`는 합본 전 `blob_size_resolved` 사전 413, `bundle_error`는 합본 중 실패·크기 초과. `/render` 결과만 집계, 토큰·SHA·경로 라벨 금지, 모르는 저장소는 `unknown`)
+- `synctx_html_render_total{repo_id, result}` (`result`: `ok`, `denied_token`, `denied_dest`, `disabled`, `not_html`, `too_large`, `bundle_error`. `too_large`는 합본 전 `blob_size_resolved` 사전 413, `bundle_error`는 합본 중 실패·크기 초과. `/render` 결과만 집계, 토큰·SHA·경로 라벨 금지, 모르는 저장소는 `unknown`)
 - `synctx_html_bundle_total` (synctx-html 블록 처리 결과. `result`: `ok`, `disabled`, `missing_file`, `outside_repo`, `disallowed_host`, `too_large`, `invalid_block`, `unsupported`)
 
-추가 설계: HTTP 메트릭은 `scope["route"]`·응답 표식으로 렌더 경로를 식별해 standalone `/view/render`·K8s `/render` 모두 `/render/{token}/{repo_id}/{path}` 고정 라벨로 정규화한다. 현행 `_normalize_path`는 이 경로를 처리하지 않는다. authz·경로 거부·파일 조회 실패는 기존 HTTP 상태별 메트릭으로 확인한다. 신규 렌더 Alert 임계값은 운영 확인 뒤 정한다.
+HTTP 메트릭은 `scope["route"]`로 렌더 경로를 식별해 standalone `/view/render`·K8s `/render` 모두 `/render/{token}/{repo_id}/{path}` 고정 라벨로 정규화한다(`_normalize_path`). authz·경로 거부·파일 조회 실패는 기존 HTTP 상태별 메트릭으로 확인한다. 신규 렌더 Alert 임계값은 운영 확인 뒤 정한다.
 
 수집 경로:
 
@@ -1336,7 +1336,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 | Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
 | Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·`synctx-html` 블록 한 줄 안내·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
-| HTML render (추가 설계) | WP1 단위 + WP2 TestClient·로그·메트릭 + WP3 `node --test`·DOM·실제 브라우저 + WP4 배포 검사 | ref 포함 정규형 토큰·만료·교체 키·`_FILE`·SHA reader 예외 변환, 독립 clone 파드 2개 중 한쪽만 fetch 후 다른 쪽 SHA 재확인·404, 두 플래그 opt-in·재시작 후 해제, 읽기 전 크기 검사·사전 413 라벨, `%2e%2e` 경로 400, authz 403·FastAPI 422·404 JSON 오류의 sandbox/no-referrer/no-store, standalone 경로의 CSP·메트릭·로그, 상대 `target=pf` 중첩 문서, 소스 보기 유지, iframe 재로드 없는 확대·복귀, 토큰 로그 비노출·라벨 정규화, 두 로컬·Docker 경로와 Helm 키 전달. 운영 SSO 쿠키 SameSite·Secure의 2단계 중첩 요청은 구현 전 시험이며 로컬·무인증 Chromium 결과와 구분. 렌더 미사용 운영 업그레이드 회귀와 롤링 키 공존 검증 포함. Chromium spike는 설계 근거이며 구현 수용 시험은 별도(상세 `html-embed-design.md` 14.9) |
+| HTML render | WP1 단위 + WP2 TestClient·로그·메트릭 + WP3 `node --test`·DOM·실제 브라우저 + WP4 배포 검사 | ref 포함 정규형 토큰·만료·교체 키·`_FILE`·SHA reader 예외 변환, 독립 clone 파드 2개 중 한쪽만 fetch 후 다른 쪽 SHA 재확인·404, 두 플래그 opt-in·재시작 후 해제, 읽기 전 크기 검사·사전 413 라벨, `%2e%2e` 경로 400, authz 403·FastAPI 422·404 JSON 오류의 sandbox/no-referrer/no-store, standalone 경로의 CSP·메트릭·로그, 상대 `target=pf` 중첩 문서, 소스 보기 유지, iframe 재로드 없는 확대·복귀, 토큰 로그 비노출·라벨 정규화, 두 로컬·Docker 경로와 Helm 키 전달. 운영 SSO 쿠키 SameSite·Secure의 2단계 중첩 요청은 운영 시험(미완료)이며 로컬·무인증 Chromium 결과와 구분. 렌더 미사용 운영 업그레이드 회귀와 롤링 키 공존 검증 포함. Chromium spike는 설계 근거이며 구현 수용 시험은 별도(상세 `html-embed-design.md` 14.9) |
 | Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync·Feedback fake Pushgateway | Sync·Feedback Alert 발생·미발생 시점, 실행 간 누적값, 0 기준값, push 그룹 |
 | Viewer 화면·검색 | pytest(`viewer_ui`·`search`·`linear_inline` 단위, Viewer TestClient) + `node --test`(viewer-core.js) | 상단 바·서랍·오류 안내 화면 이스케이프, 본문 검색 기한·동시 실행 제한·상태, 파일 찾기·최근 문서, Markdown 인라인 렌더 결과가 python-markdown과 같음, 오류 `detail` 고정 문구·git 인증정보 가림 |
 | 배포 옵션 | pytest(`scripts/tests`: `helm template`, `deploy.sh`·`compose.sh`, `run-viewer.sh`, `run-lite.sh`, `seed_cdn.py`) | 서비스 옵션과 D1·D2·D8 렌더 실패, Pushgateway 배포 조건, 게이트웨이 설정·`nginx -t`·TLS·신뢰 프록시 검사, 로컬 Viewer 설정 생성, 경량 소스·단일 컨테이너 인자·캐시·Secret·빌드 위임(fake Docker), CDN 시드 |
@@ -1561,13 +1561,13 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
   - 신뢰 해제·계정 교체 때 XWiki content author가 실제로 바뀌는지
   - dev 클러스터에서 ServiceMonitor `synctx-pushgateway`(Prometheus Operator)로 `job="synctx-sync"` 계열이 수집되는지
 
-추가 설계(아래 항목은 미구현):
+추가 설계: HTML 렌더 보기(PR #63에서 WP1~WP4 구현)
 
-- [ ] WP1 ref 포함 `render_token`·정규형·`_FILE`·`bundle(frame_src=…)`·`resolved_reader` 예외 변환·`HtmlEmbedConfig.render_files`·`ViewerConfig.render_token_ttl_seconds`·`resolve_commit_sha`·`ensure_commit_available`와 단위 테스트
-- [ ] WP2 `/render`·`mode=render`·소스 보기 버튼·DOM 계약·CSP 예외·로그 마스킹·렌더 메트릭과 서버 테스트
-- [ ] WP3 화면 맞춤·비율·전체 화면·새 탭, `synctx-html` 블록 크게 보기·Esc·포커스 복귀와 클라이언트 테스트
-- [ ] WP4 WP1 설정·환경변수 이름 확정 후 Helm Secret·values-production 복수 파드 조건·Docker 키/파일 전달·두 로컬 실행 경로의 설정 생성·문서 반영과 배포 검사
-- [ ] 구현 전 운영 SSO 쿠키 SameSite·Secure의 2단계 중첩 요청 시험과 실패 시 대안 선택. 로컬·무인증 사용과 분리
+- [x] WP1 ref 포함 `render_token`·정규형·`_FILE`·`bundle(frame_src=…)`·`resolved_reader` 예외 변환·`HtmlEmbedConfig.render_files`·`ViewerConfig.render_token_ttl_seconds`·`resolve_commit_sha`·`ensure_commit_available`와 단위 테스트
+- [x] WP2 `/render`·`mode=render`·소스 보기 버튼·DOM 계약·CSP 예외·로그 마스킹·렌더 메트릭과 서버 테스트
+- [x] WP3 화면 맞춤·비율·전체 화면·새 탭, `synctx-html` 블록 크게 보기·Esc·포커스 복귀와 클라이언트 테스트
+- [x] WP4 WP1 설정·환경변수 이름 확정 후 Helm Secret·values-production 복수 파드 조건·Docker 키/파일 전달·두 로컬 실행 경로의 설정 생성·문서 반영과 배포 검사
+- [ ] 운영 SSO 쿠키 SameSite·Secure의 2단계 중첩 요청 시험과 실패 시 대안 선택. 로컬·무인증 사용과 분리
 - [ ] 구현 후 Chromium 중첩 프레임·독립 캐시 파드 2개 중 한쪽만 fetch·만료/404 복구·JSON 오류 헤더·standalone 경로·실제 클릭 전체 화면 수용 시험, Edge·Firefox·Safari 확인
 
 완료 기준:
@@ -1670,7 +1670,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 3. 켜진 서비스가 없거나(D1), CDN이 꺼졌는데 `viewer.cdn_base_url`이 상대 경로이거나(D2), 메트릭이 켜졌는데 Sync·Feedback이 sync-state PVC 없이 켜져 있으면(D8) `helm upgrade`가 렌더 단계에서 실패한다. 메시지를 보고 옵션이나 `.synctx.yaml`을 고친다.
 4. 업그레이드는 `helm upgrade ... -f values-production.yaml`처럼 values 파일을 넘겨 실행하고 `--reuse-values`는 쓰지 않는다. `--reuse-values`는 이전 릴리스 값을 그대로 써서 차트에 새로 생긴 기본값이 빠진다. `viewer`·`cdn`·`marp`·`slides`·`drawio`·`sync`는 `enabled` 키가 없으면 켜진 것으로 보므로 서비스 옵션이 없던 릴리스를 올려도 서비스가 사라지지는 않는다(`feedback`은 키가 없으면 꺼짐).
 
-### 12.9 HTML 렌더 토큰 만료·키 교체 (추가 설계, 미구현)
+### 12.9 HTML 렌더 토큰 만료·키 교체
 
 1. `denied_token`이 늘면 만료인지 전 인스턴스의 공유 키 불일치인지 확인한다. 키·토큰 값은 로그로 출력하지 않는다. `denied_dest`면 브라우저가 `Sec-Fetch-Dest`를 보내고 프록시가 전달하는지 확인한다. 헤더가 없으면 구형 브라우저도 403이며 검사를 완화하지 않는다.
 2. 만료·무작위 키 서버 재시작 뒤에는 `/render` 주소가 아니라 원래 `/view/{repo_id}/{path}?mode=render` 화면을 새로 고친다. iframe 오류 안내에서 이 절차를 설명한다. 토큰은 화면 생성 함수에서 다시 발급하며 이를 공유하는 `render_file` API에도 나갈 수 있다. 토큰 전용 발급 API는 없다. 만료는 실행 중인 문서를 강제 종료하지 않으며 다음 링크·프레임 요청부터 실패한다.

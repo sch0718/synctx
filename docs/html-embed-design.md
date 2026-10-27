@@ -1,6 +1,6 @@
 # 인터랙티브 HTML 임베드 설계
 
-> 상태: `synctx-html` 블록은 Phase 9로 구현됐다(PR #27 이후 보강 포함). HTML 렌더 보기(`mode=render`, 14장)와 크게 보기 오버레이는 설계 단계이며 아직 구현되지 않았다. 이 문서는 설계 기록이며, 현행 구조 요약은 `docs/architecture.md` Phase 9, 설정·보안·운영 절차는 `docs/production-service-design.md`에 있다. 아래 `지금`·`기존`은 구현 전을 기준으로 쓴 표현이다.
+> 상태: `synctx-html` 블록은 Phase 9로 구현됐다(PR #27 이후 보강 포함). HTML 렌더 보기(`mode=render`, 14장)와 크게 보기 오버레이는 PR #63에서 구현했다(WP1~WP4). 운영 SSO 중첩 요청 시험(C1)과 Chromium 외 브라우저 확인은 남아 있다. 이 문서는 설계 기록이며, 현행 구조 요약은 `docs/architecture.md` Phase 9, 설정·보안·운영 절차는 `docs/production-service-design.md`에 있다. 아래 `지금`·`기존`은 구현 전을 기준으로 쓴 표현이다.
 
 ## 1. 개요
 
@@ -301,7 +301,7 @@ repositories:
     url: https://gitlab.internal/infra/example-infra.git
     html_embed:
       enabled: true
-      render_files: false   # 추가 설계(미구현), HTML 파일 렌더 보기는 별도 opt-in
+      render_files: false   # HTML 파일 렌더 보기는 별도 opt-in
       allowed_origins: ["https://cdn.corp.example.com"]
       max_bundle_bytes: 2097152
       xwiki_credential_env: XWIKI_HTML_CREDENTIAL
@@ -361,7 +361,7 @@ repositories:
 | 동기화 계정 권한 남용 | 스크립트 권한은 신뢰 저장소 전용 계정에만, 공간에 한정해 준다. 이 계정으로 작성되는 페이지 내용은 Git 원본에서만 나온다 |
 | 비신뢰 저장소가 본문에 `{{html}}`·`{{velocity}}`를 직접 씀 | 비신뢰 저장소는 스크립트 권한 없는 기본 계정으로 게시하므로 XWiki가 걸러 낸다. 신뢰 저장소 전용 계정은 설정 검사로 기본 계정과 분리한다 |
 
-다음은 렌더 보기의 추가 보안 설계다(미구현).
+다음은 렌더 보기의 추가 보안 설계다.
 
 | 위협 | 대응 |
 |---|---|
@@ -421,7 +421,7 @@ repositories:
 6. 문서 반영(12장)
 7. 룰 엔진 클러스터 모션 그래픽으로 종단 확인 (Viewer, 로컬 XWiki) — 로컬에서 수행했다(PR #27)
 
-### 렌더 보기 작업 묶음 (설계, 미구현)
+### 렌더 보기 작업 묶음 (설계, PR #63에서 구현)
 
 기존 1~7번은 `synctx-html` 블록의 구현 기록이다. 렌더 보기는 아래 계약을 기준으로 나눈다. 각 파일은 한 묶음만 소유한다. 새 파일은 아래에 `(신규 설계)`로 표시하며 아직 존재하지 않는다. WP1의 인터페이스와 WP2의 DOM 계약을 먼저 고정하면 별도 세션에서 구현하고 통합할 수 있다. WP2의 실행 검증은 WP1 완료 뒤에 한다. WP3는 WP2 DOM 계약을 고정한 마크업을 fixture로 써서 먼저 구현할 수 있으며, 실제 WP2 출력과의 통합 시험은 WP2 완료 뒤에 한다. WP4는 WP1의 설정·환경변수 이름(`_FILE` 포함)을 확정한 뒤 시작한다.
 
@@ -475,7 +475,7 @@ WP4의 기존 생성 함수 시그니처는 `build_local_config(values_file: Pat
 
 ### 14.1 목적·구성 요소
 
-설계 단계다. `.html`·`.htm`의 기본 소스 보기를 유지하고 `html_embed.enabled`와 `html_embed.render_files`가 모두 true인 저장소에서만 실행 화면을 연다. 사내 문서 위계 HTML의 첫 화면에서 링크를 누르면 원래의 `<iframe name="pf">` 오른쪽 패널에 대상 HTML이 열리게 한다. 원본의 링크·`target`·프레임 이름을 유지하고 CSS·JS·그림은 기존 합본 규칙을 적용한다. XWiki·Sync Engine·`synctx-html` 블록의 합본 기본 동작은 바꾸지 않는다.
+PR #63에서 구현했다. `.html`·`.htm`의 기본 소스 보기를 유지하고 `html_embed.enabled`와 `html_embed.render_files`가 모두 true인 저장소에서만 실행 화면을 연다. 사내 문서 위계 HTML의 첫 화면에서 링크를 누르면 원래의 `<iframe name="pf">` 오른쪽 패널에 대상 HTML이 열리게 한다. 원본의 링크·`target`·프레임 이름을 유지하고 CSS·JS·그림은 기존 합본 규칙을 적용한다. XWiki·Sync Engine·`synctx-html` 블록의 합본 기본 동작은 바꾸지 않는다.
 
 | 구성 요소 | 위치 | 역할 |
 |---|---|---|
@@ -594,7 +594,7 @@ Docker Compose는 `deploy/docker/compose.yaml`의 Viewer 환경변수와 `script
 
 ### 14.8 관측성
 
-제안 메트릭은 `synctx_html_render_total{repo_id, result}`다(미구현). `result`는 `ok`, `denied_token`, `denied_dest`, `disabled`, `not_html`, `too_large`, `bundle_error`다. `too_large`는 합본 전 `blob_size_resolved` 사전 검사에서 거부한 413, `bundle_error`는 합본 중 오류(크기 초과 포함)다. `/render` 응답 결과를 세며 화면의 토큰 발급은 세지 않는다. 알 수 없는 `repo_id`는 고정값 `unknown`으로 묶고 토큰·SHA·문서 경로는 라벨에 넣지 않는다.
+메트릭은 `synctx_html_render_total{repo_id, result}`다. `result`는 `ok`, `denied_token`, `denied_dest`, `disabled`, `not_html`, `too_large`, `bundle_error`다. `too_large`는 합본 전 `blob_size_resolved` 사전 검사에서 거부한 413, `bundle_error`는 합본 중 오류(크기 초과 포함)다. `/render` 응답 결과를 세며 화면의 토큰 발급은 세지 않는다. 알 수 없는 `repo_id`는 고정값 `unknown`으로 묶고 토큰·SHA·문서 경로는 라벨에 넣지 않는다.
 
 접근 로그와 앱 로그의 `/render/` 다음 세그먼트를 가린다. 공개 `/view/render/`도 포함하고, 성공·실패·예외·text/JSON 출력 모두에 적용한다. `uvicorn.access`의 인자형 URL도 가리며 현재 로그 레벨을 낮춰 둔 것만으로 대체하지 않는다. 현행 `SynctxJsonFormatter`의 키=값 마스킹은 경로 토큰을 가리지 못한다. 기존 HTTP 메트릭 `_normalize_path`도 이 경로를 처리하지 않으므로 `scope["route"]`·응답 표식을 기준으로 `/render/{token}/{repo_id}/{path}` 고정 라벨로 정규화한다. 로그 식별도 같은 기준과 마운트 정보를 사용하고 접근 로그의 원문 URL도 가린다. 경로 문자열 하나만 가정하지 않으며 standalone `/view/render/…`·K8s `/render/…` 모두 토큰 유출·카디널리티 증가를 막는다.
 
