@@ -774,3 +774,45 @@ class TestEvidence:
         data = _evidence_json(text)
         for piece in [listing] + [e["html"] for e in data["entries"]]:
             assert "javascript:" not in piece and "<script" not in piece and "onclick" not in piece  # 문서 전체가 아니라 근거 부분만 본다
+
+
+class TestJitsiIntegration:
+    @pytest.mark.parametrize('query', ['', '?mode=meeting', '?mode=present'])
+    def test_jitsi_assets_and_configuration_in_all_meeting_views(self, client, manager, monkeypatch, query):
+        from datetime import datetime, timezone
+        from synctx_common.config import JitsiConfig
+        import app
+        monkeypatch.setattr(app.config.collab, 'jitsi', JitsiConfig(
+            enabled=True, public_url='https://meet.synctx.local', app_id='synctx'))
+        manager.read_file_text.return_value = meeting_doc(starts_at=datetime.now(timezone.utc).isoformat())
+        response = client.get('/test-repo/docs/m.md' + query)
+        assert response.status_code == 200
+        markup = response.text
+        raw = re.search(r'<script type="application/json" id="jitsi-config">(.*?)</script>', markup).group(1)
+        cfg = json.loads(raw)
+        assert cfg['enabled'] is True and cfg['doc'] == 'test-repo:docs/m.md'
+        assert cfg['endpoint'] == '/view/api/meetings/test-repo/dx-21/jitsi'
+        assert cfg['public_url'] == 'https://meet.synctx.local'
+        assert markup.index('id="jitsi-config"') < markup.index('meeting/jitsi-core.js') < markup.index('meeting/jitsi.js')
+        assert 'meeting/jitsi.css' in markup.split('</head>')[0]
+        assert 'data-jitsi-join' in markup
+        assert 'disabled>참여' not in markup
+        assert 'JITSI_APP_SECRET' not in markup and 'room_secret' not in markup
+        assert 'data-jitsi-join' not in article(markup)
+        if query == '?mode=present':
+            assert re.search(r'<header class="present-top">.*?data-jitsi-join', markup)
+
+    @pytest.mark.parametrize('query,collab,reason', [('', True, '영상 회의가 꺼져'),
+                                                    ('?mode=present&ref=dev', True, '기본 브랜치'),
+                                                    ('', False, '회의 연동 대상')])
+    def test_unavailable_buttons_are_disabled_with_text(self, client, manager, query, collab, reason):
+        manager.profile = _profile(collab)
+        manager.read_file_text.return_value = meeting_doc()
+        markup = client.get('/test-repo/docs/m.md' + query).text
+        assert 'disabled>참여' in markup and reason in markup
+
+    def test_export_has_no_jitsi_scripts_or_token(self, client, manager):
+        manager.read_file_text.return_value = meeting_doc()
+        response = client.get('/api/repos/test-repo/meeting-export?path=docs/m.md')
+        assert response.status_code == 200
+        assert 'jitsi.js' not in response.text and 'jitsi-config' not in response.text

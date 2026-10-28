@@ -1,0 +1,52 @@
+{{- if dig "enabled" false (.Values.jitsi | default dict) }}
+{{- range $component := list "web" "prosody" "jicofo" "jvb" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "synctx.fullname" $ }}-jitsi-{{ $component }}{{ if eq $component "jvb" }}-media{{ end }}
+spec:
+  {{- if and (eq $component "jvb") (eq $.Values.jitsi.jvb.exposure "NodePort") }}
+  type: NodePort
+  {{- end }}
+  selector:
+    app.kubernetes.io/name: jitsi-{{ $component }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+  ports:
+    {{- if eq $component "web" }}
+    - {name: http, port: 80, targetPort: http}
+    {{- else if eq $component "prosody" }}
+    - {name: xmpp, port: 5222, targetPort: xmpp}
+    - {name: bosh, port: 5280, targetPort: bosh}
+    {{- else if eq $component "jicofo" }}
+    - {name: health, port: 8888, targetPort: health}
+    {{- else }}
+    - name: media
+      port: {{ ternary (int $.Values.jitsi.jvb.nodePort) 10000 (eq $.Values.jitsi.jvb.exposure "NodePort") }}
+      targetPort: media
+      protocol: UDP
+      {{- if eq $.Values.jitsi.jvb.exposure "NodePort" }}
+      nodePort: {{ $.Values.jitsi.jvb.nodePort }}
+      {{- end }}
+    {{- if $.Values.jitsi.jvb.tcpFallback }}
+    - name: media-tcp
+      port: 4443
+      targetPort: media-tcp
+      {{- if eq $.Values.jitsi.jvb.exposure "NodePort" }}
+      nodePort: {{ $.Values.jitsi.jvb.tcpNodePort }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "synctx.fullname" . }}-jitsi-jvb
+spec:
+  selector:
+    app.kubernetes.io/name: jitsi-jvb
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - {name: colibri-ws, port: 9090, targetPort: colibri-ws}
+{{- end }}

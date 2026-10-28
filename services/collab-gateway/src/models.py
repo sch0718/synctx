@@ -7,6 +7,28 @@ from datetime import datetime
 
 
 @dataclass(frozen=True)
+class DocumentLink:
+    repo_id: str
+    path: str
+    title: str
+    url: str
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    repo_id: str
+    status: str
+    documents: tuple[DocumentLink, ...]
+
+
+@dataclass(frozen=True)
+class EvidenceResult:
+    documents: tuple[DocumentLink, ...]
+    status: str = "ok"
+    omitted: int = 0
+
+
+@dataclass(frozen=True)
 class MemoItem:
     text: str
     owner: str
@@ -31,6 +53,9 @@ class Meeting:
     decisions: tuple[MemoItem, ...] = ()
     actions: tuple[MemoItem, ...] = ()
     memo_error: str | None = None
+    jitsi_enabled: bool = False
+    joinable_from: datetime | None = None
+    joinable_until: datetime | None = None
 
     @property
     def key(self) -> str:

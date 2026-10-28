@@ -333,6 +333,18 @@ def render_search_page(*, view_prefix: str, query: str, raw_query: str, repos: S
     return "".join(parts)
 
 
+def render_jitsi_join(data: dict | None, *, location: str) -> str:
+    if data is None:
+        return ""
+    reason = data.get("reason", "")
+    disabled = " disabled" if reason else ""
+    status_id = f"jitsi-reason-{location}"
+    return (f'<span class="jitsi-join-controls"><button type="button" class="btn jitsi-join" '
+            f'data-jitsi-join aria-label="영상 회의 참여" aria-controls="jitsi-panel" '
+            f'aria-expanded="false" aria-describedby="{status_id}"{disabled}>참여</button>'
+            f'<span id="{status_id}" data-jitsi-reason role="status">{esc(reason)}</span></span>')
+
+
 def render_meeting_card(data: dict, dashboard_href: str | None = None) -> str:
     rows = [("일시", data["time_label"])]
     if data["presenters"]:
@@ -352,7 +364,7 @@ def render_meeting_card(data: dict, dashboard_href: str | None = None) -> str:
             f'<h2 class="meeting-info-title">{esc(data["title"])}</h2>'
             f'<dl class="meeting-info-facts">{facts}</dl>'
             f'<p class="meeting-info-status" role="status" aria-live="polite">{status}</p>'
-            f'{agenda}{dashboard}</section>')
+            f'{agenda}{dashboard}{render_jitsi_join(data.get("jitsi"), location="card")}</section>')
 
 
 MEETING_STATUS_LABELS = {"upcoming": "예정", "ongoing": "진행 중", "ended": "종료", "cancelled": "취소"}
@@ -536,12 +548,12 @@ def render_meeting_exit(exit_href: str) -> str:
             '</div></section>')
 
 
-def render_present_bar(*, title: str, exit_href: str, memo: bool) -> str:
+def render_present_bar(*, title: str, exit_href: str, memo: bool, jitsi: dict | None = None) -> str:
     memo_button = ('<button type="button" class="btn" data-action="present-memo" aria-keyshortcuts="N" '
                    'aria-controls="meeting-panel" aria-expanded="false">'
                    '메모 보기(N)</button>') if memo else ""
     return (f'<header class="present-top"><span class="present-title">{esc(title)}</span>'
-            f'<span class="present-time" data-present-time></span></header>'
+            f'<span class="present-time" data-present-time></span>{render_jitsi_join(jitsi, location="present")}</header>'
             '<nav class="present-nav" aria-label="발표 이동">'
             '<div class="present-progress" role="progressbar" aria-label="발표 진행" aria-valuemin="1">'
             '<span class="present-progress-bar"></span></div>'

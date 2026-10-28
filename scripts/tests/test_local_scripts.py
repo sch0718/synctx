@@ -309,8 +309,9 @@ def test_deploy_synctx_applies_collab_values_only_when_present(tmp_path, present
     if present:
         (root / "helm" / "synctx" / COLLAB_SECRET).write_text("collabGateway: {enabled: true}\n")
     env = _fake_bin(tmp_path, "kubectl", "helm")
-    subprocess.run(["bash", str(root / "scripts" / "local" / "steps" / "deploy-synctx.sh")],
+    result = subprocess.run(["bash", str(root / "scripts" / "local" / "steps" / "deploy-synctx.sh")],
                    capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+    assert "Jitsi를 끕니다" in result.stdout
     helm_call = next(line for line in (tmp_path / "calls.log").read_text().splitlines() if "upgrade --install" in line)
     assert (COLLAB_SECRET in helm_call) == present
 
@@ -487,7 +488,9 @@ def test_provision_creates_command_with_url_and_autocomplete():
     created = api.created
     assert created["trigger"] == "synctx" and created["method"] == "P" and created["team_id"] == "team1"
     assert created["url"] == "http://gw/api/collab/mattermost/command" and created["auto_complete"] is True
-    assert "오늘" in created["auto_complete_hint"] and "검색" not in created["auto_complete_hint"]
+    assert "오늘" in created["auto_complete_hint"]
+    assert "검색 <키워드> | 근거 <id>" in created["auto_complete_hint"]
+    assert "참여 [id]" in created["auto_complete_hint"]
 
 
 def test_provision_reuses_existing_command_with_same_url():
@@ -542,3 +545,72 @@ def test_bot_cli_reports_failure_on_stderr_with_exit_1(tmp_path, capsys, monkeyp
                         "--team", "synctx", "--bot", "synctx-bot", "--command-url", "http://gw/c", "a"])
     out = capsys.readouterr()
     assert code == 1 and out.out == "" and "봇 준비 실패" in out.err
+
+
+JITSI_SCRIPT = LOCAL / "steps" / "deploy-jitsi.sh"
+
+
+def test_jitsi_scripts_parse_without_cluster_commands():
+    for script in (JITSI_SCRIPT, LOCAL / "verify.sh"):
+        result = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+        help_result = subprocess.run(["bash", str(script), "--help"], capture_output=True, text=True)
+        assert help_result.returncode == 0 and "사용법" in help_result.stdout
+        unknown = subprocess.run(["bash", str(script), "--unknown"], capture_output=True, text=True)
+        assert unknown.returncode != 0
+
+
+def test_jitsi_is_opt_in_and_private_values_are_ignored():
+    assert "jitsi" not in (LOCAL / "setup.sh").read_text().lower()
+    assert "jitsi" not in (LOCAL / "steps" / "build.sh").read_text().lower()
+    assert yaml.safe_load((ROOT / "helm/synctx/values.yaml").read_text())["jitsi"]["enabled"] is False
+    for name in ("values-local.yaml", "values-production.yaml"):
+        assert yaml.safe_load((ROOT / "helm/synctx" / name).read_text()).get("jitsi", {}).get("enabled", False) is False
+    ignored = subprocess.run(["git", "check-ignore", "helm/synctx/values-local.jitsi.secret.yaml"], cwd=ROOT, capture_output=True)
+    assert ignored.returncode == 0
+
+
+def test_jitsi_blocks_running_mattermost_before_creating_secrets(tmp_path):
+    root = _scripts_copy(tmp_path)
+    env = _fake_bin(tmp_path, "kubectl", "minikube", "helm")
+    fake = tmp_path / "bin" / "kubectl"
+    fake.write_text("#!/bin/sh\necho 1\n")
+    env["HOME"] = str(tmp_path / "home")
+    result = subprocess.run(["bash", str(root / "scripts/local/steps/deploy-jitsi.sh"), "--skip-images"], capture_output=True, text=True, env=env)
+    assert result.returncode != 0 and "Mattermost를 먼저 중지" in result.stdout
+    assert not (root / "helm/synctx/values-local.jitsi.secret.yaml").exists()
+
+
+@pytest.mark.parametrize("addresses", [None, "192.0.2.1", "192.0.2.1,198.51.100.2"])
+def test_jitsi_generated_values_are_private_and_load_pinned_images(tmp_path, addresses):
+    root = _scripts_copy(tmp_path)
+    shutil.copy(ROOT / "helm/synctx/values.yaml", root / "helm/synctx/values.yaml")
+    with (root / "scripts/local/_common.sh").open("a") as stream:
+        stream.write('\nload_image() { printf "image %s\\n" "$1" >> "$FAKE_LOG"; }\n')
+    env = _fake_bin(tmp_path, "kubectl", "helm", "minikube")
+    (tmp_path / "bin" / "minikube").write_text('#!/bin/sh\necho 192.0.2.1\n')
+    # uv executes only the inline configuration generator; cluster/image calls are fakes.
+    uv = tmp_path / "bin" / "uv"
+    import sys
+    uv.write_text(f'#!/bin/sh\nexec "{sys.executable}" -\n')
+    uv.chmod(0o755)
+    env["HOME"] = str(tmp_path / "home")
+    args = ["--advertise-ips", addresses] if addresses else []
+    result = subprocess.run(["bash", str(root / "scripts/local/steps/deploy-jitsi.sh"), *args], capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    values_file = root / "helm/synctx/values-local.jitsi.secret.yaml"
+    values = yaml.safe_load(values_file.read_text())
+    assert values_file.stat().st_mode & 0o777 == 0o600
+    assert values["jitsi"]["enabled"] is True
+    assert values["jitsi"]["jvb"]["advertisedIPs"] == (addresses or "192.0.2.1")
+    assert values["collabGateway"]["enabled"] is False
+    assert values["jitsi"]["jwtSecret"]["current"] != values["jitsi"]["roomSecret"]["current"]
+    assert values["jitsi"]["jwtSecret"]["current"] not in result.stdout + result.stderr
+    assert "UDP 미디어는 검증하지 않는다" in result.stdout
+    assert "Collab Gateway를 끕니다" in result.stdout
+    assert "deploy-synctx.sh는 Jitsi를 끕니다" in result.stdout
+    calls = (tmp_path / "calls.log").read_text()
+    assert "-n synctx" in calls and "values-local.jitsi.secret.yaml" in calls
+    tag = yaml.safe_load((ROOT / "helm/synctx/values.yaml").read_text())["jitsi"]["imageTag"]
+    for component in ("web", "prosody", "jicofo", "jvb"):
+        assert f"image jitsi/{component}:{tag}" in calls

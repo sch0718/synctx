@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from state import StateStore
+from gateway_state import StateStore
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
 

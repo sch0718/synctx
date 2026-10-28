@@ -14,11 +14,11 @@ from adapters.mattermost import (MAX_FORM_BYTES, MattermostAdapter, inbound_from
                                  verify_command_token)
 from ratelimit import RateLimiter
 from runner import Runner
-from state import StateStore
+from gateway_state import StateStore
 from synctx_common.config import load_config
 from synctx_common.logging import configure_logging
 from synctx_common.observability import collab_commands_total, register_observability_routes
-from viewer_client import ViewerClient
+from viewer_client import COMMAND_TIMEOUT_SECONDS, ViewerClient, ViewerError
 
 __version__ = "0.7.0"
 configure_logging(service_name="collab-gateway")
@@ -148,13 +148,25 @@ async def mattermost_command(request: Request):
         else:
             now = datetime.now(timezone.utc)
             meetings = []
-            if command in ("today", "upcoming", "meeting", "summary") and keys:
-                meetings = await runner.current_meetings(now, timedelta(seconds=gateway.poll_interval_seconds * CACHE_AGE_FACTOR))
-            if meetings is None:
-                result, text = "unavailable", "지금 회의 정보를 읽지 못했습니다. 잠시 후 다시 시도하세요."
-            else:
+            async with asyncio.timeout(COMMAND_TIMEOUT_SECONDS):
+                initial = commands.handle(inbound.text, meetings, keys, now, config.runtime.public_base_url)
+                needs_meetings = command in ("today", "upcoming", "meeting", "join", "summary", "search", "evidence")
+                if needs_meetings and keys and initial.result != "invalid":
+                    meetings = await runner.current_meetings(now, timedelta(seconds=gateway.poll_interval_seconds * CACHE_AGE_FACTOR))
+                if meetings is None:
+                    raise ViewerError("Viewer 회의 목록을 읽지 못했습니다")
                 reply = commands.handle(inbound.text, meetings, keys, now, config.runtime.public_base_url)
+                if reply.lookup is not None:
+                    if command == "search":
+                        repo_ids = {m.repo_id for m in meetings if m.channel in keys}
+                        data = {"search_results": await runner.search_documents(reply.lookup.query, repo_ids)}
+                    else:
+                        meeting = reply.lookup.meeting
+                        data = {"evidence_results": await runner.fetch_evidence(meeting.repo_id, meeting.id)}
+                    reply = commands.handle(inbound.text, meetings, keys, now, config.runtime.public_base_url, **data)
                 command, result, text = reply.command, reply.result, reply.text
+    except (ViewerError, asyncio.TimeoutError):
+        result, text = "unavailable", commands.unavailable_text(command)
     except Exception as exc:
         logger.error("collab_command_error command=%s error=%s", command, type(exc).__name__)
         text = "명령을 처리하지 못했습니다. 잠시 후 다시 시도하세요."

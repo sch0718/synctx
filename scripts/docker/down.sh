@@ -28,6 +28,8 @@ for svc in "${OPTIONAL_SERVICES[@]}"; do
     PROFILE_ARGS+=(--profile "$svc")
 done
 
+PROFILE_ARGS+=(--profile jitsi)
+
 print_header "synctx Docker Compose 중지"
 docker compose "${COMPOSE_ARGS[@]}" -f "$TLS_COMPOSE_FILE" "${PROFILE_ARGS[@]}" down ${DOWN_ARGS[@]+"${DOWN_ARGS[@]}"}
 print_success "중지 완료"

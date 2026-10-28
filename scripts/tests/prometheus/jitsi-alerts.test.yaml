@@ -1,0 +1,34 @@
+rule_files: [rules.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'synctx_viewer_jitsi_token_failures_total{reason="unavailable"}'
+        values: '0+1x20 20x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SynctxJitsiTokenFailures
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: SynctxJitsiTokenFailures
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "Jitsi 참여 토큰 발급 반복 실패"
+              description: "10분 내 Jitsi 토큰 발급이 5회 이상 실패했습니다. 사유별 메트릭과 회의 시간·설정·키를 확인하세요."
+      - eval_time: 35m
+        alertname: SynctxJitsiTokenFailures
+        exp_alerts: []
+  - interval: 1m
+    input_series:
+      - series: 'synctx_viewer_jitsi_token_failures_total{reason="ended"}'
+        values: '0x10 1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SynctxJitsiTokenFailures
+        exp_alerts: []
+  - interval: 1m
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SynctxJitsiTokenFailures
+        exp_alerts: []

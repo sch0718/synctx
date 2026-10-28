@@ -7,7 +7,7 @@ from adapters.base import ChannelRef, SendError
 from helpers import KST, api_meeting, item, meeting
 from models import Meeting
 from runner import MAX_FAILURES, Runner
-from state import StateStore
+from gateway_state import StateStore
 from synctx_common.config import CollabGatewayConfig
 from synctx_common.observability import (
     collab_last_success_timestamp,
@@ -72,6 +72,33 @@ def make(tmp_path, meetings, config=None, adapter=None, viewer=None):
 
 def at(delta):
     return START + delta
+
+
+@pytest.mark.asyncio
+async def test_command_lookups_use_viewer_client(tmp_path):
+    import httpx
+    from viewer_client import ViewerClient
+
+    seen = []
+
+    def handler(request):
+        assert request.headers["Authorization"] == "Bearer test-service-token"
+        seen.append(request.url.path)
+        if request.url.path == "/api/search":
+            return httpx.Response(200, json={"repos": [{"id": "r", "status": "ok", "matches": [
+                {"path": "docs/a.md", "before": "원문비밀"}]}]})
+        return httpx.Response(200, json={"meeting_id": "m1", "status": "ok", "evidence": [
+            {"repo_id": "r", "path": "rules/a.md", "title": "규정", "url": "/view/r/rules/a.md"}]})
+
+    viewer = ViewerClient("http://viewer", "test-service-token", client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    runner, _, _ = make(tmp_path, [], viewer=viewer)
+    try:
+        result = await runner.search_documents("규정", {"r"})
+        assert result[0].documents[0].path == "docs/a.md" and "원문비밀" not in repr(result)
+        assert (await runner.fetch_evidence("r", "m1")).documents[0].title == "규정"
+        assert seen == ["/api/search", "/api/meetings/r/m1/evidence"]
+    finally:
+        await viewer.aclose()
 
 
 @pytest.mark.asyncio

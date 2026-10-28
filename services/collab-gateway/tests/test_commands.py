@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 import commands
 from helpers import KST, item, meeting
 
@@ -31,19 +33,19 @@ class TestParse:
         assert commands.parse("?") == ("help", "")
 
     def test_unknown(self):
-        assert commands.parse("검색 키워드") == ("unknown", "검색 키워드")
+        assert commands.parse("미지원 키워드") == ("unknown", "미지원 키워드")
 
 
 class TestHelp:
-    def test_lists_commands_and_not_deferred_ones(self):
+    def test_lists_supported_commands(self):
         reply = run("도움말", [])
         assert reply.command == "help" and reply.result == "ok"
-        for word in ("오늘", "예정", "회의", "정리"):
+        for word in ("오늘", "예정", "회의", "정리", "검색", "근거"):
             assert word in reply.text
-        assert "검색" not in reply.text
+        assert "참여 [id]" in reply.text
 
     def test_unknown_command_gets_help_hint(self):
-        reply = run("검색 abc", [])
+        reply = run("미지원 abc", [])
         assert reply.command == "unknown" and reply.result == "invalid" and "도움말" in reply.text
 
 
@@ -209,3 +211,119 @@ class TestInputValidation:
     def test_reply_text_is_bounded(self):
         ms = [meeting(id=f"m{i}", title="가" * 190, starts_at=at(hours=1 + i % 20)) for i in range(25)]
         assert len(run("예정", ms).text) <= commands.MAX_REPLY_CHARS
+
+
+class TestSearchAndEvidence:
+    @pytest.mark.parametrize("text,command,arg", [
+        ("검색 규정", "search", "규정"), ("search audit", "search", "audit"),
+        ("search\taudit log", "search", "audit log"),
+        ("근거 m1", "evidence", "m1"), ("evidence 회의", "evidence", "회의"),
+    ])
+    def test_aliases(self, text, command, arg):
+        assert commands.parse(text) == (command, arg)
+
+    @pytest.mark.parametrize("query", ["", "a", "x" * 101, "ab\ncd", "ab\rcd", "ab\x00cd"])
+    def test_search_validation_before_lookup(self, query):
+        reply = run("검색 " + query, [meeting()])
+        assert reply.result == "invalid" and reply.lookup is None
+
+    @pytest.mark.parametrize("query", ["ab", "x" * 100, "  규정 검색  ", "audit\tlog"])
+    def test_valid_query_matches_viewer_normalization(self, query):
+        reply = run("검색 " + query, [meeting()])
+        assert reply.lookup.query == query.strip()
+
+    def test_lookup_is_pure_and_channel_scoped(self):
+        mine = meeting(id="m1")
+        assert run("검색 규정", [mine]).lookup.query == "규정"
+        assert run("근거 m1", [mine]).lookup.meeting == mine
+        assert run("근거 secret", [meeting(id="secret", channel="sec")]).result == "not_found"
+        assert run("검색 규정", [meeting(channel="sec")]).result == "no_channel"
+        assert run("근거", [mine]).result == "invalid"
+        assert run("근거 회의", [mine, meeting(id="m2")]).result == "ambiguous"
+
+    def test_search_filters_before_limit_and_escapes_paths(self):
+        from models import DocumentLink, SearchResult
+        other = SearchResult("other", "failed", ())
+        docs = tuple(DocumentLink("r", f"@all [{i}].md", f"@all [{i}].md", f"/view/r/{i}.md") for i in range(8))
+        data = [other, SearchResult("r", "ok", (docs[0], *docs))]
+        reply = commands.handle("검색 규정", [meeting()], {"dx"}, NOW, BASE, search_results=data)
+        assert reply.result == "ok" and reply.text.count("\n- [") == 5
+        assert "… 외 3건" in reply.text
+        assert "@all" not in reply.text and "\\[0\\]" in reply.text
+        assert f"({BASE}/view/r/4.md)" in reply.text and "/view/r/5.md" not in reply.text
+
+    def test_search_multiple_repos_for_mapped_meetings(self):
+        from models import DocumentLink, SearchResult
+        results = [SearchResult(rid, "ok", (DocumentLink(rid, "a.md", rid, f"/view/{rid}/a.md"),))
+                   for rid in ("r", "r2", "secret")]
+        ms = [meeting(), meeting(repo_id="r2", channel="ops"), meeting(repo_id="secret", channel="sec")]
+        reply = commands.handle("search audit", ms, {"dx", "ops"}, NOW, BASE, search_results=results)
+        assert "/view/r/" in reply.text and "/view/r2/" in reply.text and "secret" not in reply.text
+
+    def test_empty_and_failed_search(self):
+        from models import SearchResult
+        assert "없습니다" in commands.handle("검색 규정", [meeting()], {"dx"}, NOW, BASE, search_results=[]).text
+        reply = commands.handle("검색 규정", [meeting()], {"dx"}, NOW, BASE,
+                                search_results=[SearchResult("r", "timeout", ())])
+        assert reply.result == "unavailable"
+        assert "지금 검색 결과를 읽지 못했습니다" in reply.text
+
+    def test_evidence_limit_escape_and_empty(self):
+        from models import DocumentLink, EvidenceResult
+        data = [DocumentLink("r", "a.md", f"@here [근거{i}]", f"/view/r/{i}.md") for i in range(22)]
+        reply = commands.handle("근거 m1", [meeting(id="m1")], {"dx"}, NOW, BASE, evidence_results=EvidenceResult(tuple(data)))
+        assert reply.text.count("\n- [") == 20 and "@here" not in reply.text and "\\[근거0\\]" in reply.text
+        assert "… 외 2건" in reply.text
+        assert f"({BASE}/view/r/19.md)" in reply.text and "/view/r/20.md" not in reply.text
+        reply = commands.handle("근거 m1", [meeting(id="m1")], {"dx"}, NOW, BASE, evidence_results=EvidenceResult(()))
+        assert "근거가 없습니다" in reply.text
+
+    @pytest.mark.parametrize("with_document", [False, True])
+    def test_partial_evidence_does_not_claim_no_evidence(self, with_document):
+        from models import DocumentLink, EvidenceResult
+        docs = (DocumentLink("r", "a.md", "규정", "/view/r/a.md"),) if with_document else ()
+        reply = commands.handle("근거 m1", [meeting(id="m1")], {"dx"}, NOW, BASE,
+                                evidence_results=EvidenceResult(docs, "partial", 3))
+        assert "일부 근거를 읽지 못했습니다(3건 생략)" in reply.text
+        assert "근거가 없습니다" not in reply.text
+
+
+class TestJoin:
+    def test_alias_and_channel_scope(self):
+        assert commands.parse('JOIN m1') == ('join', 'm1')
+        assert commands.parse('참여') == ('join', '')
+        reply = run('참여 other', [meeting(id='other', channel='secret')])
+        assert reply.result == 'not_found'
+        assert run('join', [], keys=set()).result == 'no_channel'
+
+    def test_defaults_to_ongoing_then_nearest_upcoming(self):
+        ongoing = meeting(id='now', starts_at=at(minutes=-10), title='지금')
+        upcoming = meeting(id='next', starts_at=at(minutes=10), title='다음')
+        far = meeting(id='far', starts_at=at(days=1), title='먼 회의')
+        cancelled = meeting(id='cancel', starts_at=at(minutes=1), cancelled=True)
+        assert '**지금**' in run('join', [far, upcoming, ongoing]).text
+        assert '**다음**' in run('join', [far, upcoming, cancelled]).text
+        assert run('join', [meeting(starts_at=at(days=-1)), cancelled]).result == 'not_found'
+        assert run('join', []).result == 'not_found'
+
+    def test_explicit_id_resolves_ambiguity(self):
+        assert run('참여 m1', [meeting(), meeting(repo_id='b')]).result == 'ambiguous'
+        assert run('참여 없는회의', [meeting()]).result == 'not_found'
+
+    def test_only_document_links_and_no_credentials(self):
+        m = meeting(starts_at=at(minutes=-5), jitsi_enabled=True,
+                    joinable_from=at(minutes=-20), joinable_until=at(hours=2))
+        reply = run('참여 m1', [m])
+        assert reply.result == 'ok' and reply.command == 'join'
+        assert '문서 화면의 참여 버튼으로 입장' in reply.text
+        assert BASE + m.url in reply.text and BASE + m.present_url in reply.text
+        assert all(needle not in reply.text.casefold() for needle in ('jwt', 'room', 'token', '/jitsi', 'external_api'))
+
+    @pytest.mark.parametrize('changes,expected', [({'cancelled': True}, '취소'),
+                                                ({'jitsi_enabled': False}, '꺼져'),
+                                                ({'joinable_from': at(minutes=1)}, '15분 전'),
+                                                ({'joinable_until': NOW}, '1시간')])
+    def test_unavailable_reasons(self, changes, expected):
+        args = dict(jitsi_enabled=True, joinable_from=at(minutes=-15), joinable_until=at(hours=2))
+        args.update(changes)
+        assert expected in run('참여 m1', [meeting(**args)]).text

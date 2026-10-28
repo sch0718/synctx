@@ -172,6 +172,7 @@ def prepare_config(args: argparse.Namespace) -> Path:
             host = f"[{host}]" if ":" in host else host
             runtime["public_base_url"] = f"http://{host}:{args.port}"
     data.setdefault("viewer", {}).update(asset_source="bundled", repo_cache_path=str(cache / "repos"))
+    data.setdefault("collab", {}).setdefault("jitsi", {})["enabled"] = False
     data["viewer"].setdefault("render_token_ttl_seconds", 14400)
     SynctxConfig.model_validate(data)
     serialized = yaml.safe_dump(data, allow_unicode=True, sort_keys=True)

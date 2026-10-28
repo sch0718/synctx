@@ -45,6 +45,25 @@ spec:
                   key: render-secret-previous
                   optional: true
             {{- end }}
+            {{- $jc := dict }}
+            {{- if .Values.synctxConfig.create }}
+            {{- $jc = dig "collab" "jitsi" dict (fromYaml .Values.synctxConfig.data) }}
+            {{- end }}
+            {{- range $slot, $envName := dict "jwtSecret" (get $jc "secret_env" | default "JITSI_APP_SECRET") "roomSecret" (get $jc "room_secret_env" | default "JITSI_ROOM_SECRET") }}
+            {{- $secret := get ($.Values.jitsi | default dict) $slot | default dict }}
+            {{- if or $secret.create $secret.existingSecret }}
+            {{- range $key, $suffix := dict "current" "" "previous" "_PREVIOUS" }}
+            - name: {{ $envName }}{{ $suffix }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret.existingSecret | default (printf "%s-jitsi-%s" (include "synctx.fullname" $) ($slot | kebabcase)) }}
+                  key: {{ $key }}
+                  {{- if eq $key "previous" }}
+                  optional: true
+                  {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
             {{- if include "synctx.collabEnabled" . }}
             - name: VIEWER_SERVICE_TOKEN
               valueFrom:

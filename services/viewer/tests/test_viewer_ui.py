@@ -315,3 +315,25 @@ def test_evidence_list_escapes_and_links():
     assert "원문 열기" not in ui.render_evidence_list([e])
     assert ui.render_evidence_list([]) == ""
     assert '"id": "evidence-1"' in ui.render_evidence_data([e]).replace("\\u003c", "<") or '"id":"evidence-1"' in ui.render_evidence_data([e])
+
+
+@pytest.mark.parametrize('reason', ['', '취소된 회의입니다', '회의 시작 15분 전부터 참여할 수 있습니다', '영상 회의가 꺼져 있습니다'])
+def test_jitsi_buttons_have_accessible_reasons_in_card_and_presentation(reason):
+    from meeting_card import card_data
+    from test_meeting_card import _meeting
+    data = {'reason': reason}
+    card = ui.render_meeting_card(card_data(_meeting(), [], jitsi=data))
+    present = ui.render_present_bar(title='회의', exit_href='/view/r/m.md', memo=True, jitsi=data)
+    for markup, location in ((card, 'card'), (present, 'present')):
+        assert 'aria-label="영상 회의 참여"' in markup
+        assert 'aria-controls="jitsi-panel"' in markup
+        assert 'aria-expanded="false"' in markup
+        assert f'aria-describedby="jitsi-reason-{location}"' in markup
+        assert f'id="jitsi-reason-{location}" data-jitsi-reason role="status"' in markup
+        assert (' disabled>참여' in markup) == bool(reason)
+        assert reason in markup
+
+
+def test_jitsi_button_reason_is_escaped():
+    markup = ui.render_jitsi_join({'reason': '<script>bad</script>'}, location='card')
+    assert '<script>' not in markup and '&lt;script&gt;' in markup

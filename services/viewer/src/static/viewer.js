@@ -564,6 +564,7 @@
       }
       if (bar) bar.style.width = ((n + 1) / total * 100) + '%';
       if (!keepHash) history.replaceState(history.state, '', '#slide-' + (n + 1));
+      document.dispatchEvent(new CustomEvent('synctx-slide-changed', { detail: { slide: n + 1 } }));
       if (announce && live) live.textContent = label + '장' + (titles[n] ? ': ' + titles[n] : '');
     }
     function go(n) {
@@ -615,6 +616,10 @@
     }
 
     if (total) {
+      document.addEventListener('synctx-follow-slide', function (e) {
+        var slide = e.detail && e.detail.slide;
+        if (Number.isInteger(slide) && slide >= 1 && slide <= total) go(slide - 1);
+      });
       followHash(true);
       window.addEventListener('hashchange', function () { followHash(false); });
       // mermaid는 viewer.js 뒤에 읽히므로 첫 장 그림은 문서 해석이 끝난 뒤 그린다
@@ -648,6 +653,8 @@
       // 근거 말풍선이 열려 있으면 Esc는 evidence.js가 말풍선만 닫는다(발표를 끝내지 않는다)
       var evidencePop = document.querySelector('[data-evidence-pop]');
       if (e.key === 'Escape' && evidencePop && !evidencePop.hidden) return;
+      var videoPanel = document.querySelector('.jitsi-panel');
+      if (videoPanel && !videoPanel.hidden && (e.key === 'Escape' || (e.target.closest && e.target.closest('.jitsi-panel')))) return;
       var target = e.target && e.target.closest ? e.target : document.body;
       var tag = target.tagName;
       var panel = document.querySelector('.meeting-panel');

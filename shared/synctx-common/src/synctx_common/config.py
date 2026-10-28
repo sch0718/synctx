@@ -347,8 +347,56 @@ class CollabGatewayConfig(BaseModel):
         return self
 
 
+class JitsiConfig(BaseModel):
+    enabled: bool = False
+    public_url: str = ""
+    xmpp_domain: str = ""
+    presenter_header: Literal["X-Forwarded-User", "X-Forwarded-Email", "X-Forwarded-Preferred-Username"] = "X-Forwarded-User"
+    app_id: str = ""
+    secret_env: str = "JITSI_APP_SECRET"
+    room_secret_env: str = "JITSI_ROOM_SECRET"
+
+    @field_validator("xmpp_domain")
+    @classmethod
+    def _xmpp_domain(cls, value: str) -> str:
+        if not value:
+            return value
+        value = value.strip().lower()
+        if (not value or len(value) > 253
+                or any(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+                       for label in value.split("."))):
+            raise ValueError("collab.jitsi.xmpp_domain은 호스트명이어야 합니다")
+        return value
+
+    @model_validator(mode="after")
+    def _check_enabled(self) -> "JitsiConfig":
+        if not self.enabled:
+            return self
+        self.public_url = _normalize_http_base(self.public_url, "collab.jitsi.public_url")
+        from urllib.parse import urlsplit
+        parsed = urlsplit(self.public_url)
+        if (parsed.scheme != "https" or parsed.port is not None and not 1 <= parsed.port <= 65535
+                or len(parsed.hostname or "") > 253
+                or any(re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label) is None
+                       for label in (parsed.hostname or "").split("."))):
+            raise ValueError("collab.jitsi.public_url은 https://호스트[:포트]여야 합니다")
+        if not self.xmpp_domain:
+            self.xmpp_domain = parsed.hostname
+        self.app_id = self.app_id.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", self.app_id):
+            raise ValueError("collab.jitsi.app_id는 영문·숫자·점·밑줄·하이픈 1~128자여야 합니다")
+        _check_env_name(self.secret_env, "collab.jitsi.secret_env")
+        _check_env_name(self.room_secret_env, "collab.jitsi.room_secret_env")
+        app_slots = {self.secret_env + suffix for suffix in ("", "_FILE", "_PREVIOUS", "_PREVIOUS_FILE")}
+        room_slots = {self.room_secret_env + suffix for suffix in ("", "_FILE", "_PREVIOUS", "_PREVIOUS_FILE")}
+        if app_slots & room_slots:
+            raise ValueError("Jitsi 앱 키와 방 이름 키는 별도 환경변수를 사용해야 합니다")
+        return self
+
+
 class CollabConfig(BaseModel):
     gateway: CollabGatewayConfig = Field(default_factory=CollabGatewayConfig)
+    jitsi: JitsiConfig = Field(default_factory=JitsiConfig)
 
 
 class SynctxConfig(BaseModel):

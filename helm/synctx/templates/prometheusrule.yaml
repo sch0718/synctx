@@ -10,6 +10,20 @@ spec:
   groups:
     - name: synctx.rules
       rules:
+        {{- $jc := dict }}
+        {{- if .Values.synctxConfig.create }}
+        {{- $jc = dig "collab" "jitsi" dict (fromYaml .Values.synctxConfig.data) }}
+        {{- end }}
+        {{- if eq (toString (dig "enabled" false $jc)) "true" }}
+        - alert: SynctxJitsiTokenFailures
+          expr: sum(increase(synctx_viewer_jitsi_token_failures_total[10m])) >= 5
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Jitsi 참여 토큰 발급 반복 실패"
+            description: "10분 내 Jitsi 토큰 발급이 5회 이상 실패했습니다. 사유별 메트릭과 회의 시간·설정·키를 확인하세요."
+        {{- end }}
         # 1. Sync가 30분 이상 성공하지 못함
         - alert: SynctxSyncNoSuccess
           expr: time() - synctx_sync_last_success_timestamp > 1800
@@ -160,7 +174,7 @@ spec:
 
         # 14. Collab Gateway 폴링이 멈춤
         - alert: SynctxCollabStalled
-          expr: time() - synctx_collab_last_success_timestamp > 600
+          expr: time() - synctx_collab_last_success_timestamp > 600 and synctx_collab_last_success_timestamp > 0
           for: 5m
           labels:
             severity: critical

@@ -1,6 +1,5 @@
 import re
 from datetime import datetime, timedelta, timezone
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -121,8 +120,76 @@ class TestServiceToken:
         assert self.get(locked, token=self.TOKEN, scheme="Basic").status_code == 403
 
     def test_token_does_not_open_other_endpoints(self, locked):
-        for path in ("/api/repos", "/meetings", "/api/search?q=abc"):
+        for path in ("/api/repos", "/meetings", "/search?q=abc", "/api/repos/a/files",
+                     "/api/repos/a/render?path=docs/past.md", "/a/docs/past.md", "/raw/a/docs/past.md"):
             assert self.get(locked, path, token=self.TOKEN).status_code == 403
+
+    def test_search_token_forces_collab_and_default_branch(self, locked, monkeypatch):
+        import app as viewer_app
+        calls = []
+
+        async def search(managers, query, ref, *args):
+            calls.append(([rid for rid, _, _ in managers], ref))
+            return []
+
+        monkeypatch.setattr(viewer_app.search_mod, "search_repositories", search)
+        for suffix in ("", "&collab_only=false", "&collab_only=true"):
+            assert self.get(locked, "/api/search?q=abc" + suffix, token=self.TOKEN).status_code == 200
+            assert calls[-1] == (["a", "b"], None)
+        for repo in ("plain", "missing"):
+            assert self.get(locked, f"/api/search?q=abc&repo={repo}", token=self.TOKEN).status_code == 404
+        for ref in ("main", "feature", ""):
+            assert self.get(locked, f"/api/search?q=abc&repo=a&ref={ref}", token=self.TOKEN).status_code == 400
+
+    @pytest.mark.parametrize("path", ["/api/search?q=abc", "/api/meetings/a/past/evidence"])
+    def test_new_apis_reject_wrong_or_absent_token(self, locked, path):
+        for token in (None, "wrong", ""):
+            assert self.get(locked, path, token=token).status_code == 403
+
+    def test_service_search_projects_paths_but_user_keeps_snippets(self, locked, monkeypatch):
+        import app as viewer_app
+
+        async def search(*args):
+            return [{"id": "a", "name": "저장소 a", "status": "ok", "matches": [
+                {"path": "docs/a.md", "line": 3, "before": "앞비밀", "match": "비밀", "after": "뒤비밀"}]}]
+
+        monkeypatch.setattr(viewer_app.search_mod, "search_repositories", search)
+        response = self.get(locked, "/api/search?q=abc&repo=a", token=self.TOKEN)
+        assert response.json()["repos"][0]["matches"] == [{"path": "docs/a.md"}]
+        assert "비밀" not in response.text
+        monkeypatch.setattr(viewer_app.config.authz.role_mappings, "viewer", ["viewers"])
+        user = locked.get("/api/search?q=abc&repo=a", headers={"X-Forwarded-Groups": "viewers"})
+        assert user.json()["repos"][0]["matches"][0]["match"] == "비밀"
+
+    def test_service_evidence_does_not_read_non_collab_references(self, locked, monkeypatch):
+        import app as viewer_app
+        manager = viewer_app.repo_managers["a"]
+        manager.files["docs/past.md"] = manager.files["docs/past.md"].replace(
+            "    presenters: [김]", "    references:\n      /plain/: 'plain:private/'\n    presenters: [김]")
+        manager.files["docs/past.md"] += "\n[외부](/plain/secret.md)\n[우리](rule.md)\n"
+        manager.files["docs/rule.md"] = "# 규정\n"
+        plain = viewer_app.repo_managers["plain"]
+        plain.files["private/secret.md"] = "# 비협업비밀제목\n"
+        monkeypatch.setattr(viewer_app.config.authz.role_mappings, "viewer", ["viewers"])
+        user = locked.get("/api/meetings/a/past/evidence", headers={"X-Forwarded-Groups": "viewers"})
+        assert {e["repo_id"] for e in user.json()["evidence"]} == {"a", "plain"}
+
+        def fail(*args):
+            pytest.fail("서비스 토큰으로 비협업 저장소를 읽었습니다")
+
+        monkeypatch.setattr(plain, "read_resolved", fail)
+        response = self.get(locked, "/api/meetings/a/past/evidence", token=self.TOKEN)
+        assert response.status_code == 200
+        assert {e["repo_id"] for e in response.json()["evidence"]} == {"a"}
+        assert response.json()["status"] == "partial" and response.json()["omitted"] == 1
+        assert "비협업비밀제목" not in response.text and "private/secret.md" not in response.text
+
+    def test_evidence_token_and_viewer_role(self, locked, monkeypatch):
+        import app as viewer_app
+        path = "/api/meetings/a/past/evidence"
+        assert self.get(locked, path, token=self.TOKEN).json() == {"meeting_id": "past", "evidence": [], "status": "ok", "omitted": 0}
+        monkeypatch.setattr(viewer_app.config.authz.role_mappings, "viewer", ["viewers"])
+        assert locked.get(path, headers={"X-Forwarded-Groups": "viewers"}).status_code == 200
 
     def test_unset_token_never_matches(self, setup, monkeypatch):
         import app as viewer_app
@@ -151,6 +218,86 @@ class TestServiceToken:
         assert self.get(setup, token="abc").status_code == 200
         monkeypatch.setenv("VIEWER_SERVICE_TOKEN", "zzz")
         assert self.get(setup, token="zzz").status_code == 403
+
+
+class TestCollabSearch:
+    def test_user_can_choose_collab_only_and_keep_ref(self, setup, monkeypatch):
+        import app as viewer_app
+        calls = []
+
+        async def search(managers, query, ref, *args):
+            calls.append(([rid for rid, _, _ in managers], ref))
+            return []
+
+        monkeypatch.setattr(viewer_app.search_mod, "search_repositories", search)
+        assert setup.get("/api/search?q=abc").status_code == 200
+        assert calls[-1] == (["a", "b", "plain"], None)
+        assert setup.get("/api/search?q=abc&collab_only=true").status_code == 200
+        assert calls[-1] == (["a", "b"], None)
+        assert setup.get("/api/search?q=abc&repo=a&ref=feature&collab_only=true").status_code == 200
+        assert calls[-1] == (["a"], "feature")
+
+
+class TestEvidenceApi:
+    @pytest.mark.parametrize("with_valid", [False, True])
+    def test_unreadable_and_unconfigured_references_are_partial(self, setup, with_valid):
+        import app as viewer_app
+        manager = viewer_app.repo_managers["a"]
+        manager.files["docs/past.md"] = manager.files["docs/past.md"].replace(
+            "    presenters: [김]", "    references:\n      /missing/: 'unknown:rules/'\n    presenters: [김]")
+        manager.files["docs/past.md"] += "\n[없는 저장소](/missing/a.md)\n[없는 파일](missing.md)\n[중복](missing.md)\n"
+        if with_valid:
+            manager.files["docs/past.md"] += "\n[정상](rule.md)\n"
+            manager.files["docs/rule.md"] = "# 규정\n"
+        response = setup.get("/api/meetings/a/past/evidence")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "partial" and data["omitted"] == 2
+        assert len(data["evidence"]) == int(with_valid)
+
+    def test_titles_links_only_with_existing_builder(self, setup, monkeypatch):
+        import app as viewer_app
+        manager = viewer_app.repo_managers["a"]
+        manager.files["docs/past.md"] += "\n[근거](rule.md#조항)\n[다른 저장소](/rules/cross.md)\n"
+        manager.files["docs/past.md"] = manager.files["docs/past.md"].replace(
+            "    presenters: [김]", "    references:\n      /rules/: 'b:rules/'\n    presenters: [김]")
+        manager.files["docs/rule.md"] = "# 규정 제목\n\n## 조항\n원문발췌비밀\n"
+        viewer_app.repo_managers["b"].files["rules/cross.md"] = "# 공통 규정\n\n다른원문비밀\n"
+        refs = []
+        original = manager.resolve_ref
+        monkeypatch.setattr(manager, "resolve_ref", lambda ref=None: (refs.append(ref), original(ref))[1])
+        resp = setup.get("/api/meetings/a/past/evidence")
+        assert resp.status_code == 200
+        assert resp.json() == {"meeting_id": "past", "status": "ok", "omitted": 0, "evidence": [
+            {"title": "규정 제목", "repo_id": "a", "path": "docs/rule.md", "url": "/view/a/docs/rule.md#%EC%A1%B0%ED%95%AD"},
+            {"title": "공통 규정", "repo_id": "b", "path": "rules/cross.md", "url": "/view/b/rules/cross.md"},
+        ]}
+        assert all(ref is None for ref in refs)
+        for secret in ("원문발췌비밀", "다른원문비밀", "채택", "점검", '"html"', '"loc"', '"cites"'):
+            assert secret not in resp.text
+
+    @pytest.mark.parametrize("repo,mid", [("a", "missing"), ("a", "bad"), ("plain", "p"), ("missing", "x")])
+    def test_missing_invalid_or_non_collab_meeting_is_404(self, setup, repo, mid):
+        assert setup.get(f"/api/meetings/{repo}/{mid}/evidence").status_code == 404
+
+    @pytest.mark.parametrize("stage", ["render", "build", "read"])
+    def test_failure_returns_safe_empty_status(self, setup, monkeypatch, stage):
+        import app as viewer_app
+
+        def fail(*args, **kw):
+            raise RuntimeError("원문비밀")
+
+        if stage == "render":
+            monkeypatch.setattr(viewer_app, "render_markdown", fail)
+        elif stage == "build":
+            monkeypatch.setattr(viewer_app.evidence, "build", fail)
+        else:
+            viewer_app._collect_meetings("a")
+            monkeypatch.setattr(viewer_app.repo_managers["a"], "read_resolved", fail)
+        response = setup.get("/api/meetings/a/past/evidence")
+        assert response.status_code == 200
+        assert response.json() == {"meeting_id": "past", "evidence": [], "status": "failed", "omitted": 0}
+        assert "원문비밀" not in response.text
 
 
 class TestPage:

@@ -689,6 +689,7 @@ class Evidence:
     html: str
     entries: tuple[Entry, ...]
     ids: dict[str, str]
+    omitted: int = 0
 
 
 # 브라우저가 안의 태그를 요소로 만들지 않는 요소(원시 텍스트·RCDATA, 스크립트가 켜진 noscript)
@@ -827,6 +828,7 @@ def build(
     loaded = 0
     judged = 0
     found: dict[tuple[str, str, str], dict] = {}
+    omitted: set[tuple[str, str, str]] = set()
     marks: list[tuple[int, dict]] = []
     for offset, href, heading in scanner.links:
         target = _target(href, repo_id, path, references, skip_prefixes)
@@ -851,6 +853,7 @@ def build(
                     docs[(repo, doc_path)] = None
             doc = docs[(repo, doc_path)]
             if doc is None:
+                omitted.add(key)
                 continue
             name, body, prepared = doc
             loc, excerpt = extract(body, anchor, prepared=prepared)
@@ -881,4 +884,4 @@ def build(
         out.append(f' data-evidence="{item["id"]}"')
         pos = offset
     out.append(html_text[pos:])
-    return Evidence(html="".join(out), entries=tuple(entries), ids=ids)
+    return Evidence(html="".join(out), entries=tuple(entries), ids=ids, omitted=len(omitted))

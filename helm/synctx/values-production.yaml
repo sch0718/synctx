@@ -72,6 +72,11 @@ feedback:
   secrets:
     existingSecret: "synctx-feedback-secrets"
 
+collabGateway:
+  image:
+    repository: registry.internal/synctx/collab-gateway
+    tag: "0.7.0"
+
 ingress:
   enabled: true
   className: "nginx"
@@ -96,3 +101,15 @@ ingress:
         - path: /drawio(/.*)?
           pathType: ImplementationSpecific
           backend: drawio
+
+jitsi:
+  enabled: false
+  images:
+    web:
+      repository: registry.local:5000/jitsi/web
+    prosody:
+      repository: registry.local:5000/jitsi/prosody
+    jicofo:
+      repository: registry.local:5000/jitsi/jicofo
+    jvb:
+      repository: registry.local:5000/jitsi/jvb

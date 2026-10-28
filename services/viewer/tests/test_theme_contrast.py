@@ -192,3 +192,17 @@ def test_evidence_text_meets_aa(theme, text, background):
     color = _resolve(_decl(_css_rule(text, css), "color"), values)
     back = _resolve(_decl(_css_rule(background, css), "background"), values)
     assert contrast(rgb(color)[0], rgb(back)[0]) >= 4.5
+
+
+def test_jitsi_panel_reasons_and_disabled_button_keep_aa_contrast():
+    css = (Path(__file__).resolve().parents[1] / 'src/static/meeting/jitsi.css').read_text()
+    for selector in ('.jitsi-join:disabled', '.jitsi-panel'):
+        rule = _css_rule(selector, css)
+        assert _decl(rule, 'color') == 'var(--text-primary)'
+        background = '--bg-neutral' if selector == '.jitsi-join:disabled' else '--bg-card'
+        assert _decl(rule, 'background') == f'var({background})'
+        for theme in _themes():
+            values = theme_vars(theme)
+            assert contrast(rgb(values['--text-primary'])[0], rgb(values[background])[0]) >= 4.5
+    assert _decl(_css_rule('.jitsi-join:disabled', css), 'opacity') == '1'
+    assert 'outline: 2px solid var(--primary)' in css

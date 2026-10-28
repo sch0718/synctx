@@ -156,3 +156,10 @@ def test_alerts_only_when_enabled_and_metrics_on(tmp_path):
 def test_validation_failures(tmp_path, overrides, message):
     result = render(tmp_path, **overrides)
     assert result.returncode != 0 and message in result.stderr
+
+
+def test_production_values_point_gateway_image_to_internal_registry():
+    production = yaml.safe_load((CHART / "values-production.yaml").read_text())
+    base = yaml.safe_load((CHART / "values.yaml").read_text())
+    assert production["collabGateway"]["image"]["repository"] == "registry.internal/synctx/collab-gateway"
+    assert production["collabGateway"]["image"]["tag"] == base["collabGateway"]["image"]["tag"]

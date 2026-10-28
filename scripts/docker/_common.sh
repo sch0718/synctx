@@ -79,12 +79,24 @@ load_env_files() {
     GENERATED_DIR="$(abs_path "${SYNCTX_GENERATED_DIR:-./.generated}")"
     GATEWAY_CONF="${GENERATED_DIR}/gateway.conf"
     export SYNCTX_GENERATED_DIR="$GENERATED_DIR"
+    SYNCTX_JITSI_IMAGE_TAG="${SYNCTX_JITSI_IMAGE_TAG:-$(sed -n 's/^  imageTag: "\([^" ]*\)".*/\1/p' "${PROJECT_ROOT}/helm/synctx/values.yaml")}"
+    export SYNCTX_JITSI_IMAGE_TAG
     prepare_render_secrets
+    SYNCTX_JITSI_JWT="${JITSI_APP_SECRET:-}"
+    if [ "${JITSI_APP_SECRET_FILE_MOUNT:-/dev/null}" != /dev/null ]; then
+        SYNCTX_JITSI_JWT="$(cat "$JITSI_APP_SECRET_FILE_MOUNT"; printf '.')"
+        SYNCTX_JITSI_JWT="${SYNCTX_JITSI_JWT%.}"
+        case "$SYNCTX_JITSI_JWT" in
+            *$'\r\n') SYNCTX_JITSI_JWT="${SYNCTX_JITSI_JWT%$'\r\n'}" ;;
+            *$'\n') SYNCTX_JITSI_JWT="${SYNCTX_JITSI_JWT%$'\n'}" ;;
+        esac
+    fi
+    export SYNCTX_JITSI_JWT
 }
 
 prepare_render_secrets() {
     local name file_name mount_name host_file target
-    for name in SYNCTX_RENDER_SECRET SYNCTX_RENDER_SECRET_PREVIOUS; do
+    for name in SYNCTX_RENDER_SECRET SYNCTX_RENDER_SECRET_PREVIOUS JITSI_APP_SECRET JITSI_APP_SECRET_PREVIOUS JITSI_ROOM_SECRET JITSI_ROOM_SECRET_PREVIOUS; do
         file_name="${name}_FILE"
         mount_name="${file_name}_MOUNT"
         printf -v "$mount_name" '%s' /dev/null
@@ -96,6 +108,9 @@ prepare_render_secrets() {
             [ -f "$host_file" ] && [ -r "$host_file" ] || fail "${file_name} 파일이 없거나 읽을 수 없습니다"
             target=/run/secrets/synctx-render-secret
             [ "$name" != SYNCTX_RENDER_SECRET_PREVIOUS ] || target=/run/secrets/synctx-render-secret-previous
+            case "$name" in
+                JITSI_*) target="/run/secrets/$(printf '%s' "$name" | tr '[:upper:]_' '[:lower:]-')" ;;
+            esac
             printf -v "$mount_name" '%s' "$host_file"
             printf -v "$file_name" '%s' "$target"
             export "$file_name"

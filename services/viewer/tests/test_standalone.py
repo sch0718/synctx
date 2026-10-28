@@ -354,3 +354,16 @@ def test_main_keeps_synctx_log_masking_by_not_letting_uvicorn_replace_handlers(t
     monkeypatch.setattr(module, "prepare_config", lambda args: tmp_path / "synctx.yaml")
     module.main(["--repo", "https://git.example/a/docs.git", "--cache-dir", str(tmp_path)])
     assert "log_config" in captured and captured["log_config"] is None
+
+
+def test_lightweight_runtime_disables_jitsi_from_platform_config(tmp_path):
+    source = tmp_path / 'input.yaml'
+    source.write_text(yaml.safe_dump({
+        'repositories': [{'id': 'docs', 'name': 'Docs', 'url': 'https://git.example/docs.git'}],
+        'collab': {'jitsi': {'enabled': True, 'public_url': 'https://meet.synctx.local', 'app_id': 'synctx'}},
+    }))
+    original = source.read_bytes()
+    args = runtime().parse_args(['--config', str(source), '--cache-dir', str(tmp_path / 'cache')])
+    generated = yaml.safe_load(runtime().prepare_config(args).read_text())
+    assert generated['collab']['jitsi']['enabled'] is False
+    assert source.read_bytes() == original

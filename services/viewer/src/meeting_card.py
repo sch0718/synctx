@@ -38,7 +38,7 @@ def agenda_from_toc(tokens: list[dict]) -> list[tuple[str, str]]:
     return agenda
 
 
-def card_data(meeting: MeetingFrontMatter, toc_tokens: list[dict]) -> dict:
+def card_data(meeting: MeetingFrontMatter, toc_tokens: list[dict], *, jitsi: dict | None = None) -> dict:
     return {
         "title": meeting.title,
         "time_label": time_range_label(meeting.starts_at, meeting.duration_minutes),
@@ -48,4 +48,5 @@ def card_data(meeting: MeetingFrontMatter, toc_tokens: list[dict]) -> dict:
         "channel": meeting.channel,
         "cancelled": meeting.cancelled,
         "agenda": agenda_from_toc(toc_tokens),
+        "jitsi": jitsi,
     }

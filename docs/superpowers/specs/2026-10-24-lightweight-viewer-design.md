@@ -5,7 +5,7 @@
 2026-10-24 대화에서 승인한 구성이다. 기존 저장소의 공통 코드를 사용하고 별도 개발 브랜치에서 구현한다.
 
 - Markdown 탐색·본문 검색·발표 화면·회의 메모·근거 미리보기·HTML/Markdown 내보내기를 재사용한다.
-- Zoom·Google Meet·Jitsi는 Markdown 안 일반 HTTPS 회의 링크로 연결한다. 영상 내장, API 연동, 회의 서버는 만들지 않는다.
+- Zoom·Google Meet·Jitsi는 Markdown 안 일반 HTTPS 회의 링크로 연결한다. 영상 내장, API 연동, 회의 서버는 만들지 않는다. (영상 내장 제외는 Phase 8.2가 대체하며, 경량 실행에는 Jitsi를 넣지 않는다.)
 - 렌더링 라이브러리는 Viewer의 기존 `static/vendor/` 사본을 웹 화면과 HTML 내보내기에서 함께 사용한다.
 - Docker 없는 한 줄 실행과 동일 앱의 단일 컨테이너 실행을 제공한다.
 - Sync·Feedback·CDN 서비스·Draw.io·Marp·Slides·메신저·공동 편집·자체 로그인은 경량 실행에 포함하지 않는다.

@@ -112,6 +112,60 @@ feedback:
     # create: true일 때 Secret에 넣을 값(user:password). 값을 주면 xwikiHtmlCredentialEnabled 없이도 연결한다.
     xwikiHtmlCredential: ""
 
+jitsi:
+  enabled: false
+  imageTag: "stable-9823"  # Docker Hub 실존·아키텍처 미확인, 반입 전 `docker manifest inspect`
+  host: ""
+  publicUrl: ""
+  appId: synctx
+  ingress:
+    className: nginx
+    annotations: {}
+    tlsSecretName: jitsi-tls
+  jwtSecret:
+    create: false
+    existingSecret: ""
+    current: ""
+    previous: ""
+  roomSecret:
+    create: false
+    existingSecret: ""
+    current: ""
+    previous: ""
+  xmppSecret:
+    create: false
+    existingSecret: ""
+    jicofoPassword: ""
+    jvbPassword: ""
+  jvb:
+    advertisedIPs: ""  # 쉼표 구분 IP 목록(포트 없음)
+    exposure: NodePort
+    nodePort: 31000
+    tcpNodePort: 30443
+    tcpFallback: false
+  images:
+    web:
+      repository: jitsi/web
+    prosody:
+      repository: jitsi/prosody
+    jicofo:
+      repository: jitsi/jicofo
+    jvb:
+      repository: jitsi/jvb
+  resources:
+    web:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 300m, memory: 256Mi}
+    prosody:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 300m, memory: 256Mi}
+    jicofo:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+    jvb:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {cpu: 1000m, memory: 512Mi}
+
 collabGateway:
   enabled: false
   image:

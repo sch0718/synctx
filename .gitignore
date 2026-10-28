@@ -47,3 +47,4 @@ logs/
 helm/synctx/charts/*.tgz
 helm/synctx/values-local.secret.yaml
 helm/synctx/values-local.collab.secret.yaml
+helm/synctx/values-local.jitsi.secret.yaml

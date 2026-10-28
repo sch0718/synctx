@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../_common.sh"
 
 print_header "synctx 서비스 배포"
+print_warning "이 배포는 Jitsi를 끕니다(추가 Helm 인자로 덮어쓰지 않은 경우). deploy-jitsi.sh는 Collab Gateway를 끕니다."
 
 ensure_namespace "${NAMESPACE}"
 

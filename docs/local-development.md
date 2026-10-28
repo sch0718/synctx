@@ -475,3 +475,15 @@ kubectl delete pvc --all -n synctx
 ./scripts/local/steps/deploy-deps.sh --skip-images
 ./scripts/local/steps/deploy-synctx.sh
 ```
+
+## 선택 Jitsi 시험 (Phase 8.2)
+
+기본 setup.sh에는 Jitsi가 포함되지 않는다. 기본 인프라·mkcert CA·ca-issuer가 준비된 전용 프로필에서 `MINIKUBE_PROFILE=synctx scripts/local/steps/deploy-jitsi.sh`를 선택 실행한다. `--host meet.synctx.local`, `--advertise-ips '노드IP'`(여러 IP는 쉼표 구분), `--skip-images`를 지원하며 기본 광고 주소는 포트 없는 minikube IP다. NodePort는 JVB_PORT·containerPort·Service port·nodePort가 모두 UDP 31000(기본값)이며 광고 주소에 포트를 붙이지 않는다. hostPort·Compose는 UDP 10000을 유지한다. 기존 build.sh처럼 공통 load_image를 사용해 네 공식 이미지를 로드한다. 반입 전에 이미지 실존·아키텍처를 별도 확인해야 한다.
+
+4GiB 상한에서는 Mattermost와 동시에 띄우지 않는다. 스크립트는 Mattermost Deployment가 실행 중이면 경고 후 중단한다. Jitsi는 Java 프로세스 두 개와 web·prosody가 추가되므로 다른 무거운 선택 서비스도 줄이고 자원을 확인한다. 경량 run.sh·run-lite.sh에는 포함하지 않는다.
+
+서로 다른 앱·방 이름 키와 내부 XMPP 암호는 ~/.cache/synctx/jitsi/에 생성하고 재사용한다(디렉터리 700·파일 600). Helm 전달 파일 helm/synctx/values-local.jitsi.secret.yaml도 600이며 gitignore 대상이다. 파일이나 키를 커밋·출력하지 않는다. deploy-jitsi.sh는 values-local.yaml과 선택 Git 토큰 값 파일에 Jitsi 값만 덧붙여 배포하고 Collab Gateway를 끈다. 이후 일반 deploy-synctx.sh는 Jitsi 값 파일을 자동 적용하지 않아 Jitsi를 끄므로 다시 선택 배포해야 한다(추가 Helm 인자로 덮어쓰지 않은 경우). 두 스크립트는 이 상호 전환을 출력으로 경고한다.
+
+https://meet.synctx.local의 DNS/hosts를 Ingress 주소에 맞추고 mkcert CA를 신뢰한다. ca-issuer가 해당 호스트의 jitsi-tls를 발급하며 터널은 `minikube tunnel -p synctx`를 사용한다. Viewer의 회의 참여 버튼을 통해 입장한다. `scripts/local/verify.sh --jitsi`는 기존 검증에 네 Deployment 준비 상태를 추가한다. 브라우저에서 참가자 역할·발표자 따라가기 데이터 채널을 따로 확인한다.
+
+로컬 검증 범위는 접속·입장·데이터 채널까지이며 UDP 미디어는 검증하지 않는다. 이번 A2 구현에서는 minikube를 실행하지 않았고, 실제 입장·역할·미디어는 미확인이다. tcpFallback은 기본 false이며 stable-9823 템플릿에 TCP 하베스터 처리가 없어 동작하지 않는다. JVB_DISABLE_STUN=1과 web ENABLE_P2P=false로 외부 STUN 의존을 끊도록 지정한다. web 변수의 stable-9823 유효성과 실제 외부 STUN 요청 차단은 확인 필요다. 장애·키 교체·방화벽 절차는 production-service-design.md 12.11을 따른다.

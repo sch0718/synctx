@@ -409,3 +409,32 @@ def test_embed_css_expands_above_drawer_and_hides_close_only_when_collapsed():
     close = _rule(css, '[data-html-embed][data-embed-expanded="true"] [data-action="embed-close"]')
     assert all(needle in close for needle in ("position: absolute", "top:", "right:"))
     assert "overflow: hidden" in _rule(css, "body.embed-scroll-lock")
+
+
+@pytest.mark.parametrize('name,ctype', [('jitsi.js', 'javascript'), ('jitsi-core.js', 'javascript'), ('jitsi.css', 'text/css')])
+def test_jitsi_static_assets_are_served(client, name, ctype):
+    response = client.get('/static/meeting/' + name)
+    assert response.status_code == 200 and ctype in response.headers['content-type']
+
+
+def test_jitsi_panel_accessibility_and_local_script_source():
+    js = (STATIC / 'meeting/jitsi.js').read_text()
+    assert 'https://' not in js and 'innerHTML' not in js and 'localStorage' not in js
+    assert 'console.' not in js
+    assert 'article.innerHTML' not in js and 'article.append' not in js
+
+
+def test_jitsi_and_memo_panels_share_space_on_desktop_and_mobile():
+    css = (STATIC / 'meeting/jitsi.css').read_text()
+    desktop, mobile = css.split('@media (max-width: 767px)')
+    video = _rule(desktop, 'body:has(.meeting-panel) .jitsi-panel')
+    memo = _rule(desktop, 'body:has(.jitsi-panel:not([hidden])) .meeting-panel')
+    assert 'left: 0' in video and 'right: auto' in video and 'width: min(480px, 50vw)' in video
+    assert 'max-width: 50vw' in memo
+    assert 'top: 50vh' in _rule(mobile, 'body:has(.meeting-panel) .jitsi-panel')
+    assert 'bottom: 50vh' in _rule(mobile, 'body:has(.jitsi-panel:not([hidden])) .meeting-panel')
+    video_z = int(re.search(r'z-index: (\d+)', _rule(css, '.jitsi-panel')).group(1))
+    memo_css = (STATIC / 'meeting/meeting.css').read_text()
+    memo_z = int(re.search(r'z-index: (\d+)', _rule(memo_css, '.meeting-panel')).group(1))
+    assert memo_z < video_z < 1100
+    assert 'outline:' in _rule(css, '.jitsi-panel :focus-visible, .jitsi-join:focus-visible')

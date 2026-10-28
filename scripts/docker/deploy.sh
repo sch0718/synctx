@@ -41,6 +41,22 @@ validate_options() {
     [ "$SYNCTX_IMAGE_TAG" != "latest" ] || fail "SYNCTX_IMAGE_TAG에 latest는 쓸 수 없습니다. 0.7.0-<git-sha> 형식을 쓰세요"
 
     parse_services
+    case "${SYNCTX_JITSI:-false}" in
+        true|false) ;;
+        *) fail "SYNCTX_JITSI는 true 또는 false입니다" ;;
+    esac
+    if [ "${SYNCTX_JITSI:-false}" = true ]; then
+        is_enabled viewer || fail "Jitsi 참여에는 viewer가 필요합니다"
+        [[ "$SYNCTX_JITSI_IMAGE_TAG" =~ ^stable-[0-9]+(-[0-9]+)?$ ]] || fail "Jitsi 태그는 고정 stable-<번호>여야 합니다(latest 금지)"
+        [[ "${SYNCTX_JITSI_HOST:-}" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || fail "SYNCTX_JITSI_HOST를 지정하세요"
+        [ "${SYNCTX_JITSI_PUBLIC_URL:-}" = "https://${SYNCTX_JITSI_HOST}" ] || fail "Jitsi public URL은 https://호스트여야 합니다"
+        [ -n "${SYNCTX_TLS_CERT:-}" ] && [ -n "${SYNCTX_TLS_KEY:-}" ] || fail "Jitsi에는 HTTPS TLS 설정이 필요합니다"
+        [ -n "${SYNCTX_JITSI_ADVERTISE_IPS:-}" ] || fail "SYNCTX_JITSI_ADVERTISE_IPS를 지정하세요"
+        [ -n "${JITSI_JICOFO_PASSWORD:-}" ] && [ -n "${JITSI_JVB_PASSWORD:-}" ] || fail "Jitsi XMPP 암호 파일(secrets.env)이 필요합니다"
+        if ! uv run --offline --frozen --all-packages python "${DOCKER_SCRIPT_DIR}/validate_jitsi.py" "$(abs_path "${SYNCTX_CONFIG_FILE:-}")"; then
+            fail "Jitsi 설정·키 검증 실패"
+        fi
+    fi
 
     [ -n "${SYNCTX_CONFIG_FILE:-}" ] || fail "SYNCTX_CONFIG_FILE(.synctx.yaml 경로)을 지정하세요"
     [ -f "$(abs_path "$SYNCTX_CONFIG_FILE")" ] || fail "SYNCTX_CONFIG_FILE 파일이 없습니다: $(abs_path "$SYNCTX_CONFIG_FILE")"
@@ -214,6 +230,32 @@ EOF
         fi
         render_server_body
         echo "}"
+        if [ "${SYNCTX_JITSI:-false}" = true ]; then
+            cat <<EOF
+server {
+    listen 443 ssl;
+    server_name ${SYNCTX_JITSI_HOST};
+    ssl_certificate /etc/nginx/tls/${SYNCTX_TLS_CERT};
+    ssl_certificate_key /etc/nginx/tls/${SYNCTX_TLS_KEY};
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    location / {
+        set \$jitsi_upstream http://jitsi-web:80;
+        proxy_pass \$jitsi_upstream;
+    }
+    location /colibri-ws/jvb/ {
+        set \$jitsi_bridge http://jitsi-jvb:9090;
+        proxy_pass \$jitsi_bridge;
+    }
+}
+EOF
+        fi
     } > "$tmp"
     cat "$tmp" > "$target"
     rm -f "$tmp"
@@ -271,6 +313,8 @@ for svc in "${ENABLED[@]}"; do
     PROFILE_ARGS+=(--profile "$svc")
 done
 
+[ "${SYNCTX_JITSI:-false}" != true ] || PROFILE_ARGS+=(--profile jitsi)
+
 print_header "컨테이너 시작"
 if ! docker compose "${COMPOSE_ARGS[@]}" "${PROFILE_ARGS[@]}" up -d --pull missing --wait --wait-timeout "${SYNCTX_WAIT_TIMEOUT:-180}"; then
     print_error "컨테이너가 정상 상태가 되지 않았습니다"
@@ -286,6 +330,9 @@ for svc in "${OPTIONAL_SERVICES[@]}"; do
     # shellcheck disable=SC2046
     docker compose "${COMPOSE_ARGS[@]}" --profile "$svc" rm -sf $(compose_services_of "$svc") >/dev/null 2>&1 || true
 done
+if [ "${SYNCTX_JITSI:-false}" != true ]; then
+    docker compose "${COMPOSE_ARGS[@]}" --profile jitsi rm -sf jitsi-web jitsi-prosody jitsi-jicofo jitsi-jvb >/dev/null 2>&1 || true
+fi
 print_success "정리 완료"
 
 print_header "게이트웨이 설정 반영"

@@ -46,7 +46,7 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 
 Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, Outbound Feedback Exporter(선택), Collab Gateway(선택)
 
-보조 구성요소: Jitsi(Phase 8.2, 제3자 이미지·계획), Pushgateway(`metrics.enabled`이고 `sync.persistence`가 켜졌으며 Sync 또는 Feedback이 켜졌을 때만 배포, Sync·Feedback CronJob 메트릭 수집)
+보조 구성요소: Jitsi(Phase 8.2, 제3자 이미지·선택 배포(`jitsi.enabled`, 기본 꺼짐)), Pushgateway(`metrics.enabled`이고 `sync.persistence`가 켜졌으며 Sync 또는 Feedback이 켜졌을 때만 배포, Sync·Feedback CronJob 메트릭 수집)
 
 ## 설정 파일
 

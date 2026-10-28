@@ -15,6 +15,7 @@ echo "" >> "$OUTPUT"
 # 1. Docker images (from values-production.yaml)
 echo "# --- Docker Images ---" >> "$OUTPUT"
 if command -v docker &>/dev/null; then
+    JITSI_IMAGE_TAG="$(sed -n 's/^  imageTag: "\([^" ]*\)".*/\1/p' "$PROJECT_ROOT/helm/synctx/values.yaml")"
     images=(
         "registry.internal/synctx/viewer:0.7.0"
         "registry.internal/synctx/cdn:0.7.0"
@@ -25,6 +26,10 @@ if command -v docker &>/dev/null; then
         "registry.internal/alpine/git:2.43.0"
         "registry.internal/jgraph/drawio:24.2.5"
         "registry.internal/prom/pushgateway:v1.11.1"
+        "registry.local:5000/jitsi/web:${JITSI_IMAGE_TAG}"
+        "registry.local:5000/jitsi/prosody:${JITSI_IMAGE_TAG}"
+        "registry.local:5000/jitsi/jicofo:${JITSI_IMAGE_TAG}"
+        "registry.local:5000/jitsi/jvb:${JITSI_IMAGE_TAG}"
     )
     for img in "${images[@]}"; do
         digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$img" 2>/dev/null || echo "NOT_AVAILABLE")
@@ -49,7 +54,7 @@ echo "" >> "$OUTPUT"
 # 3. Helm chart
 echo "# --- Helm Chart ---" >> "$OUTPUT"
 if [ -d "$PROJECT_ROOT/helm/synctx" ]; then
-    find "$PROJECT_ROOT/helm/synctx" -type f | sort | while read -r f; do
+    find "$PROJECT_ROOT/helm/synctx" -type f ! -name "*.secret.yaml" | sort | while read -r f; do
         rel="${f#$PROJECT_ROOT/}"
         sha=$(sha256sum "$f" | cut -d' ' -f1)
         echo "$sha  $rel" >> "$OUTPUT"

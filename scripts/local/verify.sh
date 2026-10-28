@@ -5,6 +5,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
+VERIFY_JITSI=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --jitsi) VERIFY_JITSI=true; shift ;;
+        -h|--help) echo "사용법: verify.sh [--jitsi]"; exit 0 ;;
+        *) print_error "알 수 없는 옵션: $1"; exit 1 ;;
+    esac
+done
+
 ERRORS=0
 
 check_status() {
@@ -202,6 +211,20 @@ done
 
 # 결과
 print_header "검증 결과"
+if [ "$VERIFY_JITSI" = true ]; then
+    print_header "선택 Jitsi 확인"
+    for component in web prosody jicofo jvb; do
+        if kubectl rollout status "deployment/synctx-jitsi-${component}" -n "${NAMESPACE}" --timeout=60s; then
+            print_success "Jitsi ${component} Ready"
+        else
+            print_error "Jitsi ${component} 준비 실패"
+            ERRORS=$((ERRORS + 1))
+        fi
+    done
+    print_info "HTTPS 회의 입장과 발표자 따라가기 데이터 채널은 브라우저에서 확인하세요"
+    print_warning "로컬 검증 범위는 접속·입장·데이터 채널까지이며 UDP 미디어는 검증하지 않는다"
+fi
+
 if [ $ERRORS -eq 0 ]; then
     print_success "모든 검증 항목 통과"
     echo ""

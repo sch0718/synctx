@@ -23,7 +23,7 @@ def _check(response: httpx.Response, action: str) -> httpx.Response:
 
 
 COMMAND_TRIGGER = "synctx"
-COMMAND_HINT = "오늘 | 예정 [일수] | 회의 <id> | 정리 <id> | 도움말"
+COMMAND_HINT = "오늘 | 예정 [일수] | 회의 <id> | 참여 [id] | 정리 <id> | 검색 <키워드> | 근거 <id> | 도움말"
 
 
 def provision_command(client: httpx.Client, *, team_id: str, url: str) -> str:

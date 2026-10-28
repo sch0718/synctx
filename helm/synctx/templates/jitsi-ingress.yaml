@@ -1,0 +1,33 @@
+{{- if dig "enabled" false (.Values.jitsi | default dict) }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "synctx.fullname" . }}-jitsi
+  {{- with .Values.jitsi.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.jitsi.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.jitsi.host | quote }}]
+      secretName: {{ .Values.jitsi.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.jitsi.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "synctx.fullname" . }}-jitsi-web
+                port:
+                  name: http
+          - path: /colibri-ws/jvb
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "synctx.fullname" . }}-jitsi-jvb
+                port:
+                  name: colibri-ws
+{{- end }}

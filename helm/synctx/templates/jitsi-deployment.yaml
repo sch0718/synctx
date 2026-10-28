@@ -1,0 +1,142 @@
+{{- if dig "enabled" false (.Values.jitsi | default dict) }}
+{{- $j := .Values.jitsi }}
+{{- $mediaPort := ternary (int $j.jvb.nodePort) 10000 (eq $j.jvb.exposure "NodePort") }}
+{{- range $component := list "web" "prosody" "jicofo" "jvb" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "synctx.fullname" $ }}-jitsi-{{ $component }}
+  labels:
+    app.kubernetes.io/name: jitsi-{{ $component }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jitsi-{{ $component }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jitsi-{{ $component }}
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+    spec:
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ $component }}
+          image: "{{ (index $j.images $component).repository }}:{{ $j.imageTag }}"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+          env:
+            {{- $env := dict "PUBLIC_URL" $j.publicUrl "ENABLE_AUTH" "1" "AUTH_TYPE" "jwt" "ENABLE_GUESTS" "0" "ENABLE_AUTO_OWNER" "0" "JWT_ALLOW_EMPTY" "0" "JWT_APP_ID" $j.appId "JWT_ACCEPTED_ISSUERS" $j.appId "JWT_ACCEPTED_AUDIENCES" $j.appId "XMPP_SERVER" (printf "%s-jitsi-prosody" (include "synctx.fullname" $)) "XMPP_DOMAIN" $j.host "XMPP_AUTH_DOMAIN" (printf "auth.%s" $j.host) "XMPP_INTERNAL_MUC_DOMAIN" (printf "internal-muc.%s" $j.host) "XMPP_MUC_DOMAIN" (printf "muc.%s" $j.host) "JICOFO_AUTH_USER" "focus" "JVB_AUTH_USER" "jvb" "JVB_BREWERY_MUC" "jvbbrewery" "ENABLE_XMPP_WEBSOCKET" "1" "ENABLE_COLIBRI_WEBSOCKET" "1" "JICOFO_MAX_MEMORY" "256m" "JVB_MAX_MEMORY" "256m" "JICOFO_ENABLE_REST" "1" "JICOFO_ENABLE_HEALTH_CHECKS" "1" }}
+            {{- if eq $component "web" }}
+            {{- $_ := set $env "DISABLE_HTTPS" "1" }}
+            {{- $_ := set $env "ENABLE_P2P" "false" }}
+            {{- $_ := set $env "ENABLE_HTTP_REDIRECT" "0" }}
+            {{- $_ := set $env "XMPP_BOSH_URL_BASE" (printf "http://%s-jitsi-prosody:5280" (include "synctx.fullname" $)) }}
+            {{- $_ := set $env "JVB_WS_DOMAIN" $j.host }}
+            {{- $_ := set $env "JVB_WS_SERVER_ID" "jvb" }}
+            {{- $_ := set $env "JVB_WS_SERVER" (printf "%s-jitsi-jvb" (include "synctx.fullname" $)) }}
+            {{- end }}
+            {{- if eq $component "prosody" }}
+            {{- $_ := set $env "XMPP_MUC_MODULES" "token_affiliation" }}
+            {{- end }}
+            {{- if eq $component "jicofo" }}
+            {{- $_ := set $env "ENABLE_AUTH" "0" }}
+            {{- end }}
+            {{- if eq $component "jvb" }}
+            {{- $env = dict "XMPP_SERVER" (printf "%s-jitsi-prosody" (include "synctx.fullname" $)) "XMPP_DOMAIN" $j.host "XMPP_AUTH_DOMAIN" (printf "auth.%s" $j.host) "XMPP_INTERNAL_MUC_DOMAIN" (printf "internal-muc.%s" $j.host) "JVB_AUTH_USER" "jvb" "JVB_BREWERY_MUC" "jvbbrewery" "ENABLE_COLIBRI_WEBSOCKET" "1" "JVB_MAX_MEMORY" "256m" "JVB_DISABLE_STUN" "1" }}
+            {{- $_ := set $env "JVB_ADVERTISE_IPS" $j.jvb.advertisedIPs }}
+            {{- $_ := set $env "JVB_PORT" (toString $mediaPort) }}
+            {{- $_ := set $env "JVB_TCP_HARVESTER_DISABLED" (ternary "false" "true" $j.jvb.tcpFallback) }}
+            {{- $_ := set $env "JVB_TCP_PORT" "4443" }}
+            {{- $_ := set $env "JVB_WS_DOMAIN" $j.host }}
+            {{- $_ := set $env "JVB_WS_SERVER_ID" "jvb" }}
+            {{- $_ := set $env "JVB_ENABLE_APIS" "rest,colibri" }}
+            {{- end }}
+            {{- range $name, $value := $env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- if eq $component "prosody" }}
+            - name: JWT_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $j.jwtSecret.existingSecret | default (printf "%s-jitsi-jwt-secret" (include "synctx.fullname" $)) }}
+                  key: current
+            {{- end }}
+            {{- $passwords := dict }}
+            {{- if has $component (list "prosody" "jicofo") }}
+            {{- $_ := set $passwords "JICOFO_AUTH_PASSWORD" "jicofo-password" }}
+            {{- end }}
+            {{- if has $component (list "prosody" "jvb") }}
+            {{- $_ := set $passwords "JVB_AUTH_PASSWORD" "jvb-password" }}
+            {{- end }}
+            {{- range $name, $key := $passwords }}
+            - name: {{ $name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $j.xmppSecret.existingSecret | default (printf "%s-jitsi-xmpp-secret" (include "synctx.fullname" $)) }}
+                  key: {{ $key }}
+            {{- end }}
+          ports:
+            {{- if eq $component "web" }}
+            - {name: http, containerPort: 80}
+            {{- else if eq $component "prosody" }}
+            - {name: xmpp, containerPort: 5222}
+            - {name: bosh, containerPort: 5280}
+            {{- else if eq $component "jicofo" }}
+            - {name: health, containerPort: 8888}
+            {{- else }}
+            - {name: health, containerPort: 8080}
+            - name: media
+              containerPort: {{ $mediaPort }}
+              protocol: UDP
+              {{- if eq $j.jvb.exposure "hostPort" }}
+              hostPort: 10000
+              {{- end }}
+            {{- if $j.jvb.tcpFallback }}
+            - name: media-tcp
+              containerPort: 4443
+              {{- if eq $j.jvb.exposure "hostPort" }}
+              hostPort: 4443
+              {{- end }}
+            {{- end }}
+            - {name: colibri-ws, containerPort: 9090}
+            {{- end }}
+          startupProbe:
+            tcpSocket:
+              port: {{ if eq $component "web" }}http{{ else if eq $component "prosody" }}xmpp{{ else }}health{{ end }}
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ if eq $component "web" }}http{{ else if eq $component "prosody" }}xmpp{{ else }}health{{ end }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ if eq $component "web" }}http{{ else if eq $component "prosody" }}xmpp{{ else }}health{{ end }}
+            failureThreshold: 6
+          resources:
+            {{- toYaml (index $j.resources $component) | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /config}
+            - {name: tmp, mountPath: /tmp}
+            - {name: run, mountPath: /run}
+      volumes:
+        - name: config
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+{{- end }}
+{{- end }}

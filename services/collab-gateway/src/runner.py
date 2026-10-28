@@ -11,9 +11,9 @@ from typing import Optional
 
 from adapters.base import ChannelRef, MessengerAdapter, SendError
 import messages
-from models import Meeting
+from models import EvidenceResult, Meeting, SearchResult
 from scheduler import Notification, plan_meeting
-from state import StateStore
+from gateway_state import StateStore
 from synctx_common.config import CollabGatewayConfig
 from synctx_common.observability import (
     collab_last_success_timestamp,
@@ -129,6 +129,12 @@ class Runner:
             return None
         self._latest = (meetings, now)
         return meetings
+
+    async def search_documents(self, query: str, repo_ids: set[str]) -> list[SearchResult]:
+        return await self._viewer.search_documents(query, repo_ids)
+
+    async def fetch_evidence(self, repo_id: str, meeting_id: str) -> EvidenceResult:
+        return await self._viewer.fetch_evidence(repo_id, meeting_id)
 
     async def run_cycle(self, now: Optional[datetime] = None) -> CycleReport:
         now = now or datetime.now(timezone.utc)

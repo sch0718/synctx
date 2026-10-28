@@ -38,4 +38,5 @@ PROFILE_ARGS=()
 for svc in "${ENABLED[@]}"; do
     PROFILE_ARGS+=(--profile "$svc")
 done
+[ "${SYNCTX_JITSI:-false}" != true ] || PROFILE_ARGS+=(--profile jitsi)
 exec docker compose "${COMPOSE_ARGS[@]}" "${PROFILE_ARGS[@]}" "$@"

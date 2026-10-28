@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable, Sequence
 
 import messages
-from models import Meeting
+from models import DocumentLink, EvidenceResult, Meeting, SearchResult
 
 KST = timezone(timedelta(hours=9))
 LINE_LIMIT = 20
@@ -17,14 +17,17 @@ MAX_ARG_CHARS = 200
 MAX_REPLY_CHARS = 15000
 DEFAULT_DAYS = 7
 MAX_DAYS = 30
-COMMANDS = ("today", "upcoming", "meeting", "summary", "help", "unknown")
+COMMANDS = ("today", "upcoming", "meeting", "join", "summary", "search", "evidence", "help", "unknown")
 RESULTS = ("ok", "no_channel", "not_found", "ambiguous", "invalid", "rate_limited", "unauthorized", "unavailable", "error")
 
 _ALIASES = {
     "오늘": "today", "today": "today",
     "예정": "upcoming", "upcoming": "upcoming",
     "회의": "meeting", "meeting": "meeting",
+    "참여": "join", "join": "join",
     "정리": "summary", "summary": "summary",
+    "검색": "search", "search": "search",
+    "근거": "evidence", "evidence": "evidence",
     "도움말": "help", "help": "help", "?": "help", "": "help",
 }
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f  ]+")
@@ -35,9 +38,18 @@ HELP_TEXT = (
     "- `/synctx 오늘` — 이 채널의 오늘 회의\n"
     "- `/synctx 예정 [일수]` — 앞으로 N일(기본 7, 최대 30) 회의\n"
     "- `/synctx 회의 <id 또는 제목>` — 회의 정보와 링크\n"
+    "- `/synctx 참여 [id]` — 진행 중이거나 가장 가까운 예정 회의의 문서·발표 화면\n"
     "- `/synctx 정리 <id 또는 제목>` — 결정사항·액션 아이템\n"
+    "- `/synctx 검색 <키워드>` — 이 채널의 저장소 문서 검색(최대 5건)\n"
+    "- `/synctx 근거 <id 또는 제목>` — 회의 근거 제목·링크(최대 20건)\n"
     "- `/synctx 도움말`"
 )
+
+
+@dataclass(frozen=True)
+class Lookup:
+    query: str = ""
+    meeting: Meeting | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +57,7 @@ class Reply:
     text: str
     command: str
     result: str
+    lookup: Lookup | None = None
 
 
 def parse(text: str) -> tuple[str, str]:
@@ -53,7 +66,14 @@ def parse(text: str) -> tuple[str, str]:
     command = _ALIASES.get(head.casefold(), "unknown")
     if command == "unknown":
         return command, flat
+    if command == "search":
+        parts = re.split(r"[ \t]+", (text or "").strip(), maxsplit=1)
+        return command, parts[1].strip() if len(parts) == 2 else ""
     return command, rest.strip()
+
+
+def valid_search_query(arg: str) -> bool:
+    return 2 <= len(arg) <= 100 and not any(char in arg for char in ("\n", "\r", "\x00"))
 
 
 def _status(m: Meeting, now: datetime) -> str:
@@ -133,7 +153,8 @@ def _find(arg: str, meetings: Sequence[Meeting]) -> list[Meeting]:
 
 def _resolve(command: str, arg: str, meetings: Sequence[Meeting], now: datetime, base_url: str):
     if not arg:
-        return None, Reply(f"회의 id나 제목을 함께 입력하세요. 예: `/synctx {'회의' if command == 'meeting' else '정리'} <id>`",
+        label = {"meeting": "회의", "summary": "정리", "evidence": "근거"}[command]
+        return None, Reply(f"회의 id나 제목을 함께 입력하세요. 예: `/synctx {label} <id>`",
                            command, "invalid")
     found = _find(arg, meetings)
     if not found:
@@ -170,7 +191,50 @@ def _summary(m: Meeting, base_url: str) -> Reply:
     return Reply(_bounded(messages.summary_message(m, base_url)), "summary", "ok")
 
 
-def handle(text: str, meetings: Iterable[Meeting], channel_keys: set[str], now: datetime, base_url: str) -> Reply:
+def _join(arg: str, meetings: Sequence[Meeting], now: datetime, base_url: str) -> Reply:
+    if arg:
+        found, error = _resolve("join", arg, meetings, now, base_url)
+        if error is not None:
+            return error
+    else:
+        ongoing = [m for m in meetings if not m.cancelled and m.starts_at <= now < m.ends_at]
+        upcoming = [m for m in meetings if not m.cancelled and m.starts_at > now]
+        candidates = ongoing or upcoming
+        if not candidates:
+            return Reply("이 채널에 진행 중이거나 예정된 회의가 없습니다.", "join", "not_found")
+        found = min(candidates, key=lambda m: (m.starts_at, m.key))
+    if found.cancelled:
+        reason = "취소된 회의입니다."
+    elif not found.jitsi_enabled or found.joinable_from is None or found.joinable_until is None:
+        reason = "영상 회의가 꺼져 있습니다."
+    elif now < found.joinable_from:
+        reason = "회의 시작 15분 전부터 참여할 수 있습니다."
+    elif now >= found.joinable_until:
+        reason = "회의 종료 후 1시간이 지났습니다."
+    else:
+        reason = ""
+    links = (f"[문서 열기]({messages.absolute_url(base_url, found.url)}) · "
+             f"[발표 화면]({messages.absolute_url(base_url, found.present_url)})")
+    text = "\n".join(part for part in (f"**{messages.escape(found.title)}**", reason, links,
+                                      "문서 화면의 참여 버튼으로 입장") if part)
+    return Reply(_bounded(text), "join", "ok")
+
+
+def _document_lines(documents: Sequence[DocumentLink], base_url: str, limit: int) -> list[str]:
+    lines = [f"- [{messages.escape(d.title)}]({messages.absolute_url(base_url, d.url)})" for d in documents[:limit]]
+    if len(documents) > limit:
+        lines.append(f"- … 외 {len(documents) - limit}건")
+    return lines
+
+
+def unavailable_text(command: str) -> str:
+    label = {"search": "지금 검색 결과를", "evidence": "근거를"}.get(command, "지금 회의 정보를")
+    return f"{label} 읽지 못했습니다. 잠시 후 다시 시도하세요."
+
+
+def handle(text: str, meetings: Iterable[Meeting], channel_keys: set[str], now: datetime, base_url: str, *,
+           search_results: Sequence[SearchResult] | None = None,
+           evidence_results: EvidenceResult | None = None) -> Reply:
     command, arg = parse(text)
     if command == "help":
         return Reply(HELP_TEXT, "help", "ok")
@@ -178,6 +242,8 @@ def handle(text: str, meetings: Iterable[Meeting], channel_keys: set[str], now: 
         return Reply("알 수 없는 명령입니다. `/synctx 도움말`을 확인하세요.", "unknown", "invalid")
     if len(arg) > MAX_ARG_CHARS:
         return Reply(f"입력이 너무 깁니다({MAX_ARG_CHARS}자 이하).", command, "invalid")
+    if command == "search" and not valid_search_query(arg):
+        return Reply("검색어는 2~100자의 한 줄로 입력하세요.", command, "invalid")
     if not channel_keys:
         return Reply("이 채널에 연결된 회의가 없습니다.", command, "no_channel")
     scoped = [m for m in meetings if m.channel in channel_keys]
@@ -185,7 +251,28 @@ def handle(text: str, meetings: Iterable[Meeting], channel_keys: set[str], now: 
         return _today(scoped, now, base_url)
     if command == "upcoming":
         return _upcoming(arg, scoped, now, base_url)
+    if command == "join":
+        return _join(arg, scoped, now, base_url)
+    if command == "search":
+        repo_ids = {m.repo_id for m in scoped}
+        if not repo_ids:
+            return Reply("이 채널에 연결된 회의가 없습니다.", command, "no_channel")
+        if search_results is None:
+            return Reply("", command, "ok", Lookup(query=arg))
+        results = [r for r in search_results if r.repo_id in repo_ids]
+        if any(r.status != "ok" for r in results):
+            return Reply(unavailable_text(command), command, "unavailable")
+        documents = list({(d.repo_id, d.path): d for r in results for d in r.documents}.values())
+        lines = _document_lines(documents, base_url, CANDIDATE_LIMIT)
+        return Reply(_bounded("\n".join(["**문서 검색**", *lines])) if lines else "검색 결과가 없습니다.", command, "ok")
     found, error = _resolve(command, arg, scoped, now, base_url)
     if error is not None:
         return error
+    if command == "evidence":
+        if evidence_results is None:
+            return Reply("", command, "ok", Lookup(meeting=found))
+        lines = _document_lines(evidence_results.documents, base_url, LINE_LIMIT)
+        if evidence_results.status == "partial":
+            lines.append(f"일부 근거를 읽지 못했습니다({evidence_results.omitted}건 생략)")
+        return Reply(_bounded("\n".join(["**회의 근거**", *lines])) if lines else "이 회의에 연결된 근거가 없습니다.", command, "ok")
     return _card(found, now, base_url) if command == "meeting" else _summary(found, base_url)

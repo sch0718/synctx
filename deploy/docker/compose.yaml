@@ -26,11 +26,23 @@ services:
       SYNCTX_RENDER_SECRET_PREVIOUS:
       SYNCTX_RENDER_SECRET_FILE:
       SYNCTX_RENDER_SECRET_PREVIOUS_FILE:
+      JITSI_APP_SECRET:
+      JITSI_APP_SECRET_FILE:
+      JITSI_APP_SECRET_PREVIOUS:
+      JITSI_APP_SECRET_PREVIOUS_FILE:
+      JITSI_ROOM_SECRET:
+      JITSI_ROOM_SECRET_FILE:
+      JITSI_ROOM_SECRET_PREVIOUS:
+      JITSI_ROOM_SECRET_PREVIOUS_FILE:
     volumes:
       - ${SYNCTX_CONFIG_FILE:?SYNCTX_CONFIG_FILE을 지정하세요}:/etc/synctx/.synctx.yaml:ro
       - viewer-repos:/data/repos
       - ${SYNCTX_RENDER_SECRET_FILE_MOUNT:-/dev/null}:/run/secrets/synctx-render-secret:ro
       - ${SYNCTX_RENDER_SECRET_PREVIOUS_FILE_MOUNT:-/dev/null}:/run/secrets/synctx-render-secret-previous:ro
+      - ${JITSI_APP_SECRET_FILE_MOUNT:-/dev/null}:/run/secrets/jitsi-app-secret:ro
+      - ${JITSI_APP_SECRET_PREVIOUS_FILE_MOUNT:-/dev/null}:/run/secrets/jitsi-app-secret-previous:ro
+      - ${JITSI_ROOM_SECRET_FILE_MOUNT:-/dev/null}:/run/secrets/jitsi-room-secret:ro
+      - ${JITSI_ROOM_SECRET_PREVIOUS_FILE_MOUNT:-/dev/null}:/run/secrets/jitsi-room-secret-previous:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
       interval: 10s
@@ -121,6 +133,171 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
+      start_period: 120s
+
+  jitsi-web:
+    image: ${SYNCTX_IMAGE_PREFIX-registry.local:5000/}jitsi/web:${SYNCTX_JITSI_IMAGE_TAG:?deploy.sh로 Jitsi 태그를 지정하세요}
+    profiles: [jitsi]
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${SYNCTX_JITSI_PUBLIC_URL:-}
+      ENABLE_AUTH: "1"
+      AUTH_TYPE: jwt
+      ENABLE_GUESTS: "0"
+      ENABLE_AUTO_OWNER: "0"
+      JWT_ALLOW_EMPTY: "0"
+      JWT_APP_ID: ${SYNCTX_JITSI_APP_ID:-synctx}
+      JWT_ACCEPTED_ISSUERS: ${SYNCTX_JITSI_APP_ID:-synctx}
+      JWT_ACCEPTED_AUDIENCES: ${SYNCTX_JITSI_APP_ID:-synctx}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: auth.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: internal-muc.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_MUC_DOMAIN: muc.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      JICOFO_AUTH_USER: focus
+      JVB_AUTH_USER: jvb
+      JVB_BREWERY_MUC: jvbbrewery
+      ENABLE_XMPP_WEBSOCKET: "1"
+      ENABLE_COLIBRI_WEBSOCKET: "1"
+      JICOFO_MAX_MEMORY: 256m
+      JVB_MAX_MEMORY: 256m
+      JICOFO_ENABLE_REST: "1"
+      JICOFO_ENABLE_HEALTH_CHECKS: "1"
+      ENABLE_P2P: "false"
+      DISABLE_HTTPS: "1"
+      ENABLE_HTTP_REDIRECT: "0"
+      XMPP_BOSH_URL_BASE: http://jitsi-prosody:5280
+      JVB_WS_DOMAIN: ${SYNCTX_JITSI_HOST:-}
+      JVB_WS_SERVER_ID: jvb
+    mem_limit: 512m
+    cpus: 1.0
+    tmpfs:
+      - /config
+      - /tmp
+    healthcheck:
+      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/80"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  jitsi-prosody:
+    image: ${SYNCTX_IMAGE_PREFIX-registry.local:5000/}jitsi/prosody:${SYNCTX_JITSI_IMAGE_TAG:?deploy.sh로 Jitsi 태그를 지정하세요}
+    profiles: [jitsi]
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${SYNCTX_JITSI_PUBLIC_URL:-}
+      ENABLE_AUTH: "1"
+      AUTH_TYPE: jwt
+      ENABLE_GUESTS: "0"
+      ENABLE_AUTO_OWNER: "0"
+      JWT_ALLOW_EMPTY: "0"
+      JWT_APP_ID: ${SYNCTX_JITSI_APP_ID:-synctx}
+      JWT_ACCEPTED_ISSUERS: ${SYNCTX_JITSI_APP_ID:-synctx}
+      JWT_ACCEPTED_AUDIENCES: ${SYNCTX_JITSI_APP_ID:-synctx}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: auth.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: internal-muc.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_MUC_DOMAIN: muc.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      JICOFO_AUTH_USER: focus
+      JVB_AUTH_USER: jvb
+      JVB_BREWERY_MUC: jvbbrewery
+      ENABLE_XMPP_WEBSOCKET: "1"
+      ENABLE_COLIBRI_WEBSOCKET: "1"
+      JICOFO_MAX_MEMORY: 256m
+      JVB_MAX_MEMORY: 256m
+      JICOFO_ENABLE_REST: "1"
+      JICOFO_ENABLE_HEALTH_CHECKS: "1"
+      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_PASSWORD:-}
+      JVB_AUTH_PASSWORD: ${JITSI_JVB_PASSWORD:-}
+      JWT_APP_SECRET: ${SYNCTX_JITSI_JWT:-}
+      XMPP_MUC_MODULES: token_affiliation
+    mem_limit: 512m
+    cpus: 1.0
+    tmpfs:
+      - /config
+      - /tmp
+    healthcheck:
+      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/5222"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  jitsi-jicofo:
+    image: ${SYNCTX_IMAGE_PREFIX-registry.local:5000/}jitsi/jicofo:${SYNCTX_JITSI_IMAGE_TAG:?deploy.sh로 Jitsi 태그를 지정하세요}
+    profiles: [jitsi]
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${SYNCTX_JITSI_PUBLIC_URL:-}
+      ENABLE_AUTH: "0"
+      AUTH_TYPE: jwt
+      ENABLE_GUESTS: "0"
+      ENABLE_AUTO_OWNER: "0"
+      JWT_ALLOW_EMPTY: "0"
+      JWT_APP_ID: ${SYNCTX_JITSI_APP_ID:-synctx}
+      JWT_ACCEPTED_ISSUERS: ${SYNCTX_JITSI_APP_ID:-synctx}
+      JWT_ACCEPTED_AUDIENCES: ${SYNCTX_JITSI_APP_ID:-synctx}
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: auth.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: internal-muc.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_MUC_DOMAIN: muc.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      JICOFO_AUTH_USER: focus
+      JVB_AUTH_USER: jvb
+      JVB_BREWERY_MUC: jvbbrewery
+      ENABLE_XMPP_WEBSOCKET: "1"
+      ENABLE_COLIBRI_WEBSOCKET: "1"
+      JICOFO_MAX_MEMORY: 256m
+      JVB_MAX_MEMORY: 256m
+      JICOFO_ENABLE_REST: "1"
+      JICOFO_ENABLE_HEALTH_CHECKS: "1"
+      JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_PASSWORD:-}
+    mem_limit: 512m
+    cpus: 1.0
+    tmpfs:
+      - /config
+      - /tmp
+    healthcheck:
+      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/8888"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+  jitsi-jvb:
+    image: ${SYNCTX_IMAGE_PREFIX-registry.local:5000/}jitsi/jvb:${SYNCTX_JITSI_IMAGE_TAG:?deploy.sh로 Jitsi 태그를 지정하세요}
+    profiles: [jitsi]
+    restart: unless-stopped
+    environment:
+      XMPP_SERVER: jitsi-prosody
+      XMPP_DOMAIN: ${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_AUTH_DOMAIN: auth.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      XMPP_INTERNAL_MUC_DOMAIN: internal-muc.${SYNCTX_JITSI_HOST:-meet.jitsi}
+      JVB_AUTH_USER: jvb
+      JVB_BREWERY_MUC: jvbbrewery
+      ENABLE_COLIBRI_WEBSOCKET: "1"
+      JVB_MAX_MEMORY: 256m
+      JVB_AUTH_PASSWORD: ${JITSI_JVB_PASSWORD:-}
+      JVB_WS_DOMAIN: ${SYNCTX_JITSI_HOST:-}
+      JVB_WS_SERVER_ID: jvb
+      JVB_ADVERTISE_IPS: ${SYNCTX_JITSI_ADVERTISE_IPS:-}
+      JVB_PORT: "10000"
+      JVB_ENABLE_APIS: rest,colibri
+      JVB_DISABLE_STUN: "1"
+    ports:
+      - "${SYNCTX_JITSI_MEDIA_BIND_ADDRESS:-0.0.0.0}:10000:10000/udp"
+    mem_limit: 512m
+    cpus: 1.0
+    tmpfs:
+      - /config
+      - /tmp
+    healthcheck:
+      test: ["CMD", "bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
       start_period: 120s
 
 volumes:

@@ -18,6 +18,13 @@ from prometheus_client import (
 
 registry = CollectorRegistry()
 
+viewer_jitsi_tokens_issued_total = Counter(
+    "synctx_viewer_jitsi_tokens_issued_total", "Total Jitsi tokens issued", registry=registry,
+)
+viewer_jitsi_token_failures_total = Counter(
+    "synctx_viewer_jitsi_token_failures_total", "Total Jitsi token failures", ["reason"], registry=registry,
+)
+
 # ── HTTP metrics (all services) ──
 http_requests_total = Counter(
     "synctx_http_requests_total",

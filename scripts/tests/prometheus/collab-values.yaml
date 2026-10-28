@@ -9,7 +9,14 @@ synctxConfig:
   create: true
   data: |
     collab:
+      jitsi:
+        enabled: true
+        public_url: https://meet.test
       gateway:
         enabled: true
         mattermost: {url: "https://chat.test"}
         channels: {dx: {team: t, channel: c}}
+
+jitsi:
+  jwtSecret: {existingSecret: test-app}
+  roomSecret: {existingSecret: test-room}

@@ -88,6 +88,16 @@ def render_assets(view_prefix: str, config: dict) -> tuple[str, str]:
     return head, body
 
 
+def render_jitsi_assets(view_prefix: str, config: dict) -> tuple[str, str]:
+    head = f'<link rel="stylesheet" href="{view_prefix}/static/meeting/jitsi.css">'
+    body = (
+        f'<script type="application/json" id="jitsi-config">{encode_for_script(config)}</script>\n'
+        f'<script src="{view_prefix}/static/meeting/jitsi-core.js"></script>\n'
+        f'<script src="{view_prefix}/static/meeting/jitsi.js"></script>'
+    )
+    return head, body
+
+
 def notice_html(text: str) -> str:
     return f'<div class="meeting-notice" role="status" style="{_NOTICE_STYLE}">{html.escape(text)}</div>'
 

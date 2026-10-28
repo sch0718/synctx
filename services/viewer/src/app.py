@@ -10,7 +10,7 @@ import subprocess
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Depends, Header, Query
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -21,12 +21,16 @@ from synctx_common.frontmatter import parse_frontmatter
 from synctx_common.git_manager import GitRepoManager
 from synctx_common.html_bundle import BundleError, bundle, repo_reader, resolved_reader
 from synctx_common.logging import configure_logging
-from synctx_common.observability import html_render_total, register_observability_routes
+from synctx_common.observability import (
+    html_render_total, register_observability_routes,
+    viewer_jitsi_tokens_issued_total, viewer_jitsi_token_failures_total,
+)
 from synctx_common.render_token import RenderTokenError, issue_render_token, load_render_keys, verify_render_token
 from renderer import NO_TITLE_FALLBACK, render_markdown, rewrite_links, THEME_CSS, THEME_HLJS, THEME_MERMAID
 
 import embed_view
 import evidence
+import jitsi
 import meeting as meeting_mode
 import meeting_card
 import meeting_index
@@ -39,6 +43,7 @@ VIEW_PREFIX = "/view"
 
 config = load_config()
 render_key, render_previous_key = load_render_keys()
+jitsi_keys = jitsi.load_keys(config.collab.jitsi)
 logger = logging.getLogger(__name__)
 
 
@@ -87,8 +92,9 @@ def _check_service_dependencies(cfg) -> None:
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     # 저장소를 다 받을 때까지 기다리면 startup probe 시간을 넘기므로 백그라운드로 돌린다
-    global _startup_sync
+    global _startup_sync, jitsi_keys
     _check_service_dependencies(config)
+    jitsi_keys = jitsi.load_keys(config.collab.jitsi)
     _startup_sync = asyncio.create_task(_sync_repos_on_startup())
     try:
         yield
@@ -112,6 +118,8 @@ async def csp_middleware(request: Request, call_next):
             raise
         logger.exception("html_render_failed")
         response = JSONResponse(status_code=500, content={"detail": "HTML을 불러오지 못했습니다"})
+    if getattr(request.scope.get("route"), "endpoint", None) is meeting_jitsi:
+        response.headers["Cache-Control"] = "no-store"
     if getattr(request.scope.get("route"), "endpoint", None) is render_html:
         response.headers.update({
             "Content-Security-Policy": "sandbox allow-scripts",
@@ -137,9 +145,17 @@ async def csp_middleware(request: Request, call_next):
             
         embed_hosts = "".join(f" {origin}" for origin in config.html_embed.allowed_origins)
         frame_src = "'self'" if render_screen else "'none'"
+        jitsi_origin = ""
+        if config.collab.jitsi.enabled:
+            jitsi_origin = " " + config.collab.jitsi.public_url
+            frame_src = ("'self' " if render_screen else "") + config.collab.jitsi.public_url
+            origin = config.collab.jitsi.public_url
+            response.headers["Permissions-Policy"] = ", ".join(
+                f'{feature}=(self "{origin}")' for feature in ("camera", "microphone", "display-capture")
+            )
         csp = (
             f"default-src 'self'; "
-            f"script-src 'self' 'unsafe-inline'{cdn_host}{embed_hosts}; "
+            f"script-src 'self' 'unsafe-inline'{cdn_host}{embed_hosts}{jitsi_origin}; "
             f"style-src 'self' 'unsafe-inline'{cdn_host}{embed_hosts}; "
             f"img-src 'self' data:{cdn_host}{embed_hosts}; "
             f"font-src 'self' data:{cdn_host}{embed_hosts}; "
@@ -216,8 +232,9 @@ def verify_viewer_or_service_access(authorization: str = Header(default=""),
     expected = os.getenv(config.collab.gateway.viewer_service_token_env, "")
     scheme, _, presented = authorization.partition(" ")
     if expected and scheme == "Bearer" and presented and hmac.compare_digest(presented.encode(), expected.encode()):
-        return
+        return True
     verify_viewer_access(x_forwarded_groups)
+    return False
 
 
 def _view_url(path=""):
@@ -653,11 +670,10 @@ def _searchable_path(path: str) -> bool:
     return is_viewable(path)
 
 
-async def _run_search(query: str, repo_id: str | None, ref: str | None) -> list[dict]:
-    if not repo_id:
-        repos = list(config.repositories)
-    else:
-        repos = [repo for repo in config.repositories if repo.id == repo_id]
+async def _run_search(query: str, repo_id: str | None, ref: str | None, collab_only: bool = False) -> list[dict]:
+    repos = _collab_repos() if collab_only else list(config.repositories)
+    if repo_id:
+        repos = [repo for repo in repos if repo.id == repo_id]
     managers = [(repo.id, repo.name, get_repo_manager(repo.id)) for repo in repos]
     effective_ref = None
     if repo_id and managers and ref and ref != managers[0][2].profile.default_ref:
@@ -665,18 +681,27 @@ async def _run_search(query: str, repo_id: str | None, ref: str | None) -> list[
     return await search_mod.search_repositories(managers, query, effective_ref, SEARCH_PATHSPECS, _searchable_path)
 
 
-@app.get("/api/search", dependencies=[Depends(verify_viewer_access)])
-async def search_documents(q: str | None = None, repo: str | None = None, ref: str | None = None):
+@app.get("/api/search")
+async def search_documents(q: str | None = None, repo: str | None = None, ref: str | None = None,
+                           collab_only: bool = False, service_access: bool = Depends(verify_viewer_or_service_access)):
     query = search_mod.normalize_query(q)
     if query is None:
         raise HTTPException(status_code=400, detail=SEARCH_QUERY_ERROR)
+    if service_access and ref is not None:
+        raise HTTPException(status_code=400, detail="서비스 토큰 검색은 기본 브랜치만 허용합니다")
     repo = repo or None
     ref = ref or None
     if ref and not repo:
         raise HTTPException(status_code=400, detail="ref는 저장소를 지정할 때만 쓸 수 있습니다")
     if repo and not _repo_known(repo):
         raise HTTPException(status_code=404, detail=f"Repository not found: {repo}")
-    return {"query": query, "repos": await _run_search(query, repo, ref)}
+    if service_access:
+        _require_collab_repo(repo)
+    results = await _run_search(query, repo, ref, collab_only or service_access)
+    if service_access:
+        results = [{**result, "matches": [{"path": match["path"]} for match in result["matches"]]}
+                   for result in results]
+    return {"query": query, "repos": results}
 
 
 # ── View Routes ──
@@ -804,12 +829,50 @@ def _meeting_json(m: meeting_index.MeetingEntry, now) -> dict:
         "cancelled": m.cancelled, "status": meeting_index.status_of(m, now),
         "url": doc_url, "present_url": f"{doc_url}?mode=present",
         "decisions": memo(m.decisions), "actions": memo(m.actions), "memo_error": m.memo_error,
+        "jitsi": jitsi.public_info(config.collab.jitsi, m),
     }
 
 
 def _require_collab_repo(repo_id: str | None) -> None:
     if repo_id and not any(repo.id == repo_id for repo in _collab_repos()):
         raise HTTPException(status_code=404, detail=f"Meeting repository not found: {repo_id}")
+
+
+def _verify_jitsi_access(x_forwarded_groups: str = Header(default="")):
+    try:
+        verify_viewer_access(x_forwarded_groups)
+    except HTTPException:
+        viewer_jitsi_token_failures_total.labels(reason="forbidden").inc()
+        raise
+
+
+@app.get("/api/meetings/{repo_id}/{meeting_id}/jitsi", dependencies=[Depends(_verify_jitsi_access)])
+def meeting_jitsi(repo_id: str, meeting_id: str, request: Request, x_forwarded_user: str = Header(default="")):
+    try:
+        _require_collab_repo(repo_id)
+        found = [m for result in _collect_meetings(repo_id) for m in result.meetings if m.id == meeting_id]
+        if len(found) != 1:
+            raise HTTPException(status_code=404, detail="회의를 찾지 못했습니다")
+    except HTTPException:
+        viewer_jitsi_token_failures_total.labels(reason="not_found").inc()
+        raise
+    except Exception as exc:
+        viewer_jitsi_token_failures_total.labels(reason="unavailable").inc()
+        logger.warning("jitsi_meeting_failed repo_id=%s error=%s", repo_id, type(exc).__name__)
+        raise HTTPException(status_code=503, detail={"reason": "unavailable", "message": "회의를 읽지 못했습니다"}) from None
+    reason = jitsi.availability(config.collab.jitsi, found[0], datetime.now(timezone.utc))
+    if reason:
+        viewer_jitsi_token_failures_total.labels(reason=reason).inc()
+        raise HTTPException(status_code=409, detail={"reason": reason, "message": jitsi.REASONS[reason]})
+    try:
+        payload = jitsi.issue_token(config.collab.jitsi, jitsi_keys, repo_id, found[0], x_forwarded_user,
+                                    presenter_identity=request.headers.get(config.collab.jitsi.presenter_header, ""),
+                                    authz_enabled=config.authz.enabled)
+    except jitsi.JitsiError as exc:
+        viewer_jitsi_token_failures_total.labels(reason=exc.reason).inc()
+        raise HTTPException(status_code=409, detail={"reason": exc.reason, "message": str(exc)}) from None
+    viewer_jitsi_tokens_issued_total.inc()
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/meetings", dependencies=[Depends(verify_viewer_or_service_access)])
@@ -995,11 +1058,14 @@ def _publish_dialog(path: str) -> str:
 </dialog>'''
 
 
-def _evidence_reader(repo_id: str, manager: GitRepoManager, effective_ref: str | None):
+def _evidence_reader(repo_id: str, manager: GitRepoManager, effective_ref: str | None,
+                     allowed_repo_ids: set[str] | None = None):
     """근거 파일 원문 읽기. 저장소마다 ref를 한 번만 해석하고, blob이 아니거나 너무 큰 파일은 읽지 않고 예외를 낸다."""
     resolved: dict[str, tuple[GitRepoManager, str]] = {}
 
     def read(repo: str, path: str) -> str:
+        if allowed_repo_ids is not None and repo not in allowed_repo_ids:
+            raise ValueError("근거 저장소를 읽을 수 없습니다")
         if repo not in resolved:
             same = repo == repo_id
             mgr = manager if same else get_repo_manager(repo)
@@ -1026,14 +1092,49 @@ def _evidence_mapping(meeting) -> tuple[dict[str, str], tuple[str, ...], str]:
 
 
 def _build_evidence(html: str, repo_id: str, path: str, manager: GitRepoManager, effective_ref: str | None,
-                    references: dict[str, str], skipped: tuple[str, ...]):
+                    references: dict[str, str], skipped: tuple[str, ...], allowed_repo_ids: set[str] | None = None):
     """근거를 조립한다. 실패하면 근거 없이 보이도록 None을 돌려준다."""
     try:
         return evidence.build(html, repo_id=repo_id, path=path, references=references, skip_prefixes=skipped,
-                              read=_evidence_reader(repo_id, manager, effective_ref), render=_render_excerpt)
+                              read=_evidence_reader(repo_id, manager, effective_ref, allowed_repo_ids), render=_render_excerpt)
     except Exception as exc:
         logger.warning("evidence_failed repo_id=%s error=%s", repo_id, type(exc).__name__)
         return None
+
+
+@app.get("/api/meetings/{repo_id}/{meeting_id}/evidence")
+def meeting_evidence(repo_id: str, meeting_id: str, service_access: bool = Depends(verify_viewer_or_service_access)):
+    _require_collab_repo(repo_id)
+    found = [m for result in _collect_meetings(repo_id) for m in result.meetings if m.id == meeting_id]
+    if len(found) != 1:
+        raise HTTPException(status_code=404, detail="회의를 찾지 못했습니다")
+    manager = get_repo_manager(repo_id)
+    path = found[0].path
+    payload = {"meeting_id": meeting_id, "evidence": [], "status": "failed", "omitted": 0}
+    try:
+        content = _evidence_reader(repo_id, manager, None)(repo_id, path)
+        front_matter, body = parse_frontmatter(content)
+        ctx = meeting_mode.resolve_meeting_context(manager.profile, path, front_matter, None)
+        if not ctx.enabled or ctx.meeting.id != meeting_id:
+            raise HTTPException(status_code=404, detail="회의를 찾지 못했습니다")
+        allowed_repo_ids = {r.id for r in (_collab_repos() if service_access else config.repositories)}
+        rendered = render_markdown(embed_view.prepare(body).text)
+        built = _build_evidence(_sanitize_html(rendered["html"]), repo_id, path, manager, None,
+                                ctx.meeting.references, (), allowed_repo_ids)
+        if built is not None:
+            payload["omitted"] = built.omitted
+            payload["status"] = "partial" if built.omitted else "ok"
+            payload["evidence"] = [
+                {"title": e.doc, "repo_id": e.repo_id, "path": e.path,
+                 "url": f"{VIEW_PREFIX}/{quote(e.repo_id, safe='')}/{quote(e.path)}"
+                        + (f"#{quote(unquote(e.anchor), safe='')}" if e.anchor else "")}
+                for e in built.entries
+            ]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("evidence_failed repo_id=%s error=%s", repo_id, type(exc).__name__)
+    return payload
 
 
 def _render_file_response(repo_id: str, path: str, theme: str = "github-light", ref: str | None = None, mode: str | None = None, layout: str | None = None):
@@ -1144,6 +1245,18 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         presenting = mode == "present" and meeting_ctx.meeting is not None
         meeting_active = (mode == "meeting" or presenting) and meeting_ctx.enabled
         meeting_head = meeting_body = meeting_notice = meeting_exit = present_bar = ""
+        jitsi_ui = None
+        if meeting_ctx.meeting is not None:
+            reason = jitsi.availability(config.collab.jitsi, meeting_ctx.meeting, datetime.now(timezone.utc))
+            jitsi_ui = {"reason": meeting_ctx.reason or jitsi.REASONS.get(reason, "")}
+            jitsi_cfg = {
+                **jitsi.public_info(config.collab.jitsi, meeting_ctx.meeting),
+                "enabled": config.collab.jitsi.enabled and meeting_ctx.enabled,
+                "reason": meeting_ctx.reason or "", "cancelled": meeting_ctx.meeting.cancelled,
+                "public_url": config.collab.jitsi.public_url if config.collab.jitsi.enabled else "",
+                "endpoint": f"{VIEW_PREFIX}/api/meetings/{quote(repo_id, safe='')}/{quote(meeting_ctx.meeting.id, safe='')}/jitsi",
+                "doc": f"{repo_id}:{path}",
+            }
         meeting_href = present_href = None
         if meeting_active:
             meeting_cfg = meeting_mode.build_config(
@@ -1157,9 +1270,13 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             meeting_href = f"{doc_href}?mode=meeting"
         elif mode == "meeting":
             meeting_notice = meeting_mode.render_notice(meeting_ctx)
+        if jitsi_ui is not None:
+            jitsi_head, jitsi_body = meeting_mode.render_jitsi_assets(VIEW_PREFIX, jitsi_cfg)
+            meeting_head += jitsi_head
+            meeting_body += jitsi_body
         if presenting:
             present_bar = ui.render_present_bar(title=meeting_ctx.meeting.title, exit_href=doc_href + ref_param_first,
-                                                memo=meeting_ctx.enabled)
+                                                memo=meeting_ctx.enabled, jitsi=jitsi_ui)
         elif meeting_ctx.meeting is not None:
             present_href = f"{doc_href}?mode=present{ref_param}"
         elif mode == "present":
@@ -1210,7 +1327,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         meeting_card_html = ""
         if meeting_ctx.meeting is not None:
             meeting_card_html = ui.render_meeting_card(
-                meeting_card.card_data(meeting_ctx.meeting, rendered.get("toc") or []),
+                meeting_card.card_data(meeting_ctx.meeting, rendered.get("toc") or [], jitsi=jitsi_ui),
                 dashboard_href=f"{VIEW_PREFIX}/meetings" if meeting_ctx.enabled else None)
         body = f'''<div class="layout layout-doc">
   <nav id="shell-nav" class="shell-nav" aria-label="파일과 목차">

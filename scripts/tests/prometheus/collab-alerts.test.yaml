@@ -80,6 +80,8 @@ tests:
         values: '60+60x5 360x40'
       - series: 'synctx_collab_last_success_timestamp{job="healthy"}'
         values: '0+60x60'
+      - series: 'synctx_collab_last_success_timestamp{job="viewer"}'
+        values: '0x60'
     alert_rule_test:
       - eval_time: 10m
         alertname: SynctxCollabStalled

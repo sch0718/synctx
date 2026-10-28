@@ -20,6 +20,7 @@ def _write_env(tmp_path, overrides):
     config.write_text("authz:\n  enabled: false\n")
     values = {
         "SYNCTX_IMAGE_TAG": "0.1.0-abc1234",
+        "SYNCTX_JITSI_IMAGE_TAG": yaml.safe_load((ROOT / "helm/synctx/values.yaml").read_text())["jitsi"]["imageTag"],
         "SYNCTX_SERVICES": "viewer,cdn,marp,slides",
         "SYNCTX_CONFIG_FILE": str(config),
         "SYNCTX_SLIDES_REPO_URL": "https://git.internal/slides.git",
@@ -218,10 +219,26 @@ def test_relative_env_file_is_not_looked_up_in_path(tmp_path):
 NGINX_IMAGE = "nginx:1.25.4-alpine"
 
 
+def _docker_available():
+    return os.environ.get("SYNCTX_TEST_NO_DOCKER") != "1" and shutil.which("docker") is not None
+
+
 def _nginx_image_available():
-    if shutil.which("docker") is None:
+    if not _docker_available():
         return False
     return subprocess.run(["docker", "image", "inspect", NGINX_IMAGE], capture_output=True).returncode == 0
+
+
+def test_no_docker_option_blocks_image_inspection(monkeypatch):
+    monkeypatch.setenv("SYNCTX_TEST_NO_DOCKER", "1")
+    monkeypatch.setattr(shutil, "which", lambda name: "/test/docker")
+
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("Docker 제외 옵션에서 subprocess를 호출했습니다")
+
+    monkeypatch.setattr(subprocess, "run", unexpected_call)
+    assert not _docker_available()
+    assert not _nginx_image_available()
 
 
 def _self_signed_pair(tls_dir, name):
@@ -232,7 +249,7 @@ def _self_signed_pair(tls_dir, name):
     )
 
 
-@pytest.mark.skipif(not _nginx_image_available(), reason=f"docker 또는 {NGINX_IMAGE} 이미지 없음")
+@pytest.mark.skipif(not _nginx_image_available(), reason=f"Docker 테스트 비활성 또는 docker/{NGINX_IMAGE} 없음")
 @pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl 미설치")
 @pytest.mark.parametrize("scenario", ["default", "drawio", "trusted", "tls"])
 def test_generated_conf_passes_nginx_t(tmp_path, scenario):
@@ -335,7 +352,7 @@ def test_deploy_mounts_tls_dir_for_validation(tmp_path):
     assert f"{tls}:/etc/nginx/tls:ro" in run
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+@pytest.mark.skipif(not _docker_available(), reason="Docker 테스트 비활성 또는 docker 미설치")
 def test_compose_file_is_valid(tmp_path):
     env_file = _write_env(tmp_path, {"SYNCTX_SERVICES": "viewer,cdn,marp,slides,drawio"})
     override = tmp_path / "override.yaml"
@@ -353,7 +370,7 @@ def test_compose_file_is_valid(tmp_path):
         assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+@pytest.mark.skipif(not _docker_available(), reason="Docker 테스트 비활성 또는 docker 미설치")
 def test_compose_carries_config_hash_label(tmp_path):
     env_file = _write_env(tmp_path, {})
     env = {**_clean_env(tmp_path), "SYNCTX_CONFIG_HASH": "abc123"}
@@ -375,7 +392,7 @@ def test_compose_wrapper_requires_command(tmp_path):
     assert "docker compose에 넘길 명령" in result.stdout + result.stderr
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+@pytest.mark.skipif(not _docker_available(), reason="Docker 테스트 비활성 또는 docker 미설치")
 def test_compose_wrapper_uses_enabled_profiles(tmp_path):
     env_file = _write_env(tmp_path, {"SYNCTX_SERVICES": "viewer,cdn,slides"})
     result = subprocess.run(
@@ -450,7 +467,7 @@ def _compose_render_config(tmp_path, options):
     return json.loads(result.stdout)["services"]["viewer"]
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+@pytest.mark.skipif(not _docker_available(), reason="Docker 테스트 비활성 또는 docker 미설치")
 def test_compose_null_render_keys_match_bare_name_passthrough_when_unset(tmp_path):
     viewer = _compose_render_config(tmp_path, {})
     names = [name + suffix for name in RENDER_NAMES for suffix in ("", "_FILE")]
@@ -473,7 +490,7 @@ def test_compose_null_render_keys_match_bare_name_passthrough_when_unset(tmp_pat
     assert json.loads(result.stdout)["services"]["viewer"]["environment"] == viewer["environment"]
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+@pytest.mark.skipif(not _docker_available(), reason="Docker 테스트 비활성 또는 docker 미설치")
 def test_compose_passes_current_and_previous_direct_keys(tmp_path):
     options = {name: name + "-test-key" * 4 for name in RENDER_NAMES}
     viewer = _compose_render_config(tmp_path, options)
@@ -482,7 +499,7 @@ def test_compose_passes_current_and_previous_direct_keys(tmp_path):
         assert viewer["environment"].get(name + "_FILE") is None
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker 미설치")
+@pytest.mark.skipif(not _docker_available(), reason="Docker 테스트 비활성 또는 docker 미설치")
 @pytest.mark.parametrize("previous", [False, True])
 def test_compose_mounts_render_key_files_and_remaps_environment(tmp_path, previous):
     options = {}
@@ -504,3 +521,108 @@ def test_compose_mounts_render_key_files_and_remaps_environment(tmp_path, previo
     if not previous:
         assert viewer["environment"].get("SYNCTX_RENDER_SECRET_PREVIOUS_FILE") is None
     assert "file-key-never-serialize" not in json.dumps(viewer)
+
+
+def _jitsi_options(tmp_path, **extra):
+    config = tmp_path / "jitsi-config.yaml"
+    config.write_text("collab:\n  jitsi:\n    enabled: true\n    public_url: https://meet.synctx.local\n    app_id: synctx\n")
+    tls = tmp_path / "jitsi-tls"
+    tls.mkdir()
+    for name in ("cert.pem", "key.pem"):
+        (tls / name).write_text("test")
+    options = dict(SYNCTX_JITSI="true", SYNCTX_JITSI_HOST="meet.synctx.local",
+                   SYNCTX_JITSI_PUBLIC_URL="https://meet.synctx.local", SYNCTX_JITSI_ADVERTISE_IPS="192.0.2.1",
+                   SYNCTX_CONFIG_FILE=str(config), SYNCTX_TLS_DIR=str(tls), SYNCTX_TLS_CERT="cert.pem", SYNCTX_TLS_KEY="key.pem",
+                   JITSI_APP_SECRET="a" * 32, JITSI_ROOM_SECRET="r" * 32,
+                   JITSI_JICOFO_PASSWORD="f" * 32, JITSI_JVB_PASSWORD="b" * 32)
+    options.update(extra)
+    return options
+
+
+def test_jitsi_profile_and_matching_public_host_proxy(tmp_path):
+    result, conf = _check(tmp_path, **_jitsi_options(tmp_path))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "server_name meet.synctx.local;" in conf
+    assert "set $jitsi_upstream http://jitsi-web:80;" in conf
+    assert "location /colibri-ws/jvb/" in conf
+    assert "proxy_set_header Upgrade $http_upgrade;" in conf
+    assert "proxy_set_header X-Forwarded-Proto https;" in conf
+    assert "a" * 32 not in conf + result.stdout + result.stderr
+    compose = yaml.safe_load(COMPOSE.read_text())
+    for name in ("web", "prosody", "jicofo", "jvb"):
+        service = compose["services"][f"jitsi-{name}"]
+        assert service["profiles"] == ["jitsi"]
+        assert "${SYNCTX_JITSI_IMAGE_TAG" in service["image"]
+        assert "healthcheck" in service and "mem_limit" in service
+        assert "/run" not in service["tmpfs"]
+    services = compose["services"]
+    assert services["jitsi-prosody"]["environment"]["AUTH_TYPE"] == "jwt"
+    assert services["jitsi-prosody"]["environment"]["ENABLE_AUTO_OWNER"] == "0"
+    assert services["jitsi-jicofo"]["environment"]["ENABLE_AUTH"] == "0"
+    assert services["jitsi-jicofo"]["environment"]["ENABLE_AUTO_OWNER"] == "0"
+    assert services["jitsi-web"]["environment"]["ENABLE_P2P"] == "false"
+    bridge = services["jitsi-jvb"]
+    assert bridge["environment"]["JVB_DISABLE_STUN"] == "1"
+    assert "JICOFO_AUTH_PASSWORD" not in bridge["environment"]
+    assert "JICOFO_AUTH_USER" not in bridge["environment"]
+    assert "JWT_APP_ID" not in bridge["environment"]
+    assert "JVB_AUTH_PASSWORD" not in services["jitsi-jicofo"]["environment"]
+    assert len(bridge["ports"]) == 1
+    assert ":10000:10000/udp" in compose["services"]["jitsi-jvb"]["ports"][0]
+    assert "JITSI_ROOM_SECRET" not in str(compose["services"]["jitsi-prosody"])
+
+
+@pytest.mark.parametrize("override", [None, "stable-9823-1"])
+def test_jitsi_compose_tag_default_and_override(tmp_path, override):
+    options = tmp_path / "options.env"
+    options.write_text(f"SYNCTX_JITSI_IMAGE_TAG={override}\n" if override else "")
+    environment = {k: v for k, v in os.environ.items() if not k.startswith(("SYNCTX_", "JITSI_"))}
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; ENV_FILE="$2"; SECRETS_FILE="$3"; load_env_files; printf "tag=%s\\n" "$SYNCTX_JITSI_IMAGE_TAG"',
+         "test", str(ROOT / "scripts/docker/_common.sh"), str(options), str(tmp_path / "missing.env")],
+        capture_output=True, text=True, env=environment,
+    )
+    tag = override or yaml.safe_load((ROOT / "helm/synctx/values.yaml").read_text())["jitsi"]["imageTag"]
+    assert result.returncode == 0, result.stderr
+    assert f"tag={tag}\n" in result.stdout
+
+
+@pytest.mark.parametrize("overrides", [
+    {"SYNCTX_JITSI_IMAGE_TAG": "latest"}, {"SYNCTX_JITSI_HOST": ""},
+    {"SYNCTX_JITSI_PUBLIC_URL": "https://other"}, {"SYNCTX_TLS_CERT": None},
+    {"SYNCTX_JITSI_ADVERTISE_IPS": ""}, {"JITSI_JVB_PASSWORD": None},
+    {"SYNCTX_JITSI_ADVERTISE_IPS": "192.0.2.1#10000"},
+    {"SYNCTX_JITSI_ADVERTISE_IPS": "meet.synctx.local"},
+    {"SYNCTX_JITSI_ADVERTISE_IPS": "192.0.2.1,"},
+    {"JITSI_JICOFO_PASSWORD": "f" * 31}, {"JITSI_JVB_PASSWORD": "b" * 31},
+    {"JITSI_APP_SECRET": "short"}, {"JITSI_ROOM_SECRET": "a" * 32},
+    {"SYNCTX_SERVICES": "cdn"},
+])
+def test_jitsi_invalid_settings_rejected(tmp_path, overrides):
+    result, _ = _check(tmp_path, **_jitsi_options(tmp_path, **overrides))
+    assert result.returncode != 0
+
+
+def test_jitsi_rejects_config_mismatch(tmp_path):
+    options = _jitsi_options(tmp_path)
+    Path(options["SYNCTX_CONFIG_FILE"]).write_text("collab: {jitsi: {enabled: false}}\n")
+    result, _ = _check(tmp_path, **options)
+    assert result.returncode != 0
+
+
+def test_jitsi_current_previous_files_are_mounted_without_printing(tmp_path):
+    options = _jitsi_options(tmp_path)
+    for slot in ("JITSI_APP_SECRET", "JITSI_ROOM_SECRET"):
+        options.pop(slot)
+        for suffix in ("", "_PREVIOUS"):
+            key = tmp_path / (slot + suffix)
+            key.write_text(("a" if slot == "JITSI_APP_SECRET" else "r") * 32 + "\r\n")
+            options[slot + suffix + "_FILE"] = str(key)
+    result, conf = _check(tmp_path, **options)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "a" * 32 not in result.stdout + result.stderr + conf
+    viewer = yaml.safe_load(COMPOSE.read_text())["services"]["viewer"]
+    for slot in ("JITSI_APP_SECRET", "JITSI_ROOM_SECRET"):
+        assert slot + "_FILE" in viewer["environment"]
+        assert slot + "_PREVIOUS_FILE" in viewer["environment"]
+        assert any(slot + "_FILE_MOUNT" in mount for mount in viewer["volumes"])

@@ -242,8 +242,12 @@ authz:
 | `OUTBOUND_FEEDBACK_HMAC_KEY` | Outbound Feedback Exporter, External Importer | event signature |
 | `OUTBOUND_FEEDBACK_HASH_SALT` | Outbound Feedback Exporter | changed_by pseudonymization |
 | `MATTERMOST_BOT_TOKEN` | Collab Gateway | Mattermost 봇 토큰(채널 조회·글 게시) |
-| `VIEWER_SERVICE_TOKEN` | Collab Gateway, Viewer | Viewer `/api/meetings` 서비스 토큰(Gateway는 보내고 Viewer는 비교). 두 쪽이 같은 Secret 값을 쓴다 |
+| `VIEWER_SERVICE_TOKEN` | Collab Gateway, Viewer | Viewer 회의·근거·검색 API 서비스 토큰(Gateway는 보내고 Viewer는 비교). 두 쪽이 같은 Secret 값을 쓴다 |
 | `MATTERMOST_COMMAND_TOKEN` | Collab Gateway | 8.4 슬래시 명령 요청 검증용(선택) |
+| `JITSI_APP_SECRET`·`JITSI_APP_SECRET_PREVIOUS` | Viewer / Prosody(현재 키만) | JWT 서명·검증. Helm `jitsi.jwtSecret`의 current/previous. UTF-8 32바이트 이상 |
+| `JITSI_ROOM_SECRET`·`JITSI_ROOM_SECRET_PREVIOUS` | Viewer 전용 | 방 이름 HMAC. `jitsi.roomSecret` current/previous, 앱 키와 별개 |
+| Jitsi 키의 `_FILE` 변형 | Viewer | 직접 값과 함께 지정 금지. Compose는 읽기 전용 마운트, Helm은 Secret 환경변수 참조 |
+| `JICOFO_AUTH_PASSWORD`·`JVB_AUTH_PASSWORD` | Prosody·Jicofo·JVB | 내부 XMPP 계정. Helm `jitsi.xmppSecret`의 jicofo-password/jvb-password, Compose secrets.env의 JITSI_JICOFO_PASSWORD/JITSI_JVB_PASSWORD |
 | `SYNCTX_RENDER_SECRET` | Viewer (렌더 보기) | 렌더 토큰 발급·검증. UTF-8 인코딩 뒤 32바이트 이상, 복수 인스턴스·프로세스는 공유 키 필수 |
 | `SYNCTX_RENDER_SECRET_PREVIOUS` | Viewer (렌더 보기) | 검증 전용 보조 키, 32바이트 이상. 보통 이전 키이며 교체 준비 단계에는 다음 키를 미리 넣음 |
 | `SYNCTX_RENDER_SECRET_FILE`·`SYNCTX_RENDER_SECRET_PREVIOUS_FILE` | Viewer (렌더 보기) | 해당 키의 mounted UTF-8 파일 경로. 직접 값과 동시 지정은 시작 오류 |
@@ -488,7 +492,15 @@ outbound_feedback:
     from: "synctx-feedback@internal"
     to: "synctx-feedback-import@example.com"
 
-collab:                            # Phase 8.3 Collab Gateway (저장소별 collab.enabled와 별개인 플랫폼 설정)
+collab:                            # 플랫폼 설정(저장소별 collab.enabled와 함께 적용)
+  jitsi:                           # Phase 8.2 영상 회의
+    enabled: false
+    public_url: "https://meet.synctx.local"  # https://호스트[:포트]만, 경로·계정·쿼리·프래그먼트 불가
+    xmpp_domain: ""                # 선택, 빈 값이면 public_url 호스트명(포트 제외). JWT sub에 사용
+    presenter_header: X-Forwarded-User   # 아래 허용값·authz 조건 참조
+    app_id: synctx                  # 영문·숫자·점·밑줄·하이픈, 1~128자
+    secret_env: JITSI_APP_SECRET     # Viewer HS256 서명·Prosody 검증에 같은 앱 키 사용
+    room_secret_env: JITSI_ROOM_SECRET   # 방 이름 HMAC용 별도 키
   gateway:
     enabled: false
     adapter: mattermost            # 첫 구현. 어댑터 인터페이스만 두고 다른 메신저는 만들지 않음
@@ -506,6 +518,12 @@ collab:                            # Phase 8.3 Collab Gateway (저장소별 coll
     commands_enabled: true         # /synctx 슬래시 명령(8.4). 토큰이 없으면 이 값과 상관없이 503
     command_rate_limit_per_minute: 10   # 사용자별, 1~600
 ```
+
+`collab.jitsi`는 기본으로 꺼져 있다. 켜면 HTTPS 출처·app_id·대문자/숫자/밑줄 환경변수 이름을 검사하고 앱 키와 방 이름 키의 슬롯은 겹칠 수 없다. `xmpp_domain`은 선택 호스트명이며 기본값은 public_url 호스트명(포트 제외)이다. 내장 스택에서는 jitsi.host와 같아야 한다. `presenter_header`는 `X-Forwarded-User`(기본값)·`X-Forwarded-Email`·`X-Forwarded-Preferred-Username`만 허용한다. 두 필드의 형식·허용값 검사는 Jitsi가 꺼져 있어도 적용한다.
+
+키 값은 YAML에 넣지 않는다. 각 이름에 `_PREVIOUS`를 붙인 이전 슬롯과 현재·이전 각각의 `_FILE` 변형을 지원한다. 렌더 키와 같은 공통 로더로 UTF-8 32바이트 이상, 직접 값·파일 동시 지정 거부, 파일 끝 줄바꿈 하나(LF/CRLF) 제거를 적용한다. 두 현재 키 중 하나라도 없거나 현재·이전 키가 짧으면 Viewer 시작 오류이며 무작위 폴백은 없다. 두 현재 키는 서로 달라야 한다. 앱 키의 이전 슬롯은 Viewer가 읽기만 하고 쓰지 않는다. Viewer는 현재 앱 키로만 서명하고 Prosody는 현재 키 하나만 검증하므로 이전 슬롯의 현재 소비처는 없다(교체는 12.11). 방 이름 키의 previous도 Viewer가 읽기만 하며 현재 소비처는 없다. 방 이름은 현재 방 이름 키로 계산하므로 방 이름 키 교체 시 방도 바뀐다. Helm `jitsi.jwtSecret`·`roomSecret`이 현재·이전 슬롯을 Viewer에 주입하고 Prosody는 현재 앱 키 하나만 받는다. 공식 이미지 환경변수로 이전 앱 키 동시 검증을 보장하지 않으므로 앱 키 교체는 회의 없는 점검 시간에 Viewer·Prosody를 함께 재생성한다(12.11).
+
+JWT의 `context.user.moderator`는 JSON boolean이다([Jitsi token_affiliation 구현](https://github.com/jitsi/jitsi-meet/blob/master/resources/prosody-plugins/mod_token_affiliation.lua)). Prosody token_affiliation이 moderator를 정한다. Prosody만 JWT를 검증하도록 Jicofo의 기존 `ENABLE_AUTH=0`과 `ENABLE_AUTO_OWNER=0`을 지정한다. A2에서는 설정 주입·키 연결을 정적 검증했을 뿐이며, 이 조합은 실제 Jitsi 기동으로 확인하지 못했다(소스 대조 기준). stable-9823 원본 템플릿이 로컬에 없어 Jicofo의 ENABLE_AUTH 처리와 web ENABLE_P2P 유효성은 확인 필요다. Viewer는 `presenter_header`로 지정한 신뢰 인증 헤더를 `presenters`와 대소문자 무시 비교한다. authz가 꺼져 있으면 moderator가 될 수 없고, 헤더가 없어도 moderator는 false다. 표시 이름용 사용자 정보가 없으면 참석자로 표시한다. 표시 이름은 제어문자 제거 후 최대 80자로 제한한다.
 
 `collab.gateway`가 꺼져 있으면 나머지 값은 검사하지 않는다. 켜면 `mattermost.url`·`channels`가 필수이고 환경변수 이름은 대문자·숫자·밑줄만 허용한다. 토큰 값은 YAML에 넣지 않고 Secret 환경변수로만 준다.
 
@@ -658,6 +676,12 @@ _published/slides/{repo_id}/{publish_path}
 ```
 
 ### 5.5 회의 문서
+
+Jitsi 참여 API `GET /api/meetings/{repo_id}/{meeting_id}/jitsi`는 기존 Viewer 그룹 권한만 사용하며 Bearer 서비스 토큰으로 면제하지 않는다. 협업 저장소 기본 브랜치의 검증된 단일 회의만 허용한다(없음·검증 실패·중복 id는 404). 시작 15분 전부터 종료 후 1시간이 되기 전까지 발급하고 취소 회의는 거부한다. 불가 시 409의 `detail: {reason, message}`로 `disabled`·`cancelled`·`too_early`·`ended`를 알린다. 회의 읽기 실패는 `unavailable` 사유와 503으로 반환한다. 성공 응답은 `{room, jwt, domain, public_url, moderator, expires_at}`이며 오류를 포함해 `Cache-Control: no-store`다. 방은 별도 키의 `HMAC-SHA256(repo_id|meeting_id)` 앞 32 hex, JWT는 HS256·iss/aud=app_id·sub=Jitsi 호스트·room 고정·iat·nbf=발급-10초·exp=min(회의 종료+1시간, 발급+4시간)이다. JWT·키는 로그나 Gateway 응답에 넣지 않는다. 메트릭은 `synctx_viewer_jitsi_tokens_issued_total`·`synctx_viewer_jitsi_token_failures_total{reason}`이다.
+
+회의 목록의 각 항목에 비밀이 아닌 `jitsi: {enabled, joinable_from, joinable_until}`을 추가한다. Gateway는 필드가 없는 이전 응답을 안전하게 영상 회의 비활성으로 처리한다. 회의 카드·발표 화면은 참여 불가 사유를 텍스트로 표시하고, 내장 패널은 설정된 Jitsi의 `/external_api.js`만 사용한다. 켰을 때만 CSP의 script-src/frame-src와 camera/microphone/display-capture 권한에 해당 출처를 추가한다(connect-src 추가 없음). 껐을 때 기존 응답 헤더는 그대로다. 발표자 따라가기는 Jitsi가 확인한 moderator의 endpoint 메시지만 받으며, 문서·schema·크기·시각을 검사하고 수동 스크롤 시 끈다. 메모 앵커와 본문 DOM은 변경하지 않는다.
+
+Viewer Bearer 서비스 토큰(`collab.gateway.viewer_service_token_env`)은 `/api/meetings`, 그 하위 `/api/meetings/{repo_id}/{meeting_id}/evidence`, `/api/search`에만 허용한다. 그 밖의 문서·원문·렌더·저장소 API는 기존 Viewer 권한을 요구한다. 검색은 서비스 토큰일 때 협업 저장소·기본 브랜치로 강제 제한하며 `ref`를 거부한다. `repo`를 생략하면 전체 협업 저장소를 검색하고, 지정한 id가 없거나 비협업이면 404다. 검색 결과는 저장소 정보와 `path`만 반환하고 줄 번호·본문 발췌는 제외한다. 근거 API도 서비스 토큰이면 참조 대상 저장소를 협업 저장소로 제한해 비협업 문서 제목·경로를 노출하지 않는다. 읽지 못하거나 설정에 없는 저장소·서비스 토큰 범위 밖의 근거는 `omitted` 건수와 `status=partial`로 알리며, 일반 Viewer 화면의 근거 동작은 유지한다.
 
 ```yaml
 ---
@@ -849,14 +873,16 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | GET | `/api/repos/{repo_id}/branches` | viewer | 브랜치 목록과 기본 브랜치(`{"branches", "default"}`) |
 | GET | `/api/repos/{repo_id}/tree?ref=&path=` | viewer | Git tree 조회 |
 | GET | `/api/repos/{repo_id}/files?ref=` | viewer | 볼 수 있는 파일 경로 목록(`{"files": [...]}`, 파일 찾기용). 조회 실패 502 |
-| GET | `/api/search?q=&repo=&ref=` | viewer | 본문 검색(`{"query", "repos": [{"id", "name", "status", "truncated", "matches": [{"path", "line", "before", "match", "after"}]}]}`). `repo`가 없으면 모든 저장소. 검색어 2~100글자·줄바꿈 없음, `ref`는 `repo`와 함께만 쓰며 어기면 400, 모르는 저장소 404 |
+| GET | `/api/search?q=&repo=&ref=&collab_only=` | viewer 또는 서비스 토큰 | 본문 검색(`{"query", "repos": [{"id", "name", "status", "truncated", "matches": [{"path", "line", "before", "match", "after"}]}]}`). `repo`가 없으면 모든 저장소. 검색어 2~100글자·줄바꿈 없음, `ref`는 `repo`와 함께만 쓰며 어기면 400, 모르는 저장소 404. `collab_only=true`는 협업 저장소만 검색한다. 서비스 토큰이면 이 필터를 강제하고 `ref`를 지정하면 400(빈 값 포함), 기본 브랜치만 검색한다. 지정한 `repo`가 없거나 비협업 저장소이면 404이며, `matches`는 `{"path"}`만 반환해 줄 번호·본문 발췌를 제외한다. 일반 Viewer 권한의 기존 전체 저장소·ref·발췌 응답은 유지한다. |
 | GET | `/search?q=&repo=&ref=&ref_repo=` | viewer | 본문 검색 결과 HTML 페이지(`search`는 예약 경로) |
 | GET | `/api/repos/{repo_id}/render?ref=&path=&theme=&mode=` | viewer | Markdown HTML 렌더링 |
 | GET | `/render/{token}/{repo_id}/{path}` | viewer + 렌더 토큰 | iframe 전용 HTML 합본. 상대 링크도 같은 토큰 SHA 사용. 공개 주소는 `/view/render/…` |
 | GET | `/raw/{repo_id}/{path}?ref=` | viewer | 원본 파일. png·jpg·gif·webp·svg는 그 이미지 형식, 나머지는 `application/octet-stream`. SVG에는 스크립트를 막는 CSP(`default-src 'none'; style-src 'unsafe-inline'; sandbox`)와 `nosniff` |
 | GET | `/api/repos/{repo_id}/download?path=&format=raw\|html\|pdf&ref=` | viewer | 원본·변환 다운로드(기본 `raw`, `pdf`는 Marp 호출) |
 | GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음, 근거 모음·말풍선 포함). 회의 모드 조건 불충족 404 |
-| GET | `/api/meetings?repo=&status=&channel=&presenter=&q=&from=&to=&order=` | viewer 또는 서비스 토큰 | 회의 대시보드 데이터(서비스 토큰: `Authorization: Bearer <값>`이 `collab.gateway.viewer_service_token_env`가 가리키는 Viewer 환경변수와 상수시간 비교로 일치하면 그룹 헤더 검사를 건너뛴다. 이 면제는 이 엔드포인트에만 적용하고 변수가 비어 있으면 어떤 값도 통과하지 못한다. `{"now", "repos": [{"id", "name", "status", "truncated"}], "meetings": [{"repo_id", "repo_name", "path", "id", "title", "starts_at", "ends_at", "duration_minutes", "channel", "presenters", "cancelled", "status", "url", "present_url", "decisions", "actions", "memo_error"}], "invalid": [{"repo_id", "repo_name", "path", "reason"}]}`). `collab.enabled` 저장소의 기본 브랜치만, `status`는 `upcoming`·`ongoing`·`ended`·`cancelled`(그 밖은 400), `repo`가 없거나 collab 대상이 아니면 404, 일시는 한국 시간, `from`·`to`는 `YYYY-MM-DD`(한국 날짜, 포함) |
+| GET | `/api/meetings?repo=&status=&channel=&presenter=&q=&from=&to=&order=` | viewer 또는 서비스 토큰 | 회의 대시보드 데이터(서비스 토큰: `Authorization: Bearer <값>`이 `collab.gateway.viewer_service_token_env`가 가리키는 Viewer 환경변수와 상수시간 비교로 일치하면 그룹 헤더 검사를 건너뛴다. 이 면제는 회의 목록·하위 근거 목록·검색 API에만 적용하고 변수가 비어 있으면 어떤 값도 통과하지 못한다. `{"now", "repos": [{"id", "name", "status", "truncated"}], "meetings": [{"repo_id", "repo_name", "path", "id", "title", "starts_at", "ends_at", "duration_minutes", "channel", "presenters", "cancelled", "status", "url", "present_url", "decisions", "actions", "memo_error", "jitsi": {"enabled", "joinable_from", "joinable_until"}}], "invalid": [{"repo_id", "repo_name", "path", "reason"}]}`). `collab.enabled` 저장소의 기본 브랜치만, `status`는 `upcoming`·`ongoing`·`ended`·`cancelled`(그 밖은 400), `repo`를 지정했는데 없거나 collab 대상이 아니면 404, 일시는 한국 시간, `from`·`to`는 `YYYY-MM-DD`(한국 날짜, 포함) |
+| GET | `/api/meetings/{repo_id}/{meeting_id}/jitsi` | viewer (서비스 토큰 면제 없음) | 단기 Jitsi 참여 JWT와 방·출처·moderator·expires_at(5.5). 협업 저장소·기본 브랜치·검증된 회의만, 없으면 404, 꺼짐·취소·시간 창 밖이면 사유 코드와 409. 모든 응답 no-store |
+| GET | `/api/meetings/{repo_id}/{meeting_id}/evidence` | viewer 또는 서비스 토큰 | 협업 저장소 기본 브랜치의 검증된 회의만. 없거나 검증 실패면 404. 기존 evidence 빌더를 재사용해 `{"meeting_id", "status": "ok" 또는 "partial" 또는 "failed", "omitted": 생략 건수, "evidence": [{"title", "repo_id", "path", "url"}]}` 반환. 서비스 토큰은 참조 대상도 협업 저장소로 제한한다. 제목은 `Entry.doc`, URL은 경로·앵커로 만든 Viewer 주소. 발췌(`html`·`loc`)·인용 문맥(`cites`)·메모 본문은 제외한다. 읽기 실패·설정에 없는 저장소·서비스 토큰 범위 밖의 참조는 문서와 디코딩한 앵커별 중복을 합쳐 `omitted`로 세며, 한 건 이상이면 빈 목록이어도 `status=partial`. 렌더·빌드 전체 실패 시 200, 빈 목록과 `status=failed`, `omitted=0` |
 | GET | `/meetings?tab=&repo=&channel=&presenter=&owner=&q=&from=&to=&order=` | viewer | 회의 대시보드 HTML 화면(`meetings`는 예약 경로) |
 | GET | `/api/repos/{repo_id}/board/{version}` | viewer | 스크럼 보드 HTML |
 | GET | `/`, `/{repo_id}?ref=&path=`, `/{repo_id}/{path}?ref=&theme=&mode=` | viewer | 화면 경로: 저장소 목록, 폴더 화면, 문서 화면(`mode=meeting` 회의 모드, `mode=present` 발표 화면, 신뢰 저장소 HTML의 `mode=render`, 새 탭 `layout=full`) |
@@ -874,7 +900,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 - 렌더 보기: 실제 `mode=render` 화면만 `frame-src 'self'`로 바꾸고 XFO `DENY`는 유지한다. 나머지 Viewer HTML 화면은 `frame-src 'none'`·XFO `DENY`를 유지한다. `/render`는 `scope["route"]`의 경로 함수·이름 또는 응답 표식으로 식별하고 `csp_middleware`의 CSP·XFO 덮어쓰기에서 제외해 JSON 오류에도 3.6의 헤더를 쓴다. standalone Mount 아래 `/view/render/…`와 K8s `/render/…` 양쪽을 처리하며 경로 문자열만으로 판별하지 않는다. 소스 보기의 "렌더링 / 새 탭에서 렌더링" 버튼은 `enabled`·`render_files`가 모두 true인 저장소의 HTML에만 보인다. 새 탭은 같은 `mode=render&layout=full` 화면이며 `/render`를 직접 열지 않는다.
 - 렌더 보기: `/render`의 토큰·요청 대상·신뢰 거부는 403, 비HTML은 415, 경로 거부는 400, 크기 초과는 413, 파일 없음은 404다. `BundleError`는 크기 413·누락 404·그 밖의 합본 실패 422로 이스케이프한 오류 HTML을 낸다. 토큰 만료는 원래 Viewer 화면 새로 고침 안내를 준다. 루트 초과 `../`가 다른 repo_id로 풀려 서명이 불일치하면 "문서 주소 또는 토큰이 유효하지 않습니다. 원래 Viewer 화면에서 다시 여세요"로 구분한다. 오류에도 같은 sandbox·no-referrer·no-store 헤더를 붙인다. 크게 보기 래퍼·버튼은 Viewer 화면에만 넣고 `download?format=html`에는 넣지 않는다.
 - 회의 메모는 서버로 보내지 않는다. 브라우저 localStorage에만 저장하고, `<script>` 안 JSON은 `<`·`>`·`&`·U+2028·U+2029를 유니코드 이스케이프로 인코딩한다.
-- 회의 문서의 근거 발췌는 같은 저장소와 `synctx.meeting.references`가 가리키는 **설정에 있는 저장소**의 Git blob만 읽는다. 없는 저장소·파일, `..`으로 저장소 루트를 벗어나는 경로, 제어 문자나 점으로 시작하는 경로 조각, `viewer.max_render_size_bytes`를 넘는 파일은 근거로 쓰지 않는다. Viewer 권한은 저장소 단위가 아니라 `viewer` 역할 하나라 다른 저장소 발췌를 보여 줘도 권한이 넓어지지 않는다. 한 문서에서 처리하는 근거 링크는 200개, 서로 다른 근거 파일은 50개까지다.
+- 회의 문서의 근거 발췌는 같은 저장소와 `synctx.meeting.references`가 가리키는 **설정에 있는 저장소**의 Git blob만 읽는다. 없는 저장소·파일, `..`으로 저장소 루트를 벗어나는 경로, 제어 문자나 점으로 시작하는 경로 조각, `viewer.max_render_size_bytes`를 넘는 파일은 근거로 쓰지 않는다. 일반 Viewer 권한은 저장소 단위가 아니라 `viewer` 역할 하나라 다른 저장소 발췌를 보여 줘도 권한이 넓어지지 않는다. 근거 API의 서비스 토큰 경로는 참조 대상도 협업 저장소로 제한하며, 범위 밖 저장소는 읽지 않는다. 한 문서에서 처리하는 근거 링크는 200개, 서로 다른 근거 파일은 50개까지다.
 - 근거 발췌는 렌더링한 뒤 **발췌 전용 허용 목록 정화**를 거친다. 허용 태그(문단·강조·코드·인용·목록·표·제목·`hr`·`span`·`div`) 밖의 태그는 글자만 남기고, `script`·`style`·`iframe`·`object`·`embed`·`template`·`noscript`는 내용째 지우며, 모든 속성을 지운다(표의 숫자 `colspan`·`rowspan`만 남김). `a`는 글자만, `img`는 `[그림: alt]` 글자로 바꾸므로 `javascript:` 링크·외부 이미지·`style`이 남지 않는다. 말풍선·근거 모음 데이터는 `<script type="application/json">` 안에서 위 유니코드 이스케이프로 넣고, 메모 포함 HTML의 근거 부분에는 외부 참조(`http(s):`)가 없다.
 
 ### 7.3 CDN Service
@@ -1033,7 +1059,7 @@ Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전
 
 ### 7.7 Collab Gateway (Phase 8.3 선택)
 
-Collab Gateway는 회의 문서(Phase 8.1)를 Mattermost 채널과 이어 준다. 새로 만드는 데이터 저장소가 없다. 회의 정보는 Viewer의 `GET /api/meetings`에서만 읽고(Git이 source of truth), 이미 보낸 알림만 자기 상태 파일에 둔다.
+Collab Gateway는 회의 문서(Phase 8.1)를 Mattermost 채널과 이어 준다. 새로 만드는 데이터 저장소가 없다. 회의 정보는 Viewer의 `GET /api/meetings`에서 읽고, 검색·근거 명령은 Viewer 검색·근거 API를 추가로 읽으며(Git이 source of truth), 이미 보낸 알림만 자기 상태 파일에 둔다.
 
 - **실행 형태**: Deployment 1개(복제본 고정, 교체 전략 `Recreate`)와 PVC 한 개(`/data/collab-gateway`). 폴링 주기는 `collab.gateway.poll_interval_seconds`(기본 60초)이다. `/healthz`·`/readyz`·`/metrics`만 열고 외부에서 들어오는 API는 없다(8.4에서 추가). Ingress 경로를 만들지 않는다.
 - **읽기**: `Authorization: Bearer <VIEWER_SERVICE_TOKEN>`으로 `/api/meetings?from=<오늘-8일>`을 읽는다. 실패하면 이번 주기를 건너뛰고 `synctx_collab_viewer_fetch_failures_total`을 올린다. 형식이 잘못된 항목은 건너뛴다.
@@ -1051,32 +1077,35 @@ Collab Gateway는 회의 문서(Phase 8.1)를 Mattermost 채널과 이어 준다
 - **중복 방지와 실패 처리**: 발송에 성공한 직후 상태 파일(원자적 교체, 권한 0600)에 키를 쓴다. 발송 성공과 저장 사이에 프로세스가 죽으면 같은 알림이 한 번 더 나갈 수 있다(최소 한 번 전달). 실패하면 기록하지 않고 다음 주기에 다시 시도하며, 같은 키가 연속 10번 실패하면 포기로 기록한다(`gave_up`). 변경 알림이 실패하는 동안은 기준 상태를 갱신하지 않아 다시 시도한다. 상태 파일이 읽히지 않으면 `.corrupt-<시각>`으로 옮기고 새로 시작한다(그 뒤에는 처음 본 회의 규칙이 적용된다). 마지막으로 본 지 90일이 지난 항목은 지운다. 상태 파일 잠금을 다른 프로세스가 쥐고 있으면 그 주기를 건너뛴다.
 - **Mattermost 호출**: 봇 토큰으로 `GET /api/v4/teams/name/{team}/channels/name/{channel}`(채널 id 캐시) 뒤 `POST /api/v4/posts`. 연결 오류·429(`Retry-After`는 30초까지만 따름)·5xx는 호출 안에서 최대 3번 재시도하고, 401·403(인증)·404(채널 없음)·그 밖의 4xx는 재시도하지 않는다. 채널 게시가 영구 오류로 실패하면 캐시한 채널 id를 버린다. 토큰과 응답 본문은 로그·오류 메시지에 남기지 않는다.
 - **메시지 안전**: 메시지에는 제목·일시·발표자·저장소 이름과 문서·발표 화면 링크만 담는다(요약 알림만 결정·액션 글을 추가). 문서에서 온 모든 글은 줄바꿈·제어 문자를 공백으로 바꾸고 마크다운 특수문자를 이스케이프하며 `@` 뒤에 폭 없는 공백을 넣어 `@channel`·`@all` 멘션과 링크 주입을 막는다. 제목·필드는 200자, 요약 항목은 300자·10건까지 보인다.
-- **보안**: 토큰은 YAML이 아니라 Secret의 환경변수(`MATTERMOST_BOT_TOKEN`, `VIEWER_SERVICE_TOKEN`, `MATTERMOST_COMMAND_TOKEN`)로만 받고, 켰는데 비어 있으면 시작이 실패한다(값은 오류에 싣지 않는다). Helm NetworkPolicy는 DNS·Viewer(8000)·Mattermost 포트로만 나가게 제한한다. Viewer의 서비스 토큰은 `/api/meetings`에만 통한다(5.5).
+- **보안**: 토큰은 YAML이 아니라 Secret의 환경변수(`MATTERMOST_BOT_TOKEN`, `VIEWER_SERVICE_TOKEN`, `MATTERMOST_COMMAND_TOKEN`)로만 받고, 켰는데 비어 있으면 시작이 실패한다(값은 오류에 싣지 않는다). Helm NetworkPolicy는 DNS·Viewer(8000)·Mattermost 포트로만 나가게 제한한다. Viewer의 서비스 토큰은 `/api/meetings`와 그 하위 근거 목록 API, `/api/search`에만 통한다(5.5). 기존 Viewer(8000) 호출과 Secret을 그대로 사용한다.
 - **운영 한계**: Docker Compose 배포는 아직 지원하지 않는다. 로컬 minikube용 Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`, `setup-mattermost.sh`, `verify-collab.sh`)가 있다. 공식 Mattermost 이미지가 amd64 전용이라 ARM64 개발 기기에서는 qemu 에뮬레이션(binfmt)이 있어야 하고, 없으면 `exec format error`로 기동하지 못한다(local-development.md 5.2). Apple Silicon의 `synctx` minikube에서 에뮬레이션으로 Mattermost 10.11.19를 띄워, 봇 토큰으로 Gateway의 Mattermost 어댑터가 올린 시험 글이 채널에서 읽히는 것까지 확인했다. 클러스터 안에서 Viewer와 Gateway 파드가 함께 도는 전체 흐름은 아직 확인하지 못했다. Alert 규칙은 `promtool test rules`로 확인한다.
 
 #### 7.7.1 `/synctx` 명령 (Phase 8.4)
 
-Mattermost 슬래시 명령 `/synctx`는 같은 Gateway가 `POST /api/collab/mattermost/command`로 받는다. 새 Viewer API를 만들지 않고, 알림이 쓰는 폴링이 읽어 둔 `/api/meetings` 데이터로만 답한다.
+Mattermost 슬래시 명령 `/synctx`는 같은 Gateway가 `POST /api/collab/mattermost/command`로 받는다. 알림 폴링이 읽어 둔 `/api/meetings` 데이터로 회의를 찾고, 검색·근거 명령은 서비스 토큰으로 Viewer API를 추가 호출한다.
 
 | 명령 | 응답 |
 |------|------|
 | `/synctx 오늘` | 이 채널에 매핑된 회의 중 오늘(한국 날짜)에 시작하는 것(시간순, 상태: 예정·진행 중·종료·취소) |
 | `/synctx 예정 [일수]` | 지금부터 N일(기본 7, 1~30) 안에 진행 중이거나 시작하는 회의를 날짜별로 |
 | `/synctx 회의 <id 또는 제목>` | 회의 정보(일시·상태·발표자·저장소·결정/액션 건수)와 문서·발표 화면 링크 |
+| `/synctx 참여 [id]` | 채널 안 회의의 문서·발표 화면 링크와 「문서 화면의 참여 버튼으로 입장」 안내만(JWT·방 이름 없음). 생략하면 진행 중인 회의, 없으면 가장 가까운 취소되지 않은 예정 회의. id 지정은 기존 id·제목 해석 사용. 영상 회의 꺼짐·시간 창 밖·취소 사유 표시 |
 | `/synctx 정리 <id 또는 제목>` | 결정사항·액션 아이템(담당·기한). `.memo.md`가 없으면 안내, 읽기 오류면 읽지 못했다는 안내 |
+| `/synctx 검색 <키워드>` | 요청 채널의 회의가 속한 저장소 id를 정렬해 최대 5개까지 각각 `GET /api/search?q=&repo=<id>&collab_only=true`로 순차 호출. 경로·링크 최대 5건(중복 문서는 한 번, 본문 발췌 없음), 초과하면 `… 외 N건` 표시 |
+| `/synctx 근거 <id 또는 제목>` | 채널 안 회의를 기존 id·제목 해석으로 찾고 `GET /api/meetings/{repo_id}/{meeting_id}/evidence` 호출. 근거 문서 제목·링크 최대 20건, 초과하면 `… 외 N건` 표시(원문 발췌·메모 없음). `partial`이면 목록이 비어도 "일부 근거를 읽지 못했습니다(N건 생략)"을 붙이고, 정상 응답의 빈 목록만 근거 없음으로 안내 |
 | `/synctx 도움말` | 명령 목록 |
 
-영어 별칭 `today`·`upcoming`·`meeting`·`summary`·`help`를 받는다. 검색·근거·참여(Jitsi)는 만들지 않았다(검색은 Viewer 검색 API가 협업 저장소만 거르지 못하고, 근거는 노출하는 API가 없으며, 참여는 8.2가 필요하다).
+영어 별칭 `today`·`upcoming`·`meeting`·`join`·`summary`·`search`·`evidence`·`help`를 받는다.
 
 - **인증**: form 본문의 `token`을 환경변수 `MATTERMOST_COMMAND_TOKEN`과 상수시간으로 비교한다(`mattermost.command_token_env`). 불일치·누락은 401(`synctx_collab_commands_total{result="unauthorized"}`, 본문은 읽지 않은 것처럼 처리), 토큰이 없거나 `collab.gateway.commands_enabled: false`이거나 Gateway가 꺼져 있으면 503이다(알림 기능은 그대로 동작). 필수 필드(`team_domain`·`channel_name`·`user_id`)가 없으면 400, 본문이 16 KiB를 넘거나 필드가 50개를 넘으면 413·400이다.
-- **채널 범위**: 요청의 `team_domain`·`channel_name`(소문자로 비교)을 `channels`에서 거꾸로 찾아, 그 채팅 채널에 매핑된 `meeting.channel` 키들의 회의만 보인다(키가 여럿이어도 된다). 매핑이 없으면 회의 목록을 읽지 않고 "이 채널에 연결된 회의가 없습니다"만 답한다. 다른 채널 회의는 id를 알아도 "찾지 못했습니다"로 답한다.
-- **응답**: 항상 HTTP 200에 `{"response_type": "ephemeral", "text": ...}`(요청자에게만 보임)이다. 한 응답은 목록 20건·후보 5건·15000자까지다. 회의 제목·메모·발표자 글은 알림과 같은 이스케이프를 거친다(멘션·링크 주입 방지). 예상하지 못한 오류는 "처리하지 못했습니다"로만 답하고 내용을 싣지 않는다.
-- **응답 시간(3초 제한)**: 폴링이 마지막으로 읽은 목록이 `poll_interval_seconds × 3` 안이면 그대로 쓰고, 오래됐으면 2초 제한으로 Viewer를 직접 읽는다. 실패하면 "지금 회의 정보를 읽지 못했습니다"(`unavailable`)로 답한다. 폴링이 한 번 실패해도 직전 목록으로 답한다.
-- **입력 검증**: 제어 문자는 공백으로 바꾸고 인자는 200자 이하, 일수는 1~30의 정수(`14`, `14일`), 제목은 부분 일치(대소문자 무시)다. id가 정확히 같은 회의가 있으면 제목 일치보다 우선하고, 여러 건이 맞으면 id와 제목 후보 5건을 보여 주며 id로 다시 입력하게 한다.
+- **채널 범위**: 요청의 `team_domain`·`channel_name`(소문자로 비교)을 `channels`에서 거꾸로 찾아, 그 채팅 채널에 매핑된 `meeting.channel` 키들의 회의만 보인다(키가 여럿이어도 된다). 매핑이 없으면 회의 목록을 읽지 않고 "이 채널에 연결된 회의가 없습니다"만 답한다. 다른 채널 회의는 id를 알아도 "찾지 못했습니다"로 답한다. 검색은 이 목록에서 채널 키가 맞는 회의들의 저장소 id 집합(정렬 후 최대 5개)으로 요청 대상을 제한해 채널과 무관한 저장소는 검색하지 않는다. 응답도 요청 저장소로 먼저 거른 뒤 링크를 검증한다. 폴링 조회 기간(오늘-8일)·수집 상한 밖 회의만 있는 저장소는 검색 대상에 포함되지 않는다.
+- **응답**: 항상 HTTP 200에 `{"response_type": "ephemeral", "text": ...}`(요청자에게만 보임)이다. 한 응답은 목록 20건·후보 5건·검색 5건·근거 20건·15000자까지며 검색·근거의 표시 상한 초과 건수는 `… 외 N건`으로 알린다. 검색·근거 항목의 경로·앵커 검증 실패(역슬래시·제어 문자 등)는 해당 항목만 생략하고, 로그에는 생략 건수만 남긴다. 회의 제목·메모·발표자·검색 경로·근거 제목은 알림과 같은 이스케이프를 거친다(멘션·링크 주입 방지). 예상하지 못한 오류는 "처리하지 못했습니다"로만 답하고 내용을 싣지 않는다.
+- **응답 시간(3초 제한)**: 폴링이 마지막으로 읽은 목록이 `poll_interval_seconds × 3` 안이면 그대로 쓰고, 오래됐으면 Viewer를 직접 읽는다. 목록 조회와 저장소별 검색·근거 추가 호출 모두를 하나의 `asyncio.timeout` 안에서 합쳐 2초로 제한하고, 추가 HTTP 요청 자체도 2초 타임아웃을 둔다. 실패·타임아웃·근거 `status=failed`면 `unavailable`로 답한다. 검색은 "지금 검색 결과를 읽지 못했습니다", 근거는 "근거를 읽지 못했습니다", 기존 회의 명령은 "지금 회의 정보를 읽지 못했습니다"로 구분한다. 폴링이 한 번 실패해도 직전 목록으로 답한다.
+- **입력 검증**: 검색어는 Viewer `normalize_query`와 같이 앞뒤 공백을 뺀 뒤 2~100자·줄바꿈(CR/LF)·NUL 없음으로 먼저 검증한다. 나머지 명령의 제어 문자는 공백으로 바꾸고 인자는 200자 이하, 일수는 1~30의 정수(`14`, `14일`), 제목은 부분 일치(대소문자 무시)다. id가 정확히 같은 회의가 있으면 제목 일치보다 우선하고, 여러 건이 맞으면 id와 제목 후보 5건을 보여 주며 id로 다시 입력하게 한다.
 - **속도 제한**: 사용자(`user_id`)별 분당 `command_rate_limit_per_minute`(기본 10)회, 프로세스 메모리의 슬라이딩 윈도(추적 키 10000개 상한)다. 초과하면 안내만 답하고(`rate_limited`) 인증에 실패한 요청은 횟수를 쓰지 않는다.
-- **감사·관측**: 로그 `collab_command command=… result=… channel=<매핑된 키> user=<사용자 id의 SHA-256 앞 12자> ms=…`만 남기고 명령 본문·토큰·사용자 id 원문은 남기지 않는다. 메트릭 `synctx_collab_commands_total{command, result}`(`command`: `today`·`upcoming`·`meeting`·`summary`·`help`·`unknown`, `result`: `ok`·`no_channel`·`not_found`·`ambiguous`·`invalid`·`rate_limited`·`unauthorized`·`unavailable`·`error`)와 Alert `SynctxCollabCommandUnauthorized`.
-- **등록**: Mattermost가 명령 토큰을 직접 발급한다. 명령은 트리거 `synctx`, 메서드 POST, 호출 주소 `http://<Gateway Service>/api/collab/mattermost/command`로 만들고 자동 완성 힌트를 둔다. 발급된 토큰을 Secret의 `command-token`에 넣는다. Mattermost 서버는 `ServiceSettings.AllowedUntrustedInternalConnections`에 Gateway 호스트를 허용해야 사내 주소로 호출한다. 로컬은 `setup-mattermost.sh`가 REST로 등록한다.
-- **확인 범위**: 명령 해석·채널 범위·인증·속도 제한·응답 형식은 단위·엔드포인트 테스트로 확인했다. 슬래시 명령 등록은 로컬 Mattermost 10.11.19(amd64 에뮬레이션)에서 실제로 확인했다(이 과정에서 명령 목록 조회 경로가 `GET /api/v4/commands?team_id=&custom_only=true`임을 바로잡았다). Mattermost가 `/synctx` 실행을 Gateway로 전달해 응답이 오는 흐름도 같은 로컬 Mattermost에서 확인했다: 호스트에서 가짜 Viewer(`/api/meetings`)와 Gateway를 루프백에 띄우고(Mattermost는 `host.minikube.internal`로 호출), 관리자 REST `commands/execute`로 `도움말`·`오늘`·`예정`·`회의`·`정리`·없는 회의·미지원 명령을 실행해 모두 요청자에게만 보이는 응답을 받았고 Mattermost가 발급한 토큰이 인증을 통과했으며 제목의 `@channel`이 멘션이 되지 않았다. 로그에는 사용자 id 해시와 명령 이름·결과만 남았다. 사람이 채팅 화면에서 직접 누르는 경로, 클러스터 안 Viewer·Gateway 파드가 함께 도는 전체 흐름은 아직 확인하지 못했다.
+- **감사·관측**: 로그 `collab_command command=… result=… channel=<매핑된 키> user=<사용자 id의 SHA-256 앞 12자> ms=…`만 남기고 명령 본문·토큰·사용자 id 원문은 남기지 않는다. 메트릭 `synctx_collab_commands_total{command, result}`(`command`: `today`·`upcoming`·`meeting`·`summary`·`search`·`evidence`·`help`·`unknown`, `result`: `ok`·`no_channel`·`not_found`·`ambiguous`·`invalid`·`rate_limited`·`unauthorized`·`unavailable`·`error`)와 Alert `SynctxCollabCommandUnauthorized`.
+- **등록**: Mattermost가 명령 토큰을 직접 발급한다. 명령은 트리거 `synctx`, 메서드 POST, 호출 주소 `http://<Gateway Service>/api/collab/mattermost/command`로 만들고 자동 완성 힌트를 둔다. 발급된 토큰을 Secret의 `command-token`에 넣는다. Mattermost 서버는 `ServiceSettings.AllowedUntrustedInternalConnections`에 Gateway 호스트를 허용해야 사내 주소로 호출한다. 로컬은 `setup-mattermost.sh`가 REST로 등록하며 힌트에 `검색 <키워드>`·`근거 <id>`를 포함한다.
+- **확인 범위**: 검색·근거는 pytest와 httpx MockTransport로 인증·범위·상한·발췌 제외·타임아웃·오류를 확인하며, 실제 Mattermost·클러스터 실행은 아직 확인하지 못했다. 기존 명령 해석·채널 범위·인증·속도 제한·응답 형식은 단위·엔드포인트 테스트로 확인했다. 슬래시 명령 등록은 로컬 Mattermost 10.11.19(amd64 에뮬레이션)에서 실제로 확인했다(이 과정에서 명령 목록 조회 경로가 `GET /api/v4/commands?team_id=&custom_only=true`임을 바로잡았다). Mattermost가 `/synctx` 실행을 Gateway로 전달해 응답이 오는 흐름도 같은 로컬 Mattermost에서 확인했다: 호스트에서 가짜 Viewer(`/api/meetings`)와 Gateway를 루프백에 띄우고(Mattermost는 `host.minikube.internal`로 호출), 관리자 REST `commands/execute`로 `도움말`·`오늘`·`예정`·`회의`·`정리`·없는 회의·미지원 명령을 실행해 모두 요청자에게만 보이는 응답을 받았고 Mattermost가 발급한 토큰이 인증을 통과했으며 제목의 `@channel`이 멘션이 되지 않았다. 로그에는 사용자 id 해시와 명령 이름·결과만 남았다. 사람이 채팅 화면에서 직접 누르는 경로, 클러스터 안 Viewer·Gateway 파드가 함께 도는 전체 흐름은 아직 확인하지 못했다.
 
 ## 8. 배포 설계
 
@@ -1094,6 +1123,7 @@ Mattermost 슬래시 명령 `/synctx`는 같은 Gateway가 `POST /api/collab/mat
 | jgraph/drawio | 검증 완료한 명시 버전 |
 | nginx | 검증 완료한 명시 버전 |
 | alpine/git | 검증 완료한 명시 버전 (Slides sidecar, K8s·Docker Compose 공통) |
+| jitsi/web·jitsi/prosody·jitsi/jicofo·jitsi/jvb | `values.yaml`의 `jitsi.imageTag`를 공유하는 고정 stable 태그, `registry.local:5000/jitsi/*` 반입, 기본 꺼짐 |
 | prom/pushgateway | 검증 완료한 명시 버전 (`v1.11.1`, Sync·Feedback 메트릭 수집) |
 
 자체 이미지 5개(viewer·cdn·marp·sync·feedback)의 Python 베이스는 `python:3.13.16-slim-trixie`(Debian 13, Alpine 미사용)로 패치 버전·배포판까지 고정한다. 올릴 때는 Dockerfile 5개와 `requires-python`을 함께 바꾼다.
@@ -1395,6 +1425,7 @@ Outbound Feedback CronJob도 실행마다 새 프로세스이므로 같은 방�
 - readiness failure 5분 지속 (`SynctxReadinessFailure`)
 - Viewer 5xx 응답 비율 5분간 5% 초과 (`SynctxViewerHighErrorRate`)
 - synctx-html 합본이 허용되지 않은 외부 주소 또는 크기 초과로 거부됨 (`SynctxHtmlBundleRejected`, 저장소별 1시간 안에 1건 이상, warning)
+- Jitsi(`collab.jitsi.enabled`일 때, 외부 Jitsi 포함): `sum(increase(synctx_viewer_jitsi_token_failures_total[10m])) >= 5`가 2분 지속하면 `SynctxJitsiTokenFailures`(warning). reason에는 권한·시간 창에 따른 거부도 포함되므로 사유별 계측을 먼저 확인한다.
 - Collab Gateway(`collabGateway.enabled`일 때만): 발송 실패 30분 안에 5회 이상 (`SynctxCollabNotificationFailures`, warning), 발송 포기 1시간 안에 1건 이상 (`SynctxCollabNotificationGaveUp`, critical), Viewer 조회 실패 15분 안에 10회 이상 (`SynctxCollabViewerFetchFailing`, warning), 회의 조회 성공 없이 10분 초과 (`SynctxCollabStalled`, critical), 채널 매핑 누락 (`SynctxCollabUnmappedChannel`, warning), `/synctx` 명령 인증 실패 10분 안에 5회 이상 (`SynctxCollabCommandUnauthorized`, warning)
 
 Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound Feedback Alert(메일 발송 실패, redaction 실패)는 Pushgateway로 수집한 시계열로 평가한다. `scripts/tests/test_prometheus_rules.py`가 Helm이 렌더한 PrometheusRule을 `promtool test rules`로 평가한다(`scripts/tests/prometheus/*.test.yaml`). promtool이 없으면 `PROMTOOL` 환경변수로 컨테이너 명령을 준다.
@@ -1421,8 +1452,8 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
 | HTML render | WP1 단위 + WP2 TestClient·로그·메트릭 + WP3 `node --test`·DOM·실제 브라우저 + WP4 배포 검사 | ref 포함 정규형 토큰·만료·교체 키·`_FILE`·SHA reader 예외 변환, 독립 clone 파드 2개 중 한쪽만 fetch 후 다른 쪽 SHA 재확인·404, 두 플래그 opt-in·재시작 후 해제, 읽기 전 크기 검사·사전 413 라벨, `%2e%2e` 경로 400, authz 403·FastAPI 422·404 JSON 오류의 sandbox/no-referrer/no-store, standalone 경로의 CSP·메트릭·로그, 상대 `target=pf` 중첩 문서, 소스 보기 유지, iframe 재로드 없는 확대·복귀, 토큰 로그 비노출·라벨 정규화, 두 로컬·Docker 경로와 Helm 키 전달. 운영 SSO 쿠키 SameSite·Secure의 2단계 중첩 요청은 운영 시험(미완료)이며 로컬·무인증 Chromium 결과와 구분. 렌더 미사용 운영 업그레이드 회귀와 롤링 키 공존 검증 포함. Chromium spike는 설계 근거이며 구현 수용 시험은 별도(상세 `html-embed-design.md` 14.9) |
 | Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync·Feedback fake Pushgateway | Sync·Feedback Alert 발생·미발생 시점, 실행 간 누적값, 0 기준값, push 그룹. Collab Gateway Alert 5종의 발생·미발생·해소 시점(`collab-alerts.test.yaml`, 직접 수집 시계열) |
-| Collab Gateway | pytest(`services/collab-gateway/tests`: 스케줄러·상태·메시지·Mattermost 어댑터(httpx MockTransport)·Viewer 클라이언트·러너·앱·명령 해석·속도 제한·명령 엔드포인트) + pytest(`scripts/tests/test_helm_collab_gateway.py`: `helm template`) | 예고 시점·장애 복구·일시 변경·처음 본 회의, 변경·취소·요약, 중복 방지·재시작, 재시도·포기, 매핑 누락, 상태 파일 손상·잠금, 멘션·링크 이스케이프, 토큰 비노출, Helm 복제본 고정·PVC·Secret·NetworkPolicy·검증 실패, `/synctx` 채널 범위·토큰 인증·속도 제한·ephemeral 응답·감사 로그, 슬래시 명령 등록 REST(모의 전송) |
-| Viewer 화면·검색 | pytest(`viewer_ui`·`search`·`linear_inline` 단위, Viewer TestClient) + `node --test`(viewer-core.js) | 상단 바·서랍·오류 안내 화면 이스케이프, 본문 검색 기한·동시 실행 제한·상태, 파일 찾기·최근 문서, Markdown 인라인 렌더 결과가 python-markdown과 같음, 오류 `detail` 고정 문구·git 인증정보 가림 |
+| Collab Gateway | pytest(`services/collab-gateway/tests`: 스케줄러·상태·메시지·Mattermost 어댑터(httpx MockTransport)·Viewer 클라이언트·러너·앱·명령 해석·속도 제한·명령 엔드포인트) + pytest(`scripts/tests/test_helm_collab_gateway.py`: `helm template`) | 예고 시점·장애 복구·일시 변경·처음 본 회의, 변경·취소·요약, 중복 방지·재시작, 재시도·포기, 매핑 누락, 상태 파일 손상·잠금, 멘션·링크 이스케이프, 토큰 비노출, Helm 복제본 고정·PVC·Secret·NetworkPolicy·검증 실패, `/synctx` 채널 범위·토큰 인증·속도 제한·ephemeral 응답·감사 로그, 검색·근거 별칭·채널 저장소별 요청(최대 5개)·다른 저장소 필터 후 링크 검증·항목 단위 생략과 건수 로그·5/20건 상한과 초과 안내·partial/omitted 안내·명령별 실패 문구·발췌 제외·합산 2초 기한·Viewer 오류(MockTransport), 슬래시 명령 등록 REST(모의 전송) |
+| Viewer 화면·검색 | pytest(`viewer_ui`·`search`·`linear_inline` 단위, Viewer TestClient) + `node --test`(viewer-core.js) | 상단 바·서랍·오류 안내 화면 이스케이프, 본문 검색 기한·동시 실행 제한·상태, 서비스 토큰 허용 범위·협업 필터 강제·비협업 repo 404·ref 거부·검색 경로만 반환·일반 권한 회귀·근거 API 권한/404/비협업 참조 제외/발췌 제외/partial/omitted/실패 상태, 파일 찾기·최근 문서, Markdown 인라인 렌더 결과가 python-markdown과 같음, 오류 `detail` 고정 문구·git 인증정보 가림 |
 | 배포 옵션 | pytest(`scripts/tests`: `helm template`, `deploy.sh`·`compose.sh`, `run-viewer.sh`, `run-lite.sh`, `seed_cdn.py`) | 서비스 옵션과 D1·D2·D8 렌더 실패, Pushgateway 배포 조건, 게이트웨이 설정·`nginx -t`·TLS·신뢰 프록시 검사, 로컬 Viewer 설정 생성, 경량 소스·단일 컨테이너 인자·캐시·Secret·빌드 위임(fake Docker), CDN 시드 |
 
 ### 10.2 운영 전 수용 기준
@@ -1618,6 +1649,17 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
   - [x] `<문서명>.memo.md` 결정·액션 집계(담당자·기한, 서버 저장 없음)
   - [x] 상단 바 「회의」·회의 정보 카드 「회의 대시보드로」 링크
 - [ ] 8.2 Jitsi 내장
+  - [x] A1: `collab.jitsi` 설정·현재/이전 키와 `_FILE` 검증, 별도 방 이름 HMAC·HS256 JWT·시간 창·취소 검사
+  - [x] A1: Viewer 참여 API(기존 권한·서비스 토큰 면제 없음·404/409·no-store·메트릭), 회의 목록의 공개 참여 시간
+  - [x] A1: 회의 카드·발표 화면 참여 버튼·사유 텍스트·IFrame 패널·접근성, Jitsi 출처 한정 CSP/Permissions-Policy
+  - [x] A1: 발표자 따라가기(moderator 확인·메시지 검증·throttle·기존 앵커·수동 스크롤 해제), Python/Node·UI 대비 회귀 테스트
+  - [x] A1: Gateway 참여/join(채널 범위·문서/발표 링크만·사유 안내), 도움말·자동완성
+  - [x] A2 정적: Helm 네 워크로드·HTTPS·Secret·설정 불일치 검증, NodePort의 JVB_PORT/containerPort/Service port/nodePort 일치(기본 31000), IP만 광고·XMPP 암호 길이·태그 덮어쓰기 렌더 검사, Viewer 현재/이전 키·Prosody 현재 앱 키 연결
+  - [x] A2 정적: Compose profile·게이트웨이 프록시·키 파일 전달, 로컬 선택 배포·Mattermost 자원 보호, 반입 목록
+  - [x] A2 정적: test_helm_jitsi.py·test_docker_deploy.py·test_local_scripts.py와 Alert 테스트 명세 추가
+  - [ ] A2 런타임: 이미지 실존·아키텍처·반입, 공식 이미지 기동·probe·token_affiliation 권한·Jicofo 인증 해제·web P2P 해제 유효성·JVB NodePort/hostPort 도달·UDP 방화벽·외부 STUN 요청 없음 확인
+  - [ ] minikube Jitsi 스크립트 실행
+  - [ ] 로컬 실제 Jitsi 접속·입장·참가자 역할·데이터 채널 따라가기, 운영 미디어 품질 검증
 - [ ] 8.3 Collab Gateway
   - [x] `collab.gateway` 설정 모델과 Viewer `/api/meetings` 서비스 토큰 인증
   - [x] `services/collab-gateway`: 예고·변경·취소·요약 알림, 상태 파일 중복 방지, Mattermost 어댑터, 채널 매핑, 메트릭
@@ -1630,7 +1672,9 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 - [ ] 8.4 `/synctx` 명령과 채널
   - [x] `/synctx 오늘`·`예정`·`회의`·`정리`·`도움말`(채널 범위, 토큰 인증, 속도 제한, 요청자에게만 보이는 응답, 감사 로그, 메트릭·Alert)
   - [x] 로컬 Mattermost에 슬래시 명령 등록(`setup-mattermost.sh`, Mattermost가 발급한 명령 토큰을 Secret에 사용. 실제 Mattermost에서 등록 확인)
-  - [ ] 검색·근거·참여 명령(보류: 검색은 Viewer 검색 API의 협업 저장소 필터, 근거는 노출 API, 참여는 8.2가 먼저)
+  - [x] 검색·근거 명령(Viewer 서비스 토큰·협업 필터·근거 API, 채널 저장소별 검색 최대 5개·비협업 참조 제외·검색 발췌 제외·항목 단위 링크 검증·partial/omitted·5/20건과 초과 안내·명령별 실패 문구·합산 기한·자동완성 힌트 pytest/MockTransport 검증)
+  - [x] 참여 명령(`join`, 8.2 A1 코드·단위 테스트, 실제 Jitsi 검증은 8.2 미완료 항목)
+  - [ ] 검색·근거 명령을 실제 Mattermost·클러스터 Viewer·Gateway로 실행 확인
   - [x] 실제 Mattermost에서 `/synctx` 실행이 Gateway로 전달돼 응답이 오는 흐름 확인(호스트의 가짜 Viewer·Gateway, `commands/execute`)
   - [ ] 클러스터 안 Viewer·Gateway 파드와 채팅 화면에서 직접 누르는 전체 흐름(미확인. 회의 저장소 접근 토큰이 필요)
 
@@ -1664,7 +1708,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 - Mattermost 채널에서 `/synctx 오늘`·`예정`·`회의`·`정리`를 실행하면 그 채널에 매핑된 회의만 요청자에게만 보이는 메시지로 나오고, 다른 채널의 회의는 id를 알아도 나오지 않는다.
 - 명령 토큰이 틀리면 응답하지 않고(401) 로그·메트릭에만 남으며, 사용자별 분당 호출 수가 제한된다.
 - 로그에는 명령 본문·토큰·사용자 id 원문이 남지 않는다.
-- 검색·근거·참여 명령은 이번 범위가 아니다. 클러스터 안 파드를 거친 전체 흐름은 미확인이다.
+- 검색은 채널에 매핑된 회의의 저장소 id 최대 5개를 각각 요청해 경로·링크 최대 5건, 근거는 채널 안 회의의 제목·링크 최대 20건을 발췌 없이 답한다. 상한 초과는 `… 외 N건`, 일부 근거 생략은 `partial`·`omitted` 안내로 알린다(pytest 검증). 참여 명령(join)은 구현되어 회의 문서·발표 링크와 참여 시간 사유를 안내한다. 참여·검색·근거의 실제 Mattermost 실행과 클러스터 안 파드를 거친 전체 흐름은 미확인이다.
 
 - [x] XWiki `markdown/1.2` 안 html 매크로 실행 확인 (로컬 XWiki 16.10.17에서 확인)
 - [x] 설정 모델과 출처·부분집합 검사
@@ -1825,3 +1869,28 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 - 외부 Importer가 사용할 Git provider API 권한, PR 생성 권한, branch protection 정책
 - K8s StorageClass의 RWX/RWO 지원과 NFS flock/Lease 정책
 - 사내 Ingress 인증 헤더와 그룹 포맷
+
+### 12.11 Jitsi 배포·장애·키 교체
+
+Jitsi는 선택 보조 구성요소다. 운영에 이미 Jitsi가 있으면 Helm `jitsi.enabled: false`를 유지하고 `collab.jitsi.enabled: true`, `public_url`, `app_id`와 Viewer의 `jitsi.jwtSecret.existingSecret`·`roomSecret.existingSecret`을 지정한다. 기존 Jitsi의 JWT 앱 id·키·token_affiliation 정책도 일치시킨다. 웹/API 의미와 권한은 5.5·7장의 A1 계약을 유지한다. room_secret은 Prosody·Gateway에 보내지 않는다.
+
+자체 스택은 `jitsi.enabled`, `host`, `publicUrl`, `appId`, `ingress.tlsSecretName`, `jvb.advertisedIPs`, 세 Secret 참조를 별도 값 파일로 지정한다. 앱·방 Secret 키는 current(필수)/previous(선택), XMPP Secret 키는 jicofo-password/jvb-password다. 운영은 existingSecret을 쓰며 create/current/previous 값 파일은 로컬 시험용이고 커밋하지 않는다. `.synctx.yaml`의 public_url/app_id와 차트가 다르면 렌더를 거부한다. Helm은 secret_env/room_secret_env 이름을 따라 연결하며 `_PREVIOUS`를 제공한다. Compose는 기본 이름만 지원하고 다른 이름은 사전 검증에서 거부한다.
+
+이미지 반입: 기준값은 `helm/synctx/values.yaml`의 `jitsi.imageTag` 한 곳이다. `values-production.yaml`은 enabled를 끈 채 네 repository만 `registry.local:5000/jitsi/*`로 덮어쓴다. `scripts/generate-manifest.sh`는 같은 태그로 네 이미지 항목을 기록한다. 이 저장소에 pull-and-save-images.sh는 없다. 현재 stable-9823은 2024년 태그이므로 반입 전 보안 패치 기준으로 태그를 다시 고른다. Docker Hub 실존·아키텍처는 미확인이다. 네 공식 이미지 모두 반입 전 `docker manifest inspect`로 실존 확인 후 대상 amd64(로컬은 arm64 지원도)를 확인하고 tar 반입·내부 registry push를 수행한다. 이번 작업에서는 네트워크·Docker 실행 없이 목록만 정적 검증했다. 실제 반입 환경에서만 이 확인 명령을 실행한다.
+
+Compose의 Jitsi 사전 검증에는 uv와 미리 준비한 workspace Python 패키지가 필요하며 `--offline --frozen`으로 실행한다. 인터넷에서 설치하지 않으므로 배포 전에 오프라인 환경을 준비한다.
+
+Compose: synctx.env.example·secrets.env.example을 복사해 파일 권한을 600으로 제한한다. `SYNCTX_JITSI=true`, `SYNCTX_JITSI_HOST`, `SYNCTX_JITSI_PUBLIC_URL=https://호스트`, `SYNCTX_JITSI_ADVERTISE_IPS`와 기존 TLS 인증서·키 설정을 채우고, `.synctx.yaml`의 collab.jitsi와 일치시킨다. 앱/방의 현재·이전 키는 `_FILE`로 참조하거나 secrets.env에 환경변수로 지정한다. 각 현재 키는 서로 다른 32바이트 이상이어야 한다. XMPP 암호 두 개도 각각 32바이트 이상으로 secrets.env에 지정한다. `_FILE`로 준 앱 키도 Prosody 컨테이너 환경변수 JWT_APP_SECRET으로 풀려 `docker inspect`·`scripts/docker/compose.sh -- config`에 보인다. 파일 권한(600)과 호스트 접근 통제가 필요하다. JVB에는 Jicofo 암호나 JWT 설정 등 불필요한 환경변수를 주지 않는다. Compose tmpfs는 /config·/tmp만 사용하며 /run은 덮지 않는다. `scripts/docker/deploy.sh --check`로 생성 설정과 키를 검사한 뒤 같은 스크립트로 배포한다. 기본 태그는 차트에서 읽으며 `SYNCTX_JITSI_IMAGE_TAG`로 명시적으로 고정 stable 태그를 덮어쓸 수 있다. 호스트 TLS 인증서는 Jitsi 이름도 포함해야 한다. 운영 명령은 `scripts/docker/compose.sh -- ps`·`-- logs jitsi-prosody`처럼 래퍼를 사용한다.
+
+장애 점검:
+
+1. 참여 버튼/토큰 오류는 `synctx_viewer_jitsi_token_failures_total{reason}`·Viewer 설정·회의 시간·권한부터 확인한다. `SynctxJitsiTokenFailures`는 10분 내 5회 이상 실패가 2분 지속할 때 발생하며 정상적인 시간 창 밖 요청도 포함한다. JWT·키·응답 본문은 로그에 남기지 않는다.
+2. 웹·입장이 실패하면 HTTPS 인증서·DNS·Ingress 또는 게이트웨이·BOSH(`/http-bind`)·XMPP WebSocket(`/xmpp-websocket`)·Colibri WebSocket(`/colibri-ws/jvb/`) 연결을 점검한다. JWT_APP_ID·AUTH_TYPE=jwt·JWT_APP_SECRET 일치, JWT_ALLOW_EMPTY=0, Prosody token_affiliation과 ENABLE_AUTO_OWNER=0, Jicofo ENABLE_AUTH=0을 확인한다. 실제 참가자의 moderator 권한은 반드시 브라우저에서 검증한다.
+3. 영상·음성이 없으면 브라우저에서 JVB 광고 주소로 UDP 10000(Compose/hostPort) 또는 지정 NodePort(기본 31000)에 도달하는지, NAT와 방화벽을 점검한다. NodePort에서는 JVB_PORT·containerPort·Service port·nodePort가 모두 같은 값(기본 31000)이어야 한다. 광고 주소는 쉼표 구분 IP 목록만 받고 포트·# 형식을 거부한다. stable-9823 jvb.conf는 IP와 포트를 분리하지 않는다. tcpFallback은 기본 false이며 stable-9823 템플릿에 TCP 하베스터 처리가 없어 동작하지 않는다. 별도 TURN 설계 전까지 UDP 허용을 운영 조건으로 둔다. JVB_DISABLE_STUN=1과 web 컨테이너의 ENABLE_P2P=false로 외부 STUN 의존을 끊도록 지정한다. web 변수 유효성과 실제 외부 STUN 요청 차단은 확인 필요다. 로컬 터널은 UDP 검증 근거가 아니다.
+4. 공식 이미지의 s6 `/init`는 설정 생성·소유권 조정·서비스 사용자 전환을 수행하므로 root 시작을 허용한다. privileged·hostNetwork는 사용하지 않고 Helm RuntimeDefault seccomp, probe·resources·emptyDir를 둔다. emptyDir에는 재생성 가능한 설정만 있으며 재배포 시 진행 중 회의가 끊길 수 있다. 이미지 기동·probe·Java 메모리 상한은 실제 배포 확인이 필요하다.
+
+키 교체: Viewer는 앱·방 이름 키의 previous를 읽기만 하고 쓰지 않는다. 두 이전 슬롯의 현재 소비처는 없다. 이 구성의 Prosody는 현재 JWT_APP_SECRET 하나만 검증한다. 이전 슬롯을 넣었다고 이전 JWT가 계속 통과한다고 간주하지 않는다. 회의 없는 점검 시간을 잡고 앱 current를 새 키로, previous를 기존 키로 보관한 후 Viewer와 Prosody를 함께 재생성하고 새 입장 JWT와 참가자 역할을 확인한다. 기존 JWT는 재입장이 필요하다. 외부 Jitsi도 그 검증기의 지원 범위에 맞춰 교체한다. room_secret을 바꾸면 진행 중 회의 방 이름이 바뀌므로 회의 없는 시간에 교체하고 Viewer 전 인스턴스를 함께 재생성한다. XMPP 암호 변경 시 Prosody·Jicofo·JVB도 함께 재생성한다. Secret 환경변수는 자동 갱신되지 않는다.
+
+정적 테스트 목록: scripts/tests/test_helm_jitsi.py(기본 off·외부 Jitsi·네 워크로드·키 참조·TLS·NodePort/hostPort·오류 거부), test_docker_deploy.py(선택 profile·키 파일·호스트 프록시), test_local_scripts.py(옵션·gitignore·기본 setup 제외), scripts/tests/prometheus/jitsi-alerts.test.yaml 및 test_prometheus_rules.py(반복 실패/낮은 빈도/복구/계측 없음). Docker 실행을 제외하려면 테스트 전에 SYNCTX_TEST_NO_DOCKER=1을 지정한다(수집 시 image inspect도 생략). promtool이 없으면 평가 테스트는 skip되므로 실제 평가 완료와 구별한다.
+
+NetworkPolicy 판단: 현재 차트의 Sync·Gateway 정책은 Viewer를 선택하지 않는다. Viewer는 토큰을 로컬 서명하고 브라우저가 public_url의 스크립트·iframe·미디어에 직접 접속하므로 Viewer→Jitsi egress는 추가하지 않는다. 클러스터 공통 기본 차단 정책이 별도로 있어도 이 기능 때문에 Viewer의 Jitsi egress를 열 필요는 없다.

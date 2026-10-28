@@ -67,6 +67,12 @@ flowchart TB
         Slides["Slides Server"]
         SyncWebhook["Sync Webhook<br>Receiver (미구현)"]
         Sync["Sync Engine<br>(CronJob)"]
+        Jitsi["Jitsi 보조 구성요소<br>(web·prosody·jicofo·jvb, 선택)"]
+        Browser["사용자 브라우저"]
+        Browser -- "HTTPS·JWT" --> Ingress
+        Ingress -- "Jitsi 호스트·HTTPS·WebSocket" --> Jitsi
+        Browser -- "UDP 미디어(JVB)" --> Jitsi
+        Viewer -. "JWT: 서명·Prosody 검증<br>(앱 키 공유)" .-> Jitsi
         Pushgateway["Pushgateway<br>(CronJob 메트릭)"]
         Prometheus[("Prometheus")]
         Feedback["Outbound Feedback<br>Exporter (optional)"]
@@ -107,7 +113,7 @@ flowchart TB
         Feedback -. "redacted + signed email" .-> MailGateway
         Feedback -. "누적 메트릭 push" .-> Pushgateway
 
-        Gateway -- "GET /api/meetings<br>(서비스 토큰)" --> Viewer
+        Gateway -- "회의·검색·근거 API<br>(서비스 토큰)" --> Viewer
         Gateway -. "회의 안내·변경·취소·요약" .-> Mattermost
     end
 
@@ -126,7 +132,10 @@ flowchart TB
 | **Sync Engine** | Git 변경 감지 → XWiki/OpenProject 동기화 | Python CLI + httpx | CronJob |
 | **Slides Server** | 출판된 프레젠테이션 HTML 정적 서빙 | Nginx | Deployment + PVC |
 | **Outbound Feedback Exporter** | OpenProject 제한 필드 변경 → 서명된 메일 이벤트 반출 (선택) | Python CLI + SMTP | CronJob |
-| **Collab Gateway** | 회의 안내(예고)·변경·취소·요약을 Mattermost 채널로 전달하고 `/synctx` 슬래시 명령으로 회의를 조회 (선택, Phase 8.3·8.4) | FastAPI + httpx | Deployment(1개) + PVC |
+| **Jitsi (보조 구성요소)** | 회의 화면 화상 참여·발표자 따라가기의 데이터 채널(선택, 기본 꺼짐) | 공식 jitsi/web·prosody·jicofo·jvb | Deployment 4개 + Service + HTTPS Ingress |
+| **Collab Gateway** | 회의 안내(예고)·변경·취소·요약을 Mattermost 채널로 전달하고 `/synctx` 슬래시 명령으로 회의·문서 검색·근거를 조회 (선택, Phase 8.3·8.4) | FastAPI + httpx | Deployment(1개) + PVC |
+
+`/synctx 검색 <키워드>`(`search`)는 요청 채널에 매핑된 회의들의 저장소 id를 정렬해 최대 5개까지 각각 `repo=<id>`로 요청하고 경로·링크 최대 5건을, `근거 <id 또는 제목>`(`evidence`)는 채널 안 회의의 근거 제목·링크 최대 20건을 보여 준다. 검색어는 2~100자 한 줄이며 서비스 토큰 검색 응답부터 발췌를 제외한다. 검색·근거의 상한 초과는 `… 외 N건`, 근거의 `partial`·`omitted`는 "일부 근거를 읽지 못했습니다(N건 생략)"으로 안내한다. 응답은 요청 저장소 필터 후 링크를 검증하고 잘못된 항목만 생략해 건수만 로그에 남긴다. 명령 전체 Viewer 조회는 하나의 기한으로 합쳐 2초 제한, 실패는 `unavailable`과 명령별 안내(검색 결과·근거·기존 회의 정보), 응답은 요청자에게만 보이는 메시지다. 참여(`join`)는 회의 문서·발표 링크와 참여 시간 사유를 안내한다(8.2 A1). 검색·근거의 실제 Mattermost·클러스터 실행은 미확인이다.
 
 ### 배포 방식
 
@@ -197,7 +206,7 @@ Docker 캐시는 기본 이름 `synctx-viewer-cache`인 볼륨에 남으며 Ctrl
 
 - **Git 저장소 뷰어** — 다중 저장소 트리 탐색, 문서 열람, webhook/polling 동기화
 - **공통 화면 틀** — 상단 바·서랍·3단 문서 화면(파일 트리·본문·목차), 파일 찾기(⌘K)·최근 본 문서, 화면 경로 오류는 같은 틀의 안내 화면으로 표시
-- **저장소 본문 검색** — `/search` 화면과 `GET /api/search`, 여러 저장소를 `git grep`으로 찾는다
+- **저장소 본문 검색** — `/search` 화면과 `GET /api/search`, 여러 저장소를 `git grep`으로 찾는다. `collab_only=true`는 협업 저장소만 검색하고 서비스 토큰은 이 필터·기본 브랜치를 강제한다(`ref` 거부). 비협업 저장소를 지정하면 404이며 결과는 저장소 정보와 경로만 반환한다. 일반 권한의 전체 검색은 유지한다
 - **마크다운 렌더링** — 서버사이드 렌더링 (python-markdown), 7개 테마 지원
 - **Mermaid 다이어그램** — 클라이언트 사이드 렌더링 (CDN Service에서 mermaid.js 로딩)
 - **코드 하이라이팅** — highlight.js 기반 190+ 언어 구문 강조
@@ -206,7 +215,7 @@ Docker 캐시는 기본 이름 `synctx-viewer-cache`인 볼륨에 남으며 Ctrl
 - **스크럼 보드** — 이슈 마크다운 목록을 버전별 칸반 보드로 렌더링 (`/api/repos/{id}/board/{version}`)
 - **회의 모드** — 회의 문서(`synctx.type: meeting`)에서 메모·형광펜·회의 정리(결정·액션 아이템), `.md`·메모 포함 HTML(읽기 전용) 내보내기와 가져오기. 메모는 브라우저(localStorage)에만 저장 (Phase 8.1a)
 - **회의 정보 카드·발표 화면** — 회의 문서 머리의 일시·진행 상태·안건 카드, `?mode=present` 발표 화면, 회의 모드 첫 사용 안내
-- **회의 대시보드** — 저장소 전체 회의를 `/view/meetings`에서 상태·저장소·채널·발표자·기간으로 보고, 같은 폴더의 `<문서명>.memo.md`를 커밋하면 결정사항·액션 아이템(담당자·기한)을 모아 본다. JSON은 `GET /api/meetings`. 메모는 서버에 저장하지 않는다 (Phase 8.1c)
+- **회의 대시보드** — 저장소 전체 회의를 `/view/meetings`에서 상태·저장소·채널·발표자·기간으로 보고, 같은 폴더의 `<문서명>.memo.md`를 커밋하면 결정사항·액션 아이템(담당자·기한)을 모아 본다. JSON은 `GET /api/meetings`. `GET /api/meetings/{repo_id}/{meeting_id}/evidence`는 검증된 회의의 근거 제목·경로·링크만 반환하고 발췌·메모는 포함하지 않는다. 서비스 토큰은 회의·하위 근거 목록·검색 API에만 허용하며 근거 참조 대상도 협업 저장소로 제한한다. 근거 API는 읽기 실패·설정에 없는 저장소·토큰 범위 밖 참조의 생략 건수 `omitted`와 `status=partial`을 반환한다. 일반 Viewer 화면의 근거 동작은 유지한다. 메모는 서버에 저장하지 않는다 (Phase 8.1c)
 - **근거 미리보기·근거 모음** — 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선으로 미리 보고, 문서 끝 근거 모음에서 발췌·인용한 곳·원문 열기로 확인. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리키며, 메모 포함 HTML에서도 동작 (Phase 8.1b)
 - **인터랙티브 HTML 임베드** — Markdown의 ` ```synctx-html ` 블록이 가리키는 저장소 HTML 묶음(모션 그래픽 등)을 한 파일로 합쳐 sandbox iframe으로 재생. 운영자가 지정한 신뢰 저장소에서만 동작하며, Viewer 화면에서는 `크게 보기`로 iframe을 다시 읽지 않고 키운다 (Phase 9)
 - **HTML 렌더 보기** — `html_embed.enabled`·`render_files`가 모두 켜진 저장소의 `.html`을 `?mode=render`(새 탭은 `layout=full`)로 실행. 화면이 서명 토큰 경로(`/render/{token}/…`, ref·커밋 SHA 고정, 기본 4시간)로 sandbox iframe을 열어 문서 안 상대 링크도 같은 스냅샷으로 연다. 화면 맞춤·비율·전체 화면 지원. 복수 인스턴스는 `SYNCTX_RENDER_SECRET` 공유 필수 (Phase 9)
@@ -331,6 +340,18 @@ Marp Service가 출판한 프레젠테이션 HTML 파일을 정적으로 서빙�
 - Nginx 기반 정적 파일 서버
 - 출판된 HTML 파일을 PVC에서 읽어 서빙 (sync sidecar가 출판 저장소를 git pull하고 목록 페이지 `index.html`을 만든다)
 - URL 패턴: `/slides/{파일명}.html` (출판 저장소의 `_published/slides/` 아래 파일)
+
+## 선택 Jitsi 보조 구성요소 (Phase 8.2)
+
+`jitsi.enabled`는 기본 false이며 자체 synctx 서비스 수에는 포함하지 않는다. Helm은 web·prosody·jicofo·jvb를 각각 단일 Deployment로 배포한다. `scripts/local/steps/deploy-jitsi.sh`와 Compose profile `jitsi`를 선택해서 사용한다. 기본 `setup.sh`·`build.sh`의 제3자 이미지 목록과 경량 `run.sh`·`run-lite.sh`에는 넣지 않는다. 로컬 스크립트가 기존 `load_image`로 필요한 네 이미지만 로드한다.
+
+Compose는 `SYNCTX_JITSI=true`로 `scripts/docker/deploy.sh`를 실행한다. 별도 HTTPS 호스트를 게이트웨이에서 web으로 전달하고 WebSocket·BOSH를 유지한다. JVB UDP 10000을 별도로 공개한다. 운영의 기존 Jitsi는 Helm `jitsi.enabled: false`를 유지하고 `.synctx.yaml`의 `collab.jitsi.enabled/public_url` 및 Viewer 키 참조만 지정한다. 상세 키·미디어 제약은 운영 설계 12.11을 따른다.
+
+Jitsi HTTPS·JWT 요청은 브라우저에서 Ingress로, UDP 미디어는 JVB로 직접 전달된다. Viewer와 Prosody는 JWT 앱 키를 공유하며 Viewer가 로컬 서명한다. NodePort의 JVB 수신·Service·노드 포트는 모두 기본 31000이고 광고 주소는 IP만 사용한다(hostPort·Compose는 10000).
+
+Prosody token_affiliation이 moderator를 정하며 Jicofo는 ENABLE_AUTH=0·ENABLE_AUTO_OWNER=0으로 지정한다. 이 조합은 실제 Jitsi 기동으로 확인하지 못했다(소스 대조 기준). stable-9823의 Jicofo ENABLE_AUTH 처리와 web ENABLE_P2P=false 유효성은 로컬 원본 템플릿이 없어 확인 필요다. JVB_DISABLE_STUN=1·web ENABLE_P2P=false로 외부 STUN 의존을 끊도록 구성한다. tcpFallback은 기본 false이며 stable-9823 템플릿에 TCP 하베스터 처리가 없어 동작하지 않는다. 상세 배포·키 노출 범위는 architecture.md 10.8과 production-service-design.md 12.11을 따른다.
+
+구현 위치: `helm/synctx/templates/jitsi-*.yaml`, `scripts/local/steps/deploy-jitsi.sh`, `scripts/docker/validate_jitsi.py`, `deploy/docker/compose.yaml`.
 
 ## 주요 개념 (Harness Engineering & OKF)
 
@@ -515,6 +536,7 @@ synctx/
 │           ├── git-secret.yaml        # Git 읽기·출판 토큰
 │           ├── ingress.yaml
 │           ├── viewer-deployment.yaml
+│           ├── jitsi-*.yaml           # 선택 Jitsi 스택·Secret·Service·HTTPS Ingress
 │           ├── viewer-render-secret.yaml # 렌더 토큰 키 Secret (viewer.renderTokenSecret.create)
 │           ├── cdn-deployment.yaml
 │           ├── cdn-pvc.yaml
