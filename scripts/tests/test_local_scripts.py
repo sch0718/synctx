@@ -1,5 +1,6 @@
 """scripts/local 스크립트·values-local.yaml·scripts/test-all.sh 정합성 테스트."""
 
+import json
 import os
 import re
 import shutil
@@ -214,3 +215,330 @@ def test_openproject_allows_host_synctx_config_uses():
     _, config = _values_local()
     host = config["targets"]["openproject"]["base_url"].split("://", 1)[1].split("/", 1)[0].split(":", 1)[0]
     assert host in yaml.safe_load(env["OPENPROJECT_ADDITIONAL__HOST__NAMES"])
+
+
+SETUP_MATTERMOST = LOCAL / "steps" / "setup-mattermost.sh"
+VERIFY_COLLAB = LOCAL / "steps" / "verify-collab.sh"
+COLLAB_SECRET = "values-local.collab.secret.yaml"
+
+
+def _mattermost_manifests(tmp_path):
+    result = _deploy_deps(tmp_path, "--skip-xwiki", "--skip-op", "--skip-mailpit", "--skip-images", "--mattermost")
+    assert result.returncode == 0, result.stdout + result.stderr
+    log = (tmp_path / "calls.log").read_text()
+    manifest = log.rsplit("-f -\n", 1)[1].split("\n--context", 1)[0]
+    return result, [doc for doc in yaml.safe_load_all(manifest) if doc]
+
+
+def _deploy_mattermost_env():
+    text = DEPLOY_DEPS.read_text()
+    match = re.search(r"ALLOWEDUNTRUSTEDINTERNALCONNECTIONS\n\s+value: \"([^\"]+)\"", text)
+    return match.group(1).split(",")
+
+
+def test_values_local_gateway_matches_local_mattermost(tmp_path):
+    from synctx_common.config import SynctxConfig
+
+    _, manifests = _mattermost_manifests(tmp_path)
+    services = {m["metadata"]["name"]: m for m in manifests if m["kind"] == "Service"}
+    port = services["mattermost"]["spec"]["ports"][0]["port"]
+    values, config = _values_local()
+    gateway = SynctxConfig.model_validate(config).collab.gateway
+    assert gateway.mattermost.url == f"http://mattermost.{_deps_namespace()}.svc.cluster.local:{port}"
+    policy = values["collabGateway"]["networkPolicy"]["mattermost"]
+    assert policy == {"namespace": _deps_namespace(), "port": port}
+    setup = SETUP_MATTERMOST.read_text()
+    team = re.search(r'TEAM="\$\{MATTERMOST_TEAM:-([^}]+)\}"', setup).group(1)
+    channel = re.search(r'CHANNELS=\("([a-z][a-z0-9_-]*)"\)', setup).group(1)
+    assert gateway.channels[channel].team == team and gateway.channels[channel].channel == channel
+    assert values["collabGateway"]["enabled"] is False
+
+
+def test_mattermost_is_opt_in_and_pinned(tmp_path):
+    off = _deploy_deps(tmp_path, "--skip-xwiki", "--skip-op", "--skip-mailpit", "--skip-images")
+    assert off.returncode == 0 and "Mattermost" not in off.stdout
+    assert "mattermost" not in (tmp_path / "calls.log").read_text()
+    on_dir = tmp_path / "on"
+    on_dir.mkdir()
+    _, manifests = _mattermost_manifests(on_dir)
+    deployments = {m["metadata"]["name"]: m for m in manifests if m["kind"] == "Deployment"}
+    assert set(deployments) == {"mattermost", "mattermost-db"}
+    image = deployments["mattermost"]["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image.startswith("mattermost/mattermost-team-edition:") and not image.endswith(":latest")
+    env = {e["name"]: e["value"] for e in deployments["mattermost"]["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["MM_SERVICESETTINGS_ENABLELOCALMODE"] == "true" and env["MM_SERVICESETTINGS_ENABLEBOTACCOUNTCREATION"] == "true"
+    assert "@mattermost-db:5432/" in env["MM_SQLSETTINGS_DATASOURCE"]
+
+
+def test_deploy_deps_help_lists_mattermost_flag(tmp_path):
+    assert "--mattermost" in _deploy_deps(tmp_path, "--help").stdout
+
+
+def test_load_image_pulls_with_platform_override(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "minikube").write_text(
+        "#!/bin/sh\ncase \"$*\" in\n *ssh*) echo aarch64;;\n *'image pull'*) exit 1;;\n *'image ls'*) exit 0;;\n *) exit 0;;\nesac\n")
+    (bin_dir / "docker").write_text(FAKE_LOGGER)
+    for name in ("minikube", "docker"):
+        (bin_dir / name).chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}", FAKE_LOG=str(tmp_path / "calls.log"))
+    script = f'source "{LOCAL}/_common.sh"; load_image img:1; LOAD_IMAGE_PLATFORM=linux/amd64 load_image img:2'
+    subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+    calls = (tmp_path / "calls.log").read_text()
+    assert "pull --platform linux/arm64 img:1" in calls
+    assert "pull --platform linux/amd64 img:2" in calls
+    assert "image pull img:2" not in calls
+
+
+def test_collab_values_file_is_gitignored():
+    result = subprocess.run(["git", "check-ignore", f"helm/synctx/{COLLAB_SECRET}"], cwd=ROOT, capture_output=True)
+    assert result.returncode == 0
+
+
+def _scripts_copy(tmp_path):
+    shutil.copytree(LOCAL, tmp_path / "scripts" / "local")
+    (tmp_path / "helm" / "synctx").mkdir(parents=True)
+    shutil.copy(VALUES_LOCAL, tmp_path / "helm" / "synctx" / "values-local.yaml")
+    return tmp_path
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_deploy_synctx_applies_collab_values_only_when_present(tmp_path, present):
+    root = _scripts_copy(tmp_path)
+    if present:
+        (root / "helm" / "synctx" / COLLAB_SECRET).write_text("collabGateway: {enabled: true}\n")
+    env = _fake_bin(tmp_path, "kubectl", "helm")
+    subprocess.run(["bash", str(root / "scripts" / "local" / "steps" / "deploy-synctx.sh")],
+                   capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+    helm_call = next(line for line in (tmp_path / "calls.log").read_text().splitlines() if "upgrade --install" in line)
+    assert (COLLAB_SECRET in helm_call) == present
+
+
+FAKE_UV_TOKEN = """#!/bin/sh
+printf 'uv %s\\n' "$*" >> "$FAKE_LOG"
+echo "${FAKE_TOKEN-SECRETBOTTOKEN}"
+echo "${FAKE_COMMAND_TOKEN-SECRETCMDTOKEN}"
+"""
+
+
+def _setup_mattermost(tmp_path, token=None, *args, command_token=None):
+    root = _scripts_copy(tmp_path)
+    env = _fake_bin(tmp_path, "kubectl", "curl")
+    (tmp_path / "bin" / "uv").write_text(FAKE_UV_TOKEN)
+    (tmp_path / "bin" / "uv").chmod(0o755)
+    env["HOME"] = str(tmp_path / "home")
+    if token is not None:
+        env["FAKE_TOKEN"] = token
+    if command_token is not None:
+        env["FAKE_COMMAND_TOKEN"] = command_token
+    return root, subprocess.run(
+        ["bash", str(root / "scripts" / "local" / "steps" / "setup-mattermost.sh"), *args],
+        capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+
+
+def test_setup_mattermost_writes_private_values_file(tmp_path):
+    root, result = _setup_mattermost(tmp_path, None, "chan-a", "chan-b")
+    assert result.returncode == 0, result.stdout + result.stderr
+    path = root / "helm" / "synctx" / COLLAB_SECRET
+    data = yaml.safe_load(path.read_text())["collabGateway"]
+    assert data["enabled"] is True and data["secrets"]["create"] is True
+    assert data["secrets"]["botToken"] == "SECRETBOTTOKEN"
+    assert len(data["secrets"]["viewerServiceToken"]) == 48
+    assert data["secrets"]["commandToken"] == "SECRETCMDTOKEN"
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    calls = (tmp_path / "calls.log").read_text()
+    for channel in ("chan-a", "chan-b"):
+        assert f"channel create --team synctx --name {channel}" in calls
+    uv_call = next(line for line in calls.splitlines() if line.startswith("uv "))
+    assert "mattermost_bot.py" in uv_call and "--team synctx --bot synctx-bot" in uv_call and uv_call.endswith("chan-a chan-b")
+    assert "--command-url http://synctx-collab-gateway/api/collab/mattermost/command" in uv_call
+    assert "SECRETBOTTOKEN" not in result.stdout and "SECRETCMDTOKEN" not in result.stdout
+    password_file = tmp_path / "home" / ".cache" / "synctx" / "mattermost-admin-password"
+    assert oct(password_file.stat().st_mode & 0o777) == "0o600"
+    assert password_file.read_text().strip() not in result.stdout
+
+
+def test_setup_mattermost_uses_default_channel_and_local_mode(tmp_path):
+    _, result = _setup_mattermost(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = (tmp_path / "calls.log").read_text()
+    assert "channel create --team synctx --name team-docs" in calls
+    assert all("mmctl --local" in line for line in calls.splitlines() if "mmctl" in line)
+    assert not any("bot create" in line or "token generate" in line for line in calls.splitlines())
+
+
+@pytest.mark.parametrize("bot,command", [("", None), (None, "")])
+def test_setup_mattermost_fails_without_a_token_and_writes_no_file(tmp_path, bot, command):
+    root, result = _setup_mattermost(tmp_path, bot, command_token=command)
+    assert result.returncode != 0
+    assert not (root / "helm" / "synctx" / COLLAB_SECRET).exists()
+
+
+def test_command_url_matches_gateway_service_and_endpoint():
+    setup = SETUP_MATTERMOST.read_text()
+    url = re.search(r'COMMAND_URL="\$\{SYNCTX_COMMAND_URL:-([^}]+)\}"', setup).group(1)
+    assert url == "http://synctx-collab-gateway/api/collab/mattermost/command"
+    values, _ = _values_local()
+    assert values["collabGateway"]["networkPolicy"]["mattermost"]["namespace"]
+    gateway_app = (ROOT / "services" / "collab-gateway" / "src" / "app.py").read_text()
+    assert 'COMMAND_PATH = "/api/collab/mattermost/command"' in gateway_app
+    mattermost_env = [m for m in _deploy_mattermost_env()]
+    assert "synctx-collab-gateway" in mattermost_env and "host.minikube.internal" in mattermost_env
+
+
+def test_setup_mattermost_requires_running_mattermost(tmp_path):
+    root = _scripts_copy(tmp_path)
+    env = _fake_bin(tmp_path, "docker")
+    (tmp_path / "bin" / "kubectl").write_text("#!/bin/sh\ncase \"$*\" in *'get deploy/mattermost'*) exit 1;; esac\nexit 0\n")
+    (tmp_path / "bin" / "kubectl").chmod(0o755)
+    env["HOME"] = str(tmp_path / "home")
+    result = subprocess.run(["bash", str(root / "scripts" / "local" / "steps" / "setup-mattermost.sh")],
+                            capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+    assert result.returncode == 1 and "deploy-deps.sh --mattermost" in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("helm") is None, reason="helm 미설치")
+def test_local_values_render_gateway_when_collab_file_is_applied(tmp_path):
+    collab = tmp_path / COLLAB_SECRET
+    collab.write_text("collabGateway:\n  enabled: true\n  secrets: {create: true, botToken: b, viewerServiceToken: v}\n")
+    result = subprocess.run(["helm", "template", "synctx", str(ROOT / "helm" / "synctx"), "-f", str(VALUES_LOCAL), "-f", str(collab)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    kinds = {(d["kind"], d["metadata"]["name"]) for d in yaml.safe_load_all(result.stdout) if d}
+    assert ("Deployment", "synctx-collab-gateway") in kinds
+    policy = next(d for d in yaml.safe_load_all(result.stdout) if d and d["kind"] == "NetworkPolicy" and "collab" in d["metadata"]["name"])
+    assert any(r["ports"][0]["port"] == 8065 for r in policy["spec"]["egress"])
+
+
+def _bot_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("mattermost_bot", LOCAL / "steps" / "mattermost_bot.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _MattermostApi:
+    def __init__(self, bot_exists=False, fail=None, commands=None):
+        self.bot_exists = bot_exists
+        self.fail = fail
+        self.commands = commands or []
+        self.calls = []
+
+    def __call__(self, request):
+        import httpx
+
+        path, method = request.url.path, request.method
+        self.calls.append((method, path, request.headers.get("Authorization")))
+        if self.fail == path:
+            return httpx.Response(500)
+        if path == "/api/v4/users/login":
+            return httpx.Response(200, headers={"Token": "session-1"}, json={"id": "admin"})
+        if path == "/api/v4/teams/name/synctx":
+            return httpx.Response(200, json={"id": "team1"})
+        if "/channels/name/" in path:
+            return httpx.Response(200, json={"id": "chan-" + path.rsplit("/", 1)[1]})
+        if path == "/api/v4/users/username/synctx-bot":
+            return httpx.Response(200, json={"id": "bot1"}) if self.bot_exists else httpx.Response(404)
+        if path == "/api/v4/bots":
+            return httpx.Response(201, json={"user_id": "bot1"})
+        if path.endswith("/tokens"):
+            return httpx.Response(200, json={"token": "bot-access-token"})
+        if path == "/api/v4/commands" and method == "GET":
+            assert request.url.params["team_id"] == "team1" and request.url.params["custom_only"] == "true"
+            return httpx.Response(200, json=self.commands)
+        if path == "/api/v4/commands" and method == "POST":
+            self.created = json.loads(request.content)
+            return httpx.Response(201, json={"id": "cmd-new", "token": "command-token-new"})
+        if path.startswith("/api/v4/commands/") and method == "DELETE":
+            return httpx.Response(200, json={"status": "OK"})
+        return httpx.Response(200, json={})
+
+
+def _provision(api, **kw):
+    import httpx
+
+    module = _bot_module()
+    client = httpx.Client(transport=httpx.MockTransport(api), base_url="http://mm")
+    args = dict(admin="admin", password="pw", team="synctx", channels=["a", "b"], bot="synctx-bot",
+                command_url="http://gw/api/collab/mattermost/command")
+    args.update(kw)
+    return module, module.provision_bot(client, **args)
+
+
+@pytest.mark.parametrize("bot_exists", [False, True])
+def test_provision_bot_creates_or_reuses_and_returns_token(bot_exists):
+    api = _MattermostApi(bot_exists=bot_exists)
+    _, tokens = _provision(api)
+    assert tokens == ("bot-access-token", "command-token-new")
+    paths = [(m, p) for m, p, _ in api.calls]
+    assert (("POST", "/api/v4/bots") in paths) != bot_exists
+    assert ("POST", "/api/v4/teams/team1/members") in paths
+    assert ("POST", "/api/v4/channels/chan-a/members") in paths and ("POST", "/api/v4/channels/chan-b/members") in paths
+    assert ("POST", "/api/v4/users/bot1/tokens") in paths
+    assert all(auth == "Bearer session-1" for _, p, auth in api.calls if p != "/api/v4/users/login")
+
+
+def test_provision_creates_command_with_url_and_autocomplete():
+    api = _MattermostApi()
+    _provision(api)
+    created = api.created
+    assert created["trigger"] == "synctx" and created["method"] == "P" and created["team_id"] == "team1"
+    assert created["url"] == "http://gw/api/collab/mattermost/command" and created["auto_complete"] is True
+    assert "오늘" in created["auto_complete_hint"] and "검색" not in created["auto_complete_hint"]
+
+
+def test_provision_reuses_existing_command_with_same_url():
+    existing = [{"id": "c1", "trigger": "synctx", "method": "P", "token": "old-token",
+                 "url": "http://gw/api/collab/mattermost/command"}]
+    api = _MattermostApi(commands=existing)
+    _, tokens = _provision(api)
+    assert tokens[1] == "old-token"
+    assert not [c for c in api.calls if c[0] == "DELETE"] and not hasattr(api, "created")
+
+
+def test_provision_recreates_command_when_url_differs_and_ignores_other_triggers():
+    existing = [{"id": "other", "trigger": "else", "method": "P", "token": "t", "url": "http://x"},
+                {"id": "c1", "trigger": "synctx", "method": "P", "token": "old", "url": "http://elsewhere"}]
+    api = _MattermostApi(commands=existing)
+    _, tokens = _provision(api)
+    deletes = [p for m, p, _ in api.calls if m == "DELETE"]
+    assert deletes == ["/api/v4/commands/c1"] and tokens[1] == "command-token-new"
+
+
+def test_provision_bot_raises_without_leaking_secrets_on_failure():
+    api = _MattermostApi(fail="/api/v4/bots")
+    with pytest.raises(Exception) as exc:
+        _provision(api)
+    assert type(exc.value).__name__ == "ProvisionError" and "500" in str(exc.value) and "pw" not in str(exc.value) and "session-1" not in str(exc.value)
+
+
+def test_bot_cli_prints_only_the_two_tokens(tmp_path, capsys, monkeypatch):
+    import httpx
+
+    module = _bot_module()
+    password_file = tmp_path / "pw"
+    password_file.write_text("pw\n")
+    real_client = httpx.Client
+    monkeypatch.setattr(module.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(_MattermostApi()), **kw))
+    code = module.main(["--base", "http://mm", "--admin", "admin", "--password-file", str(password_file),
+                        "--team", "synctx", "--bot", "synctx-bot", "--command-url", "http://gw/c", "a"])
+    out = capsys.readouterr()
+    assert code == 0 and out.out == "bot-access-token\ncommand-token-new\n" and "pw" not in out.err
+
+
+def test_bot_cli_reports_failure_on_stderr_with_exit_1(tmp_path, capsys, monkeypatch):
+    import httpx
+
+    module = _bot_module()
+    password_file = tmp_path / "pw"
+    password_file.write_text("pw\n")
+    real_client = httpx.Client
+    api = _MattermostApi(fail="/api/v4/teams/name/synctx")
+    monkeypatch.setattr(module.httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(api), **kw))
+    code = module.main(["--base", "http://mm", "--admin", "admin", "--password-file", str(password_file),
+                        "--team", "synctx", "--bot", "synctx-bot", "--command-url", "http://gw/c", "a"])
+    out = capsys.readouterr()
+    assert code == 1 and out.out == "" and "봇 준비 실패" in out.err

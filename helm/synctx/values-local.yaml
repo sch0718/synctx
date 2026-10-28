@@ -84,6 +84,21 @@ feedback:
     opApiKey: "local-openproject-api-key"
     xwikiCredential: "admin:admin"
 
+# ── Collab Gateway (로컬: Mattermost는 deploy-deps.sh --mattermost, 값 파일은 setup-mattermost.sh가 만든다) ──
+# enabled는 values-local.collab.secret.yaml이 켠다. 그 파일이 없으면 Gateway는 배포되지 않는다.
+collabGateway:
+  enabled: false
+  image:
+    repository: synctx/collab-gateway
+    tag: "latest"
+    pullPolicy: Never
+  persistence:
+    storageClass: "standard"
+  networkPolicy:
+    mattermost:
+      namespace: synctx-deps
+      port: 8065
+
 # ── Ingress (minikube, TLS via cert-manager) ──
 ingress:
   enabled: true
@@ -222,6 +237,16 @@ synctxConfig:
         - project_state.yaml
         - glossary.md
         - decision-log.md
+
+    collab:
+      gateway:
+        enabled: true
+        viewer_url: "http://synctx-viewer"
+        poll_interval_seconds: 30
+        mattermost:
+          url: "http://mattermost.synctx-deps.svc.cluster.local:8065"
+        channels:
+          team-docs: {team: synctx, channel: team-docs}
 
     outbound_feedback:
       enabled: true

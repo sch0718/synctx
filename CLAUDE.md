@@ -42,11 +42,11 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 - **이미지 태그**: SemVer `"0.7.0-<git-sha>"` 형식, `latest` 태그 사용 금지
 - **Outbound Feedback**: Phase 7 선택 기능, 양방향 동기화가 아니라 서명된 메일 이벤트 반출 + 외부 PR 생성
 
-## 서비스 목록 (6+1+1)
+## 서비스 목록 (6+1+2)
 
-Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, Outbound Feedback Exporter(선택)
+Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, Outbound Feedback Exporter(선택), Collab Gateway(선택)
 
-보조 구성요소: Pushgateway(`metrics.enabled`이고 `sync.persistence`가 켜졌으며 Sync 또는 Feedback이 켜졌을 때만 배포, Sync·Feedback CronJob 메트릭 수집)
+보조 구성요소: Jitsi(Phase 8.2, 제3자 이미지·계획), Pushgateway(`metrics.enabled`이고 `sync.persistence`가 켜졌으며 Sync 또는 Feedback이 켜졌을 때만 배포, Sync·Feedback CronJob 메트릭 수집)
 
 ## 설정 파일
 
@@ -77,7 +77,7 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 ### 이미지 / 레지스트리
 - **내부 레지스트리**: `registry.local:5000` (폐쇄망 전용)
 - **이미지 전송**: `pull-and-save-images.sh`로 외부에서 pull → tar 저장 → 폐쇄망 반입 → registry push
-- **베이스 이미지**: `python:3.13.16-slim-trixie` (Debian 13 기반, Alpine 사용 금지). 패치 버전·배포판까지 고정하고, 올릴 때는 Dockerfile 5개와 `requires-python`을 함께 바꾼다
+- **베이스 이미지**: `python:3.13.16-slim-trixie` (Debian 13 기반, Alpine 사용 금지). 패치 버전·배포판까지 고정하고, 올릴 때는 Dockerfile 6개와 `requires-python`을 함께 바꾼다
 - **멀티 아키텍처**: Dockerfile은 플랫폼에 종속되지 않게 작성. 로컬(ARM64)과 운영(amd64)에서 동일 Dockerfile 사용. `--platform` 플래그는 빌드 스크립트에서 환경에 맞게 지정
 
 ### CI/CD

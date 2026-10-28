@@ -127,4 +127,63 @@ spec:
           annotations:
             summary: "synctx-html 합본 거부"
             description: "synctx-html 블록이 허용되지 않은 외부 주소 또는 크기 상한 때문에 합본되지 않았습니다. 대상 저장소는 repo_id 라벨을 확인하세요."
+
+{{- if include "synctx.collabEnabled" . }}
+        # 11. Collab Gateway 알림 발송 반복 실패
+        - alert: SynctxCollabNotificationFailures
+          expr: sum(increase(synctx_collab_notifications_total{result="failed"}[30m])) >= 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Collab 알림 발송 반복 실패"
+            description: "Mattermost로 알림을 보내지 못하는 경우가 30분 내 5회 이상입니다. Mattermost 주소와 봇 토큰, NetworkPolicy를 확인하세요."
+
+        # 12. Collab Gateway가 알림 발송을 포기함
+        - alert: SynctxCollabNotificationGaveUp
+          expr: sum(increase(synctx_collab_notifications_total{result="gave_up"}[1h])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "Collab 알림 발송 포기"
+            description: "연속 실패로 일부 알림을 포기했습니다. 봇 토큰 만료나 채널 매핑 오류를 확인하세요."
+
+        # 13. Collab Gateway가 Viewer에서 회의를 읽지 못함
+        - alert: SynctxCollabViewerFetchFailing
+          expr: increase(synctx_collab_viewer_fetch_failures_total[15m]) >= 10
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Collab Gateway의 Viewer 조회 실패"
+            description: "회의 목록 조회가 15분 내 10회 이상 실패했습니다. Viewer 상태와 서비스 토큰(VIEWER_SERVICE_TOKEN)이 같은지 확인하세요."
+
+        # 14. Collab Gateway 폴링이 멈춤
+        - alert: SynctxCollabStalled
+          expr: time() - synctx_collab_last_success_timestamp > 600
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Collab Gateway 10분 이상 회의 조회 성공 없음"
+            description: "Collab Gateway가 10분 넘게 Viewer에서 회의를 읽지 못했습니다."
+
+        # 15. 회의 채널 매핑 누락
+        - alert: SynctxCollabUnmappedChannel
+          expr: increase(synctx_collab_unmapped_channel_total[1h]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Collab 채널 매핑 누락"
+            description: "meeting.channel에 대한 collab.gateway.channels 매핑이 없어 알림을 건너뛴 회의가 있습니다."
+
+        # 16. /synctx 명령 토큰 인증 실패가 반복됨
+        - alert: SynctxCollabCommandUnauthorized
+          expr: increase(synctx_collab_commands_total{result="unauthorized"}[10m]) >= 5
+          labels:
+            severity: warning
+          annotations:
+            summary: "Collab /synctx 명령 인증 실패 반복"
+            description: "슬래시 명령 요청의 토큰 검증이 10분 안에 5회 이상 실패했습니다. Mattermost 명령 토큰과 Secret(command-token)이 같은지, 외부에서 Gateway를 두드리는지 확인하세요."
+{{- end }}
 {{- end }}

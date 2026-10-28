@@ -28,6 +28,13 @@ else
     print_info "git.secrets.readToken을 담아 생성: ${VALUES_LOCAL_SECRET_FILE}"
 fi
 
+# Collab Gateway 시험(setup-mattermost.sh가 만든 로컬 전용 값)
+COLLAB_VALUES_FILE="${PROJECT_ROOT}/helm/synctx/values-local.collab.secret.yaml"
+if [ -f "${COLLAB_VALUES_FILE}" ]; then
+    VALUES_ARGS+=(-f "${COLLAB_VALUES_FILE}")
+    print_success "values-local.collab.secret.yaml 적용 (Collab Gateway 배포)"
+fi
+
 # Helm install/upgrade
 helm upgrade --install synctx "${PROJECT_ROOT}/helm/synctx" \
     -n "${NAMESPACE}" \

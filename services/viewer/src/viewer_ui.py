@@ -8,6 +8,8 @@ from collections.abc import Sequence
 from urllib.parse import quote
 
 from meeting import encode_for_script
+from meeting_card import KST, time_range_label
+from meeting_index import STATUSES, action_items, status_of
 from renderer import THEME_VARS_CSS
 
 THEME_LABELS = {
@@ -130,7 +132,7 @@ def _select(label: str, action: str, options: str) -> str:
 
 
 def render_header(*, view_prefix, repos, theme, active_repo=None, branches=None, active_ref=None,
-                  default_ref=None, repo_status=None) -> str:
+                  default_ref=None, repo_status=None, meetings_link=False) -> str:
     menu = (f'<button type="button" class="icon-btn shell-menu" data-action="toggle-nav" '
             f'aria-controls="shell-nav" aria-expanded="false" aria-label="메뉴 열기">{_MENU}</button>')
     branch = ""
@@ -140,6 +142,7 @@ def render_header(*, view_prefix, repos, theme, active_repo=None, branches=None,
     if repo_status in STATUS_LABELS:
         status = (f'<span class="shell-status shell-status-{esc(repo_status)}" role="status">'
                   f'{STATUS_LABELS[repo_status]}</span>')
+    meetings = (f'<a class="shell-link" href="{esc(view_prefix)}/meetings">회의</a>' if meetings_link else "")
     return f"""<a class="skip-link" href="#main">본문으로 건너뛰기</a>
 <header class="shell-header">
   {menu}
@@ -149,6 +152,7 @@ def render_header(*, view_prefix, repos, theme, active_repo=None, branches=None,
     <label class="finder-box">{_SEARCH}<input type="search" id="finder-input" role="combobox" aria-expanded="false" aria-controls="finder-results" aria-autocomplete="list" autocomplete="off" placeholder="문서 검색" aria-label="문서 검색"><kbd aria-hidden="true">⌘K</kbd></label>
     <ul id="finder-results" class="finder-results" role="listbox" aria-label="검색 결과" hidden></ul>
   </div>
+  {meetings}
   <span class="shell-spacer"></span>
   {status}
   <div class="shell-controls">{_select("테마", "theme", theme_options(theme))}</div>
@@ -329,7 +333,7 @@ def render_search_page(*, view_prefix: str, query: str, raw_query: str, repos: S
     return "".join(parts)
 
 
-def render_meeting_card(data: dict) -> str:
+def render_meeting_card(data: dict, dashboard_href: str | None = None) -> str:
     rows = [("일시", data["time_label"])]
     if data["presenters"]:
         rows.append(("발표자", ", ".join(data["presenters"])))
@@ -341,12 +345,171 @@ def render_meeting_card(data: dict) -> str:
     if data["agenda"]:
         items = "".join(f'<li><a href="#{esc(anchor)}">{esc(name)}</a></li>' for anchor, name in data["agenda"])
         agenda = f'<nav class="agenda" aria-label="안건"><ol>{items}</ol></nav>'
+    dashboard = (f'<p class="meeting-info-dashboard"><a href="{esc(dashboard_href)}">회의 대시보드로</a></p>'
+                 if dashboard_href else "")
     return (f'<section class="meeting-info" aria-label="회의 정보" data-starts-at="{esc(data["starts_at_iso"])}" '
             f'data-duration="{esc(data["duration_minutes"])}" data-cancelled="{"true" if data["cancelled"] else "false"}">'
             f'<h2 class="meeting-info-title">{esc(data["title"])}</h2>'
             f'<dl class="meeting-info-facts">{facts}</dl>'
             f'<p class="meeting-info-status" role="status" aria-live="polite">{status}</p>'
-            f'{agenda}</section>')
+            f'{agenda}{dashboard}</section>')
+
+
+MEETING_STATUS_LABELS = {"upcoming": "예정", "ongoing": "진행 중", "ended": "종료", "cancelled": "취소"}
+MEETINGS_TABS = ("all", *STATUSES, "decisions", "actions")
+MEETINGS_TAB_LABELS = {"all": "전체", **MEETING_STATUS_LABELS, "decisions": "결정사항", "actions": "액션 아이템"}
+MEETINGS_REPO_NOTES = {
+    "unavailable": "저장소를 아직 받지 못해 회의를 읽지 못했습니다.",
+    "unsupported": "부분 복제 저장소는 회의 목록을 지원하지 않습니다.",
+    "timeout": "회의를 찾는 데 시간이 오래 걸려 일부만 읽었을 수 있습니다.",
+    "failed": "회의를 읽지 못했습니다. 잠시 후 다시 시도하세요.",
+}
+MEETINGS_TRUNCATED_NOTE = "회의가 많아 일부만 표시합니다."
+
+
+def _meetings_href(view_prefix: str, query: dict, **overrides) -> str:
+    merged = {**query, **overrides}
+    pairs = "&".join(f"{quote(key)}={quote(str(value), safe='')}" for key, value in merged.items() if value)
+    return f"{view_prefix}/meetings" + (f"?{pairs}" if pairs else "")
+
+
+def _meetings_filter_form(view_prefix, tab, query, choices) -> str:
+    def select(name, label, options):
+        items = [f'<option value="">전체</option>'] + [
+            f'<option value="{esc(value)}"{" selected" if value == query.get(name) else ""}>{esc(text)}</option>'
+            for value, text in options]
+        return (f'<label class="shell-field"><span class="shell-field-label">{label}</span>'
+                f'<select name="{name}">{"".join(items)}</select></label>')
+
+    def date_input(name, label):
+        return (f'<label class="shell-field"><span class="shell-field-label">{label}</span>'
+                f'<input type="date" name="{name}" value="{esc(query.get(name, ""))}"></label>')
+
+    order_selected = " selected" if query.get("order") == "desc" else ""
+    hidden = f'<input type="hidden" name="tab" value="{esc(tab)}">' if tab != "all" else ""
+    return (f'<form class="meetings-filter" method="get" action="{esc(view_prefix)}/meetings" aria-label="회의 필터">'
+            f'<label class="search-input"><input type="search" name="q" value="{esc(query.get("q", ""))}" '
+            f'autocomplete="off" aria-label="회의 제목 검색" placeholder="회의 제목"></label>'
+            f'{select("repo", "저장소", choices["repos"])}{select("channel", "채널", [(c, c) for c in choices["channels"]])}'
+            f'{select("presenter", "발표자", [(p, p) for p in choices["presenters"]])}'
+            f'{select("owner", "담당자", [(o, o) for o in choices["owners"]]) if tab == "actions" else ""}'
+            f'{date_input("from", "시작일")}{date_input("to", "종료일")}'
+            f'<label class="shell-field"><span class="shell-field-label">정렬</span><select name="order">'
+            f'<option value="">오래된 순</option><option value="desc"{order_selected}>최신 순</option></select></label>'
+            f'{hidden}<button type="submit" class="btn btn-primary">적용</button>'
+            f'<a class="btn" href="{esc(view_prefix)}/meetings{"?tab=" + esc(tab) if tab != "all" else ""}">초기화</a></form>')
+
+
+def _meeting_links(view_prefix, m) -> str:
+    doc = _doc_href(view_prefix, m.repo_id, m.path, None)
+    return (f'<a href="{esc(doc)}">문서</a> <a href="{esc(doc + "?mode=present")}">발표</a>')
+
+
+def _memo_list(items) -> str:
+    rows = []
+    for item in items:
+        extra = " ".join(part for part in (f"담당 {item.owner}" if item.owner else "",
+                                           f"기한 {item.due}" if item.due else "") if part)
+        suffix = f' <span class="meetings-meta">({esc(extra)})</span>' if extra else ""
+        rows.append(f'<li>{esc(item.text)}{suffix}</li>')
+    return f'<ul>{"".join(rows)}</ul>' if rows else ""
+
+
+def _meeting_row(view_prefix, m, now) -> str:
+    status = status_of(m, now)
+    memo = ""
+    if m.decisions or m.actions or m.memo_error:
+        parts = []
+        if m.decisions:
+            parts.append(f'<h3>결정사항</h3>{_memo_list(m.decisions)}')
+        if m.actions:
+            parts.append(f'<h3>액션 아이템</h3>{_memo_list(m.actions)}')
+        if m.memo_error:
+            parts.append(f'<p class="meetings-note">{esc(m.memo_error)}</p>')
+        memo = (f'<details class="meetings-memo"><summary>결정 {len(m.decisions)}건 · 액션 {len(m.actions)}건</summary>'
+                f'{"".join(parts)}</details>')
+    return (f'<tr><td data-label="일시">{esc(time_range_label(m.starts_at, m.duration_minutes))}</td>'
+            f'<td data-label="제목"><a href="{esc(_doc_href(view_prefix, m.repo_id, m.path, None))}">{esc(m.title)}</a>{memo}</td>'
+            f'<td data-label="상태"><span class="meetings-status meetings-status-{status}">{MEETING_STATUS_LABELS[status]}</span></td>'
+            f'<td data-label="저장소">{esc(m.repo_name)}</td><td data-label="채널">{esc(m.channel)}</td>'
+            f'<td data-label="발표자">{esc(", ".join(m.presenters))}</td>'
+            f'<td data-label="바로가기">{_meeting_links(view_prefix, m)}</td></tr>')
+
+
+def _meetings_table(view_prefix, meetings, now) -> str:
+    if not meetings:
+        return '<p class="meetings-empty" role="status">조건에 맞는 회의가 없습니다.</p>'
+    head = "".join(f'<th scope="col">{label}</th>' for label in
+                   ("일시", "제목", "상태", "저장소", "채널", "발표자", "바로가기"))
+    rows = "".join(_meeting_row(view_prefix, m, now) for m in meetings)
+    return f'<table class="meetings-table"><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table>'
+
+
+def _decisions_view(view_prefix, meetings) -> str:
+    groups = []
+    for m in meetings:
+        if m.decisions:
+            link = f'<a href="{esc(_doc_href(view_prefix, m.repo_id, m.path, None))}">{esc(m.title)}</a>'
+            groups.append(f'<section class="meetings-group"><h2>{link}</h2>'
+                          f'<p class="meetings-meta">{esc(time_range_label(m.starts_at, m.duration_minutes))} · {esc(m.repo_name)}</p>'
+                          f'{_memo_list(m.decisions)}</section>')
+    return "".join(groups) or '<p class="meetings-empty" role="status">기록된 결정사항이 없습니다.</p>'
+
+
+def _actions_view(view_prefix, rows, now) -> str:
+    if not rows:
+        return '<p class="meetings-empty" role="status">기록된 액션 아이템이 없습니다.</p>'
+    today = now.astimezone(KST).date().isoformat()
+    body = []
+    for row in rows:
+        m, item = row.meeting, row.item
+        overdue = (' <span class="meetings-overdue">기한 지남</span>'
+                   if item.due and item.due < today and not m.cancelled else "")
+        link = f'<a href="{esc(_doc_href(view_prefix, m.repo_id, m.path, None))}">{esc(m.title)}</a>'
+        body.append(f'<tr><td data-label="할 일">{esc(item.text)}</td><td data-label="담당자">{esc(item.owner)}</td>'
+                    f'<td data-label="기한">{esc(item.due)}{overdue}</td><td data-label="회의">{link}</td></tr>')
+    head = "".join(f'<th scope="col">{label}</th>' for label in ("할 일", "담당자", "기한", "회의"))
+    return f'<table class="meetings-table"><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table>'
+
+
+def render_meetings_page(*, view_prefix, tab, query, choices, meetings, invalid, repo_notes, truncated, now,
+                         has_repos) -> str:
+    """meetings는 상태 탭을 뺀 나머지 필터를 적용한 전체 목록이다. 탭 선택은 여기서 한다."""
+    if tab not in MEETINGS_TABS:
+        tab = "all"
+    rows = action_items(meetings, query.get("owner") or None)
+    counts = {"all": len(meetings), "decisions": sum(len(m.decisions) for m in meetings), "actions": len(rows)}
+    for key in STATUSES:
+        counts[key] = sum(1 for m in meetings if status_of(m, now) == key)
+    current = ' aria-current="page"'
+    tab_links = "".join(
+        f'<li><a href="{esc(_meetings_href(view_prefix, query, tab=None if key == "all" else key))}"'
+        f'{current if key == tab else ""}>{MEETINGS_TAB_LABELS[key]} '
+        f'<span class="meetings-count">{counts[key]}</span></a></li>' for key in MEETINGS_TABS)
+    parts = ['<main id="main" class="meetings-page" tabindex="-1">', "<h1>회의</h1>"]
+    if not has_repos:
+        parts.append('<div class="empty-state"><p>회의 연동(collab.enabled)이 켜진 저장소가 없습니다.</p></div></main>')
+        return "".join(parts)
+    parts.append(f'<nav class="meetings-tabs" aria-label="회의 보기"><ul>{tab_links}</ul></nav>')
+    parts.append(_meetings_filter_form(view_prefix, tab, query, choices))
+    for repo_name, status in repo_notes:
+        parts.append(f'<p class="search-note" role="status">{esc(repo_name)}: {MEETINGS_REPO_NOTES[status]}</p>')
+    if truncated:
+        parts.append(f'<p class="search-note" role="status">{MEETINGS_TRUNCATED_NOTE}</p>')
+    if tab == "decisions":
+        parts.append(_decisions_view(view_prefix, meetings))
+    elif tab == "actions":
+        parts.append(_actions_view(view_prefix, rows, now))
+    else:
+        shown = meetings if tab == "all" else [m for m in meetings if status_of(m, now) == tab]
+        parts.append(_meetings_table(view_prefix, shown, now))
+    if invalid:
+        items = "".join(f'<li><a href="{esc(_doc_href(view_prefix, i.repo_id, i.path, None))}">{esc(i.path)}</a> '
+                        f'<span class="meetings-meta">{esc(i.repo_name)} — {esc(i.reason)}</span></li>' for i in invalid)
+        parts.append(f'<section class="meetings-invalid" aria-labelledby="meetings-invalid-title">'
+                     f'<h2 id="meetings-invalid-title">확인 필요</h2><ul>{items}</ul></section>')
+    parts.append("</main>")
+    return "".join(parts)
 
 
 MEETING_GUIDE_ITEMS = (

@@ -134,6 +134,39 @@ feedback_last_success_timestamp = Gauge(
     registry=registry,
 )
 
+# ── Collab Gateway metrics ──
+collab_notifications_total = Counter(
+    "synctx_collab_notifications_total",
+    "Total collab notifications by kind and result",
+    ["kind", "result"],
+    registry=registry,
+)
+
+collab_unmapped_channel_total = Counter(
+    "synctx_collab_unmapped_channel_total",
+    "Meetings skipped because their channel has no mapping",
+    registry=registry,
+)
+
+collab_viewer_fetch_failures_total = Counter(
+    "synctx_collab_viewer_fetch_failures_total",
+    "Total failures reading meetings from the Viewer",
+    registry=registry,
+)
+
+collab_commands_total = Counter(
+    "synctx_collab_commands_total",
+    "Slash commands handled by the Collab Gateway",
+    ["command", "result"],
+    registry=registry,
+)
+
+collab_last_success_timestamp = Gauge(
+    "synctx_collab_last_success_timestamp",
+    "Timestamp of the last poll cycle that read meetings from the Viewer",
+    registry=registry,
+)
+
 
 def _normalize_path(path: str, route=None) -> str:
     """Collapse path parameters to reduce cardinality."""

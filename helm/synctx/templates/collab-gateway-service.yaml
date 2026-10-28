@@ -1,0 +1,19 @@
+{{- if include "synctx.collabEnabled" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "synctx.fullname" . }}-collab-gateway
+  labels:
+    app.kubernetes.io/name: collab-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    synctx/metrics: "true"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: collab-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}

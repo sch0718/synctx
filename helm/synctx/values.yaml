@@ -112,6 +112,39 @@ feedback:
     # create: true일 때 Secret에 넣을 값(user:password). 값을 주면 xwikiHtmlCredentialEnabled 없이도 연결한다.
     xwikiHtmlCredential: ""
 
+collabGateway:
+  enabled: false
+  image:
+    repository: synctx/collab-gateway
+    tag: "0.7.0"
+    pullPolicy: IfNotPresent
+  # 알림 중복 방지 상태 파일(PVC). 꺼 두면 렌더가 실패한다. 복제본은 1개로 고정한다(replicaCount를 두지 않는다).
+  persistence:
+    enabled: true
+    size: 256Mi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+  # .synctx.yaml의 collab.gateway 환경변수 이름은 기본값(MATTERMOST_BOT_TOKEN·VIEWER_SERVICE_TOKEN·MATTERMOST_COMMAND_TOKEN)을 쓴다.
+  secrets:
+    create: false
+    existingSecret: ""   # 키: bot-token, viewer-service-token, command-token(선택)
+    botToken: ""
+    viewerServiceToken: ""
+    commandToken: ""
+  networkPolicy:
+    enabled: true
+    # Mattermost가 있는 네임스페이스와 포트. namespace가 비면 그 포트로 어디든 나갈 수 있다.
+    mattermost:
+      namespace: ""
+      port: 443
+
 ingress:
   enabled: true
   className: "nginx"

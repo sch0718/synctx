@@ -1,0 +1,17 @@
+{{- if include "synctx.collabEnabled" . }}
+{{- $cg := .Values.collabGateway }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "synctx.fullname" . }}-collab-gateway-state
+  labels:
+    app.kubernetes.io/name: collab-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  accessModes:
+    - {{ $cg.persistence.accessMode | default "ReadWriteOnce" }}
+  storageClassName: {{ $cg.persistence.storageClass | default "" | quote }}
+  resources:
+    requests:
+      storage: {{ $cg.persistence.size | default "256Mi" }}
+{{- end }}

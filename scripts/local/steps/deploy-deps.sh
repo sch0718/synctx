@@ -1,5 +1,5 @@
 #!/bin/bash
-# deploy-deps.sh - 외부 의존성 배포 (XWiki, OpenProject, Mailpit)
+# deploy-deps.sh - 외부 의존성 배포 (XWiki, OpenProject, Mailpit, 선택: Mattermost)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,6 +9,7 @@ SKIP_XWIKI=false
 SKIP_OP=false
 SKIP_MAILPIT=false
 SKIP_IMAGES=false
+WITH_MATTERMOST=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -19,13 +20,17 @@ while [[ $# -gt 0 ]]; do
             print_warning "--skip-mailhog는 --skip-mailpit으로 바뀌었습니다"
             SKIP_MAILPIT=true; shift ;;
         --skip-images)   SKIP_IMAGES=true; shift ;;
+        --mattermost)    WITH_MATTERMOST=true; shift ;;
         -h|--help)
-            echo "Usage: $0 [--skip-xwiki] [--skip-op] [--skip-mailpit] [--skip-images]"
+            echo "Usage: $0 [--skip-xwiki] [--skip-op] [--skip-mailpit] [--skip-images] [--mattermost]"
+            echo "  --mattermost  Collab Gateway 시험용 Mattermost 배포(amd64 에뮬레이션, 메모리 약 1.5GiB. XWiki를 끄고 쓰기를 권장)"
             exit 0
             ;;
         *) print_error "알 수 없는 옵션: $1"; exit 1 ;;
     esac
 done
+
+MATTERMOST_IMAGE="${MATTERMOST_IMAGE:-mattermost/mattermost-team-edition:10.11.19}"
 
 ensure_namespace "${DEPS_NAMESPACE}"
 
@@ -401,6 +406,170 @@ MAIL_EOF
     print_info "웹 UI: https://mail.synctx.local"
     print_info "SMTP: mailpit.${DEPS_NAMESPACE}.svc.cluster.local:1025"
     setup_hosts "mail.synctx.local"
+fi
+
+# ============================================================
+# Mattermost (Collab Gateway 시험용, 선택)
+# 공식 이미지는 amd64 전용이라 ARM64 기기에서는 에뮬레이션으로 돌린다. 메모리를 많이 쓰므로 --mattermost를 줄 때만 배포한다.
+# ============================================================
+if [ "$WITH_MATTERMOST" = true ]; then
+    print_header "Mattermost 배포 (amd64 에뮬레이션 가능)"
+
+    if [ "$SKIP_IMAGES" = false ]; then
+        load_image "postgres:16-alpine"
+        LOAD_IMAGE_PLATFORM="linux/amd64" load_image "${MATTERMOST_IMAGE}"
+    fi
+
+    kubectl apply -n "${DEPS_NAMESPACE}" -f - <<MM_EOF
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mattermost-db-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mattermost-db
+  labels:
+    app: mattermost-db
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mattermost-db
+  template:
+    metadata:
+      labels:
+        app: mattermost-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: mmuser
+            - name: POSTGRES_PASSWORD
+              value: local-mattermost-db
+            - name: POSTGRES_DB
+              value: mattermost
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: mattermost-db-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mattermost-db
+spec:
+  selector:
+    app: mattermost-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mattermost
+  labels:
+    app: mattermost
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mattermost
+  template:
+    metadata:
+      labels:
+        app: mattermost
+    spec:
+      containers:
+        - name: mattermost
+          image: ${MATTERMOST_IMAGE}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8065
+          env:
+            - name: MM_SQLSETTINGS_DRIVERNAME
+              value: postgres
+            - name: MM_SQLSETTINGS_DATASOURCE
+              value: "postgres://mmuser:local-mattermost-db@mattermost-db:5432/mattermost?sslmode=disable&connect_timeout=10"
+            - name: MM_SERVICESETTINGS_SITEURL
+              value: "http://mattermost.${DEPS_NAMESPACE}.svc.cluster.local:8065"
+            - name: MM_SERVICESETTINGS_ENABLELOCALMODE
+              value: "true"
+            - name: MM_SERVICESETTINGS_ENABLEBOTACCOUNTCREATION
+              value: "true"
+            - name: MM_SERVICESETTINGS_ENABLEUSERACCESSTOKENS
+              value: "true"
+            - name: MM_SERVICESETTINGS_ENABLECOMMANDS
+              value: "true"
+            # 슬래시 명령 호출 주소: 클러스터 안 Gateway(synctx-collab-gateway)와 호스트에서 직접 돌리는 개발용 Gateway
+            - name: MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS
+              value: "synctx-collab-gateway,host.minikube.internal"
+            - name: MM_TEAMSETTINGS_ENABLEOPENSERVER
+              value: "true"
+            - name: MM_PLUGINSETTINGS_ENABLE
+              value: "false"
+            - name: MM_LOGSETTINGS_ENABLEFILE
+              value: "false"
+          readinessProbe:
+            httpGet:
+              path: /api/v4/system/ping
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mattermost
+spec:
+  selector:
+    app: mattermost
+  ports:
+    - name: http
+      port: 8065
+      targetPort: 8065
+MM_EOF
+
+    print_success "Mattermost 배포 요청 완료 (기동에 수 분 걸립니다)"
+    print_info "준비되면: ${SCRIPT_DIR}/setup-mattermost.sh 로 팀·채널·봇을 만듭니다"
+    print_info "접속: kubectl port-forward -n ${DEPS_NAMESPACE} svc/mattermost 8065:8065"
 fi
 
 # 상태 확인

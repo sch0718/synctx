@@ -1,0 +1,15 @@
+# Alert 규칙 테스트용: Collab Gateway 규칙까지 렌더하려고 Gateway를 켠다.
+collabGateway:
+  enabled: true
+  secrets:
+    create: true
+    botToken: test
+    viewerServiceToken: test
+synctxConfig:
+  create: true
+  data: |
+    collab:
+      gateway:
+        enabled: true
+        mattermost: {url: "https://chat.test"}
+        channels: {dx: {team: t, channel: c}}

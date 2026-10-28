@@ -2,11 +2,13 @@ import os
 import asyncio
 import difflib
 import functools
+import hmac
 import json
 import html as html_lib
 import logging
 import subprocess
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from urllib.parse import quote, urlsplit
 
@@ -27,6 +29,7 @@ import embed_view
 import evidence
 import meeting as meeting_mode
 import meeting_card
+import meeting_index
 import search as search_mod
 import viewer_ui as ui
 
@@ -205,6 +208,16 @@ def verify_viewer_access(x_forwarded_groups: str = Header(default="")):
     allowed_roles = config.authz.role_mappings.viewer + config.authz.role_mappings.platform_admin
     if not any(role in groups for role in allowed_roles):
         raise HTTPException(status_code=403, detail="Forbidden: viewer role required")
+
+
+def verify_viewer_or_service_access(authorization: str = Header(default=""),
+                                    x_forwarded_groups: str = Header(default="")):
+    """다른 서비스(Collab Gateway)가 쓰는 Bearer 서비스 토큰을 먼저 보고, 아니면 일반 Viewer 권한을 본다."""
+    expected = os.getenv(config.collab.gateway.viewer_service_token_env, "")
+    scheme, _, presented = authorization.partition(" ")
+    if expected and scheme == "Bearer" and presented and hmac.compare_digest(presented.encode(), expected.encode()):
+        return
+    verify_viewer_access(x_forwarded_groups)
 
 
 def _view_url(path=""):
@@ -520,6 +533,7 @@ def _shell_header(repo_id: str | None, ref: str | None, theme: str) -> str:
     return ui.render_header(
         view_prefix=VIEW_PREFIX, repos=config.repositories, theme=theme, active_repo=repo_id,
         branches=branches, active_ref=ref, default_ref=default_ref, repo_status=status,
+        meetings_link=bool(_collab_repos()),
     )
 
 
@@ -667,7 +681,7 @@ async def search_documents(q: str | None = None, repo: str | None = None, ref: s
 
 # ── View Routes ──
 
-RESERVED_PATHS = {"api", "raw", "render", "static", "search", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
+RESERVED_PATHS = {"api", "raw", "render", "static", "search", "meetings", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
 
 
 def _repo_known(repo_id: str) -> bool:
@@ -758,6 +772,97 @@ async def view_search(q: str | None = None, repo: str | None = None, ref: str | 
         active_repo=repo, ref=ref, results=results)
     html = ui.page(view_prefix=VIEW_PREFIX, title=title, theme=theme, header=_shell_header(repo, ref, theme),
                    body=body, repo_id=repo or "", ref=ref or "", page_class="page-search")
+    return HTMLResponse(content=html)
+
+
+def _collab_repos():
+    return [repo for repo in config.repositories if repo.collab.enabled]
+
+
+def _collect_meetings(repo_id: str | None) -> list[meeting_index.RepoMeetings]:
+    repos = [repo for repo in _collab_repos() if not repo_id or repo.id == repo_id]
+    return [meeting_index.collect(repo.id, repo.name, get_repo_manager(repo.id)) for repo in repos]
+
+
+def _meeting_filters(repo, channel, presenter, q, start, end, descending, now, collected):
+    entries = [m for result in collected for m in result.meetings]
+    return entries, dict(now=now, repo=repo or None, channel=channel or None, presenter=presenter or None, q=q or None,
+                         start=meeting_index.parse_date(start), end=meeting_index.parse_date(end), descending=descending)
+
+
+def _meeting_json(m: meeting_index.MeetingEntry, now) -> dict:
+    doc_url = f"{VIEW_PREFIX}/{quote(m.repo_id, safe='')}/{quote(m.path)}"
+
+    def memo(items):
+        return [{"text": i.text, "owner": i.owner, "due": i.due, "quote": i.quote} for i in items]
+
+    return {
+        "repo_id": m.repo_id, "repo_name": m.repo_name, "path": m.path, "id": m.id, "title": m.title,
+        "starts_at": meeting_card.to_kst(m.starts_at).isoformat(),
+        "ends_at": meeting_card.to_kst(m.starts_at + timedelta(minutes=m.duration_minutes)).isoformat(),
+        "duration_minutes": m.duration_minutes, "channel": m.channel, "presenters": m.presenters,
+        "cancelled": m.cancelled, "status": meeting_index.status_of(m, now),
+        "url": doc_url, "present_url": f"{doc_url}?mode=present",
+        "decisions": memo(m.decisions), "actions": memo(m.actions), "memo_error": m.memo_error,
+    }
+
+
+def _require_collab_repo(repo_id: str | None) -> None:
+    if repo_id and not any(repo.id == repo_id for repo in _collab_repos()):
+        raise HTTPException(status_code=404, detail=f"Meeting repository not found: {repo_id}")
+
+
+@app.get("/api/meetings", dependencies=[Depends(verify_viewer_or_service_access)])
+def list_meetings(repo: str | None = None, status: str | None = None, channel: str | None = None,
+                  presenter: str | None = None, q: str | None = None, start: str | None = Query(None, alias="from"),
+                  end: str | None = Query(None, alias="to"), order: str | None = None):
+    _require_collab_repo(repo)
+    if status and status not in meeting_index.STATUSES:
+        raise HTTPException(status_code=400, detail="status must be one of: " + ", ".join(meeting_index.STATUSES))
+    now = datetime.now(timezone.utc)
+    collected = _collect_meetings(repo or None)
+    entries, filters = _meeting_filters(repo, channel, presenter, q, start, end, order == "desc", now, collected)
+    meetings = meeting_index.filter_meetings(entries, status=status, **filters)
+    return {
+        "now": meeting_card.to_kst(now).isoformat(),
+        "repos": [{"id": r.repo_id, "name": r.repo_name, "status": r.status, "truncated": r.truncated} for r in collected],
+        "meetings": [_meeting_json(m, now) for m in meetings],
+        "invalid": [{"repo_id": i.repo_id, "repo_name": i.repo_name, "path": i.path, "reason": i.reason}
+                    for r in collected for i in r.invalid],
+    }
+
+
+@app.get("/meetings", dependencies=[Depends(verify_viewer_access)])
+def view_meetings(tab: str | None = None, repo: str | None = None, channel: str | None = None,
+                  presenter: str | None = None, owner: str | None = None, q: str | None = None,
+                  start: str | None = Query(None, alias="from"), end: str | None = Query(None, alias="to"),
+                  order: str | None = None):
+    repo = repo or None
+    if repo and not any(r.id == repo for r in _collab_repos()):
+        return _html_error(404, "repo_missing", repo_id=repo)
+    theme = "github-light"
+    now = datetime.now(timezone.utc)
+    collab = _collab_repos()
+    collected = _collect_meetings(None)
+    everything = [m for result in collected for m in result.meetings]
+    entries, filters = _meeting_filters(repo, channel, presenter, q, start, end, order == "desc", now, collected)
+    meetings = meeting_index.filter_meetings(entries, **filters)
+    choices = {
+        "repos": [(r.id, r.name) for r in collab],
+        "channels": sorted({m.channel for m in everything}),
+        "presenters": sorted({p for m in everything for p in m.presenters}),
+        "owners": sorted({a.owner for m in everything for a in m.actions if a.owner}),
+    }
+    query = {"repo": repo, "channel": channel, "presenter": presenter, "owner": owner, "q": q,
+             "from": start if filters["start"] else None, "to": end if filters["end"] else None, "order": order}
+    visible = [r for r in collected if not repo or r.repo_id == repo]
+    body = ui.render_mobile_nav(controls=_nav_controls(None, None, theme)) + ui.render_meetings_page(
+        view_prefix=VIEW_PREFIX, tab=tab or "all", query={k: v for k, v in query.items() if v}, choices=choices,
+        meetings=meetings, invalid=[i for r in visible for i in r.invalid],
+        repo_notes=[(r.repo_name, r.status) for r in visible if r.status != "ok"],
+        truncated=any(r.truncated for r in visible), now=now, has_repos=bool(collab))
+    html = ui.page(view_prefix=VIEW_PREFIX, title="회의", theme=theme, header=_shell_header(None, None, theme),
+                   body=body, page_class="page-meetings")
     return HTMLResponse(content=html)
 
 
@@ -1104,7 +1209,9 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
                       f'{sep}{_build_path_trail(repo_id, path, ref, sep)}')
         meeting_card_html = ""
         if meeting_ctx.meeting is not None:
-            meeting_card_html = ui.render_meeting_card(meeting_card.card_data(meeting_ctx.meeting, rendered.get("toc") or []))
+            meeting_card_html = ui.render_meeting_card(
+                meeting_card.card_data(meeting_ctx.meeting, rendered.get("toc") or []),
+                dashboard_href=f"{VIEW_PREFIX}/meetings" if meeting_ctx.enabled else None)
         body = f'''<div class="layout layout-doc">
   <nav id="shell-nav" class="shell-nav" aria-label="파일과 목차">
     {ui.NAV_CLOSE}

@@ -251,6 +251,106 @@ class OutboundFeedbackConfig(BaseModel):
     outbound_mail: OutboundMailConfig = Field(default_factory=OutboundMailConfig)
 
 
+_CHANNEL_KEY_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_HTTP_BASE_RE = re.compile(r"https?://[A-Za-z0-9.-]+(?::\d{1,5})?/?")
+
+
+def _normalize_http_base(value: str, label: str) -> str:
+    if not isinstance(value, str) or _HTTP_BASE_RE.fullmatch(value.strip()) is None:
+        raise ValueError(f"{label}은 http(s)://호스트[:포트] 형식이어야 합니다(경로·계정·쿼리 불가): {value!r}")
+    return value.strip().rstrip("/")
+
+
+def _check_env_name(value: str, label: str) -> str:
+    if not isinstance(value, str) or _ENV_NAME_RE.fullmatch(value) is None:
+        raise ValueError(f"{label}은 대문자·숫자·밑줄로 된 환경변수 이름이어야 합니다: {value!r}")
+    return value
+
+
+class MattermostChannelMapping(BaseModel):
+    team: str
+    channel: str
+
+    @field_validator("team", "channel")
+    @classmethod
+    def _nonempty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("team과 channel은 비어 있을 수 없습니다")
+        return value.strip()
+
+
+class MattermostConfig(BaseModel):
+    url: str = ""
+    bot_token_env: str = "MATTERMOST_BOT_TOKEN"
+    command_token_env: str = "MATTERMOST_COMMAND_TOKEN"
+
+    @field_validator("bot_token_env", "command_token_env")
+    @classmethod
+    def _env_names(cls, value: str) -> str:
+        return _check_env_name(value, "토큰 환경변수 이름")
+
+
+class CollabGatewayConfig(BaseModel):
+    enabled: bool = False
+    adapter: Literal["mattermost"] = "mattermost"
+    viewer_url: str = "http://synctx-viewer"
+    viewer_service_token_env: str = "VIEWER_SERVICE_TOKEN"
+    mattermost: MattermostConfig = Field(default_factory=MattermostConfig)
+    channels: Dict[str, MattermostChannelMapping] = Field(default_factory=dict)
+    reminders: List[int] = Field(default_factory=lambda: [1440, 10])
+    post_summary: bool = False
+    poll_interval_seconds: int = Field(default=60, ge=10)
+    state_path: str = "/data/collab-gateway"
+    commands_enabled: bool = True
+    command_rate_limit_per_minute: int = Field(default=10, ge=1, le=600)
+
+    @field_validator("viewer_url")
+    @classmethod
+    def _viewer_url(cls, value: str) -> str:
+        return _normalize_http_base(value, "viewer_url")
+
+    @field_validator("viewer_service_token_env")
+    @classmethod
+    def _service_token_env(cls, value: str) -> str:
+        return _check_env_name(value, "viewer_service_token_env")
+
+    @field_validator("channels")
+    @classmethod
+    def _channel_keys(cls, value: Dict[str, MattermostChannelMapping]) -> Dict[str, MattermostChannelMapping]:
+        for key in value:
+            if _CHANNEL_KEY_RE.fullmatch(key) is None:
+                raise ValueError(f"channels의 키는 meeting.channel 형식(소문자·숫자·-·_, 64자 이하)이어야 합니다: {key!r}")
+        return value
+
+    @field_validator("reminders", mode="before")
+    @classmethod
+    def _reminders(cls, value: Any) -> List[int]:
+        if not isinstance(value, list):
+            raise ValueError("reminders는 정수 목록이어야 합니다")
+        for item in value:
+            if isinstance(item, bool) or not isinstance(item, int) or not 1 <= item <= 10080:
+                raise ValueError("reminders는 1~10080분 사이의 정수 목록이어야 합니다")
+        if len(set(value)) != len(value):
+            raise ValueError("reminders에 같은 값이 있습니다")
+        return sorted(value, reverse=True)
+
+    @model_validator(mode="after")
+    def _check_enabled(self) -> "CollabGatewayConfig":
+        if self.mattermost.url:
+            self.mattermost.url = _normalize_http_base(self.mattermost.url, "mattermost.url")
+        if self.enabled:
+            if not self.mattermost.url:
+                raise ValueError("collab.gateway.enabled이면 mattermost.url이 필요합니다")
+            if not self.channels:
+                raise ValueError("collab.gateway.enabled이면 channels에 하나 이상의 매핑이 필요합니다")
+        return self
+
+
+class CollabConfig(BaseModel):
+    gateway: CollabGatewayConfig = Field(default_factory=CollabGatewayConfig)
+
+
 class SynctxConfig(BaseModel):
     version: str = "1"
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
@@ -266,6 +366,7 @@ class SynctxConfig(BaseModel):
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     outbound_feedback: OutboundFeedbackConfig = Field(default_factory=OutboundFeedbackConfig)
     html_embed: PlatformHtmlEmbedConfig = Field(default_factory=PlatformHtmlEmbedConfig)
+    collab: CollabConfig = Field(default_factory=CollabConfig)
 
     @model_validator(mode="after")
     def _check_html_embed_origins(self) -> "SynctxConfig":

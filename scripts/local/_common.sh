@@ -65,7 +65,7 @@ MINIKUBE_PROFILE=${MINIKUBE_PROFILE:-minikube}
 minikube() { command minikube -p "${MINIKUBE_PROFILE}" "$@"; }
 kubectl() { command kubectl --context "${MINIKUBE_PROFILE}" "$@"; }
 helm() { command helm --kube-context "${MINIKUBE_PROFILE}" "$@"; }
-SERVICES=(viewer cdn marp sync feedback)
+SERVICES=(viewer cdn marp sync feedback collab-gateway)
 THIRD_PARTY_IMAGES=(
     "nginx:1.25.4-alpine"
     "alpine/git:2.43.0"
@@ -360,16 +360,21 @@ load_image() {
         return
     fi
 
-    print_info "${short_name} minikube에서 pull 시도..."
-    if minikube image pull "${image}" 2>/dev/null; then
-        print_success "${short_name} minikube pull 완료"
-        return
+    # 플랫폼을 지정하면 minikube image pull(노드 아키텍처 기준)이 성공처럼 끝나도 이미지가 없을 수 있어 건너뛴다
+    if [ -z "${LOAD_IMAGE_PLATFORM:-}" ]; then
+        print_info "${short_name} minikube에서 pull 시도..."
+        if minikube image pull "${image}" 2>/dev/null; then
+            print_success "${short_name} minikube pull 완료"
+            return
+        fi
     fi
 
-    local arch
+    local arch platform
     arch=$(get_minikube_arch)
-    print_info "${short_name} 호스트 Docker로 pull 시도 (platform=linux/${arch})..."
-    if ! docker pull --platform "linux/${arch}" "${image}" 2>/dev/null; then
+    # amd64 전용 이미지(Mattermost 등)는 LOAD_IMAGE_PLATFORM=linux/amd64로 받아 에뮬레이션으로 돌린다
+    platform="${LOAD_IMAGE_PLATFORM:-linux/${arch}}"
+    print_info "${short_name} 호스트 Docker로 pull 시도 (platform=${platform})..."
+    if ! docker pull --platform "${platform}" "${image}" 2>/dev/null; then
         print_warning "${short_name} pull 실패"
         return 1
     fi

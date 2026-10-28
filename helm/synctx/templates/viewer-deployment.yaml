@@ -45,6 +45,13 @@ spec:
                   key: render-secret-previous
                   optional: true
             {{- end }}
+            {{- if include "synctx.collabEnabled" . }}
+            - name: VIEWER_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "synctx.collabSecretName" . }}
+                  key: viewer-service-token
+            {{- end }}
             {{- if .Values.synctxConfig.create }}
             - name: SYNCTX_CONFIG_PATH
               value: /etc/synctx/.synctx.yaml

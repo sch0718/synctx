@@ -52,6 +52,21 @@ CronJob 메트릭을 받는 Pushgateway를 배포할 때 "true".
 {{- end }}
 
 {{/*
+Collab Gateway를 켰을 때 "true". collabGateway 키가 없던 이전 릴리스 값으로 --reuse-values 업그레이드해도 렌더가 깨지지 않게 dig로 읽는다.
+*/}}
+{{- define "synctx.collabEnabled" -}}
+{{- if eq (toString (dig "enabled" false (.Values.collabGateway | default dict))) "true" }}true{{- end }}
+{{- end }}
+
+{{/*
+Collab Gateway Secret 이름. 서비스 토큰은 Viewer도 같은 Secret에서 읽는다.
+*/}}
+{{- define "synctx.collabSecretName" -}}
+{{- $cg := .Values.collabGateway | default dict }}
+{{- (dig "secrets" "existingSecret" "" $cg) | default (printf "%s-collab-gateway" (include "synctx.fullname" .)) }}
+{{- end }}
+
+{{/*
 켜진 서비스를 정해진 순서대로 쉼표로 잇는다. Viewer의 SYNCTX_ENABLED_SERVICES 값이다.
 */}}
 {{- define "synctx.enabledServices" -}}
@@ -63,6 +78,9 @@ CronJob 메트릭을 받는 Pushgateway를 배포할 때 "true".
 {{- end }}
 {{- if .Values.feedback.enabled }}
 {{- $enabled = append $enabled "feedback" }}
+{{- end }}
+{{- if include "synctx.collabEnabled" . }}
+{{- $enabled = append $enabled "collab-gateway" }}
 {{- end }}
 {{- join "," $enabled }}
 {{- end }}
@@ -95,6 +113,35 @@ CronJob 메트릭을 받는 Pushgateway를 배포할 때 "true".
 {{- if and (eq (toString $embed.enabled) "true") (eq (toString $embed.render_files) "true") (gt (int $.Values.viewer.replicaCount) 1) (not (or $render.create $render.existingSecret)) }}
 {{- fail "render_files=true인 저장소가 있고 viewer.replicaCount>1이면 viewer.renderTokenSecret의 create 또는 existingSecret이 필요합니다" }}
 {{- end }}
+{{- end }}
+{{- end }}
+{{- if include "synctx.collabEnabled" . }}
+{{- $cg := .Values.collabGateway }}
+{{- if hasKey $cg "replicaCount" }}
+{{- fail "collabGateway는 복제본을 1개로 고정합니다. replicaCount를 지정하지 마세요" }}
+{{- end }}
+{{- if not (include "synctx.isEnabled" .Values.viewer) }}
+{{- fail "collabGateway.enabled=true이면 회의 목록을 읽을 viewer가 켜져 있어야 합니다" }}
+{{- end }}
+{{- if not $cg.persistence.enabled }}
+{{- fail "collabGateway.persistence.enabled=false이면 재시작 때 알림 중복 방지 상태를 잃습니다. 켜 두세요" }}
+{{- end }}
+{{- if not (or $cg.secrets.create $cg.secrets.existingSecret) }}
+{{- fail "collabGateway.enabled=true이면 collabGateway.secrets.create=true 또는 existingSecret이 필요합니다" }}
+{{- end }}
+{{- if and $cg.secrets.create $cg.secrets.existingSecret }}
+{{- fail "collabGateway.secrets.create와 existingSecret은 함께 지정할 수 없습니다" }}
+{{- end }}
+{{- if not .Values.synctxConfig.create }}
+{{- fail "collabGateway.enabled=true이면 synctxConfig.create=true로 .synctx.yaml의 collab.gateway를 함께 배포해야 합니다" }}
+{{- end }}
+{{- $gw := dig "collab" "gateway" dict (fromYaml (.Values.synctxConfig.data | default "")) }}
+{{- if ne (toString (dig "enabled" false $gw)) "true" }}
+{{- fail "collabGateway.enabled=true이면 .synctx.yaml의 collab.gateway.enabled도 true여야 합니다" }}
+{{- end }}
+{{- $mm := dig "mattermost" dict $gw }}
+{{- if or (ne (dig "bot_token_env" "MATTERMOST_BOT_TOKEN" $mm) "MATTERMOST_BOT_TOKEN") (ne (dig "command_token_env" "MATTERMOST_COMMAND_TOKEN" $mm) "MATTERMOST_COMMAND_TOKEN") (ne (dig "viewer_service_token_env" "VIEWER_SERVICE_TOKEN" $gw) "VIEWER_SERVICE_TOKEN") }}
+{{- fail "차트가 만드는 Secret을 쓰려면 collab.gateway의 토큰 환경변수 이름(bot_token_env·command_token_env·viewer_service_token_env)을 기본값으로 두세요" }}
 {{- end }}
 {{- end }}
 {{- if not (include "synctx.enabledServices" .) }}

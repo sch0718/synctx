@@ -33,7 +33,8 @@ pytestmark = pytest.mark.skipif(
 
 def _rules():
     result = subprocess.run(
-        ["helm", "template", "synctx", str(CHART), "-s", "templates/prometheusrule.yaml"],
+        ["helm", "template", "synctx", str(CHART), "-f", str(RULE_TESTS / "collab-values.yaml"),
+         "-s", "templates/prometheusrule.yaml"],
         capture_output=True, text=True, check=True,
     )
     rule = yaml.safe_load(result.stdout)

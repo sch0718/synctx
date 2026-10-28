@@ -1,0 +1,143 @@
+# Collab Gateway Alert 규칙 단위 테스트. Gateway는 Service 라벨 synctx/metrics로 직접 수집되는 모양이다.
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # 30분 안에 발송 실패가 5회 이상이면 5분 지속 뒤 울린다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_collab_notifications_total{job="synctx",kind="reminder",result="failed"}'
+        values: '0x4 1+1x20 21x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: SynctxCollabNotificationFailures
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: SynctxCollabNotificationFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Collab 알림 발송 반복 실패"
+              description: "Mattermost로 알림을 보내지 못하는 경우가 30분 내 5회 이상입니다. Mattermost 주소와 봇 토큰, NetworkPolicy를 확인하세요."
+
+  # 드문 실패는 울리지 않는다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_collab_notifications_total{job="synctx",kind="reminder",result="failed"}'
+        values: '0x9 1x20 2x20 3x20'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: SynctxCollabNotificationFailures
+        exp_alerts: []
+
+  # 포기가 한 번이라도 있으면 바로 울리고 1시간 뒤 풀린다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_collab_notifications_total{job="synctx",kind="changed",result="gave_up"}'
+        values: '0x4 1x90'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SynctxCollabNotificationGaveUp
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: SynctxCollabNotificationGaveUp
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Collab 알림 발송 포기"
+              description: "연속 실패로 일부 알림을 포기했습니다. 봇 토큰 만료나 채널 매핑 오류를 확인하세요."
+      - eval_time: 80m
+        alertname: SynctxCollabNotificationGaveUp
+        exp_alerts: []
+
+  # Viewer 조회가 15분 안에 10회 이상 실패하면 울린다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_collab_viewer_fetch_failures_total{job="synctx"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: SynctxCollabViewerFetchFailing
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: SynctxCollabViewerFetchFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: synctx
+            exp_annotations:
+              summary: "Collab Gateway의 Viewer 조회 실패"
+              description: "회의 목록 조회가 15분 내 10회 이상 실패했습니다. Viewer 상태와 서비스 토큰(VIEWER_SERVICE_TOKEN)이 같은지 확인하세요."
+
+  # 마지막 성공 시각이 10분 넘게 멈추면 5분 뒤 울리고, 계속 갱신되면 울리지 않는다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_collab_last_success_timestamp{job="synctx"}'
+        values: '60+60x5 360x40'
+      - series: 'synctx_collab_last_success_timestamp{job="healthy"}'
+        values: '0+60x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SynctxCollabStalled
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: SynctxCollabStalled
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: synctx
+            exp_annotations:
+              summary: "Collab Gateway 10분 이상 회의 조회 성공 없음"
+              description: "Collab Gateway가 10분 넘게 Viewer에서 회의를 읽지 못했습니다."
+
+  # 매핑 없는 채널이 생기면 울리고 1시간 뒤 풀린다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_collab_unmapped_channel_total{job="synctx"}'
+        values: '0x4 1x90'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SynctxCollabUnmappedChannel
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: SynctxCollabUnmappedChannel
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: synctx
+            exp_annotations:
+              summary: "Collab 채널 매핑 누락"
+              description: "meeting.channel에 대한 collab.gateway.channels 매핑이 없어 알림을 건너뛴 회의가 있습니다."
+      - eval_time: 80m
+        alertname: SynctxCollabUnmappedChannel
+        exp_alerts: []
+
+  # /synctx 인증 실패가 10분 안에 5회 이상이면 울리고, 드문 실패는 울리지 않는다
+  - interval: 1m
+    input_series:
+      - series: 'synctx_collab_commands_total{job="synctx",command="unknown",result="unauthorized"}'
+        values: '0x4 1+1x10 11x40'
+      - series: 'synctx_collab_commands_total{job="quiet",command="unknown",result="unauthorized"}'
+        values: '0x20 1x30'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SynctxCollabCommandUnauthorized
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: SynctxCollabCommandUnauthorized
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: synctx
+              command: unknown
+              result: unauthorized
+            exp_annotations:
+              summary: "Collab /synctx 명령 인증 실패 반복"
+              description: "슬래시 명령 요청의 토큰 검증이 10분 안에 5회 이상 실패했습니다. Mattermost 명령 토큰과 Secret(command-token)이 같은지, 외부에서 Gateway를 두드리는지 확인하세요."
+      - eval_time: 45m
+        alertname: SynctxCollabCommandUnauthorized
+        exp_alerts: []

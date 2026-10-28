@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 members = [
     "synctx",
     "synctx-cdn",
+    "synctx-collab-gateway",
     "synctx-common",
     "synctx-feedback",
     "synctx-marp",
@@ -899,6 +900,25 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "synctx-common", editable = "shared/synctx-common" },
+    { name = "uvicorn", specifier = ">=0.30.0" },
+]
+
+[[package]]
+name = "synctx-collab-gateway"
+version = "0.7.0"
+source = { editable = "services/collab-gateway" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "synctx-common" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.111.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
     { name = "synctx-common", editable = "shared/synctx-common" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]

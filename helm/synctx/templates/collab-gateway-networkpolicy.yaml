@@ -1,0 +1,40 @@
+{{- if and (include "synctx.collabEnabled" .) .Values.collabGateway.networkPolicy.enabled }}
+{{- $mm := .Values.collabGateway.networkPolicy.mattermost }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "synctx.fullname" . }}-collab-gateway-network-policy
+  labels:
+    app.kubernetes.io/name: collab-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: collab-gateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: viewer
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - port: 8000
+          protocol: TCP
+    - ports:
+        - port: {{ $mm.port | default 443 }}
+          protocol: TCP
+      {{- if $mm.namespace }}
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $mm.namespace | quote }}
+      {{- end }}
+{{- end }}

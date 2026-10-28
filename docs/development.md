@@ -70,6 +70,8 @@ flowchart TB
         Pushgateway["Pushgateway<br>(CronJob 메트릭)"]
         Prometheus[("Prometheus")]
         Feedback["Outbound Feedback<br>Exporter (optional)"]
+        Gateway["Collab Gateway<br>(optional)"]
+        Mattermost[("Mattermost<br>(별도 구축)")]
         MailGateway[("Approved<br>Mail Gateway")]
 
         XWiki[("XWiki")]
@@ -104,6 +106,9 @@ flowchart TB
         OP -. "허용 필드 변경" .-> Feedback
         Feedback -. "redacted + signed email" .-> MailGateway
         Feedback -. "누적 메트릭 push" .-> Pushgateway
+
+        Gateway -- "GET /api/meetings<br>(서비스 토큰)" --> Viewer
+        Gateway -. "회의 안내·변경·취소·요약" .-> Mattermost
     end
 
     MailGateway -. "mail" .-> ExternalInbox
@@ -121,6 +126,7 @@ flowchart TB
 | **Sync Engine** | Git 변경 감지 → XWiki/OpenProject 동기화 | Python CLI + httpx | CronJob |
 | **Slides Server** | 출판된 프레젠테이션 HTML 정적 서빙 | Nginx | Deployment + PVC |
 | **Outbound Feedback Exporter** | OpenProject 제한 필드 변경 → 서명된 메일 이벤트 반출 (선택) | Python CLI + SMTP | CronJob |
+| **Collab Gateway** | 회의 안내(예고)·변경·취소·요약을 Mattermost 채널로 전달하고 `/synctx` 슬래시 명령으로 회의를 조회 (선택, Phase 8.3·8.4) | FastAPI + httpx | Deployment(1개) + PVC |
 
 ### 배포 방식
 
@@ -200,6 +206,7 @@ Docker 캐시는 기본 이름 `synctx-viewer-cache`인 볼륨에 남으며 Ctrl
 - **스크럼 보드** — 이슈 마크다운 목록을 버전별 칸반 보드로 렌더링 (`/api/repos/{id}/board/{version}`)
 - **회의 모드** — 회의 문서(`synctx.type: meeting`)에서 메모·형광펜·회의 정리(결정·액션 아이템), `.md`·메모 포함 HTML(읽기 전용) 내보내기와 가져오기. 메모는 브라우저(localStorage)에만 저장 (Phase 8.1a)
 - **회의 정보 카드·발표 화면** — 회의 문서 머리의 일시·진행 상태·안건 카드, `?mode=present` 발표 화면, 회의 모드 첫 사용 안내
+- **회의 대시보드** — 저장소 전체 회의를 `/view/meetings`에서 상태·저장소·채널·발표자·기간으로 보고, 같은 폴더의 `<문서명>.memo.md`를 커밋하면 결정사항·액션 아이템(담당자·기한)을 모아 본다. JSON은 `GET /api/meetings`. 메모는 서버에 저장하지 않는다 (Phase 8.1c)
 - **근거 미리보기·근거 모음** — 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선으로 미리 보고, 문서 끝 근거 모음에서 발췌·인용한 곳·원문 열기로 확인. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리키며, 메모 포함 HTML에서도 동작 (Phase 8.1b)
 - **인터랙티브 HTML 임베드** — Markdown의 ` ```synctx-html ` 블록이 가리키는 저장소 HTML 묶음(모션 그래픽 등)을 한 파일로 합쳐 sandbox iframe으로 재생. 운영자가 지정한 신뢰 저장소에서만 동작하며, Viewer 화면에서는 `크게 보기`로 iframe을 다시 읽지 않고 키운다 (Phase 9)
 - **HTML 렌더 보기** — `html_embed.enabled`·`render_files`가 모두 켜진 저장소의 `.html`을 `?mode=render`(새 탭은 `layout=full`)로 실행. 화면이 서명 토큰 경로(`/render/{token}/…`, ref·커밋 SHA 고정, 기본 4시간)로 sandbox iframe을 열어 문서 안 상대 링크도 같은 스냅샷으로 연다. 화면 맞춤·비율·전체 화면 지원. 복수 인스턴스는 `SYNCTX_RENDER_SECRET` 공유 필수 (Phase 9)
@@ -376,6 +383,7 @@ synctx/
 │   │   │   ├── meeting.py             # 회의 모드 판단·설정 JSON·메모 포함 HTML 조립
 │   │   │   ├── viewer_ui.py           # 공통 화면 틀(상단 바·서랍·오류 화면)·검색 결과 페이지 마크업
 │   │   │   ├── meeting_card.py        # 회의 정보 카드의 한국 시간 일시·안건 가공
+│   │   │   ├── meeting_index.py       # 회의 대시보드: 회의 문서 수집·상태·필터·.memo.md 결정·액션 집계
 │   │   │   ├── evidence.py            # 회의 문서의 근거 링크 판정·접두어 매핑·발췌·발췌 정화·근거 모음 데이터
 │   │   │   ├── search.py              # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
 │   │   │   ├── static/viewer.css      # 화면 틀·3단 배치·반응형
@@ -429,6 +437,7 @@ synctx/
 │   │       └── test_op_client.py
 │   │
 │   ├── feedback/                      # Outbound Feedback Exporter (Phase 7 선택)
+│   ├── collab-gateway/                # Collab Gateway: 회의 알림·/synctx 명령 → Mattermost (Phase 8.3·8.4 선택)
 │   │   ├── Dockerfile
 │   │   ├── pyproject.toml
 │   │   ├── src/

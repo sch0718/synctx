@@ -217,7 +217,20 @@ minikube tunnel -p "${MINIKUBE_PROFILE:-minikube}"
 ./scripts/local/steps/deploy-deps.sh --skip-op            # OpenProject 제외
 ./scripts/local/steps/deploy-deps.sh --skip-mailpit       # Mailpit 제외 (예전 이름 --skip-mailhog도 경고와 함께 동작)
 ./scripts/local/steps/deploy-deps.sh --skip-images        # 이미지 pull 건너뜀
+./scripts/local/steps/deploy-deps.sh --skip-xwiki --skip-op --skip-mailpit --mattermost   # Collab Gateway 시험용 Mattermost만
 ```
+
+`--mattermost`(기본 꺼짐)는 Mattermost(`mattermost/mattermost-team-edition:10.11.19`)와 전용 PostgreSQL을 `synctx-deps`에 띄운다. 공식 Mattermost 이미지는 **amd64 전용**이라 ARM64 기기(Apple Silicon)에서는 Docker의 amd64 에뮬레이션(qemu binfmt)이 있어야 실행된다. 스크립트는 `LOAD_IMAGE_PLATFORM=linux/amd64`로 호스트 Docker에서 받아 minikube에 올린다. 메모리를 약 1.5GiB 더 쓰므로 XWiki를 끄고 쓴다. 이어서 아래 순서로 Gateway까지 시험한다.
+
+```bash
+./scripts/local/steps/setup-mattermost.sh            # 팀(synctx)·채널(team-docs)·봇·토큰·/synctx 슬래시 명령 → helm/synctx/values-local.collab.secret.yaml(커밋 제외)
+./scripts/local/steps/verify-collab.sh               # Gateway의 Mattermost 어댑터로 시험 글을 올리고 채널에서 읽어 확인
+./scripts/local/steps/deploy-synctx.sh               # 위 값 파일이 있으면 Collab Gateway도 배포
+```
+
+봇 계정·토큰과 `/synctx` 슬래시 명령은 `mmctl --local`이 지원하지 않아 관리자로 로그인해 REST API로 만든다(`scripts/local/steps/mattermost_bot.py`). 슬래시 명령의 호출 주소는 `http://synctx-collab-gateway/api/collab/mattermost/command`(환경변수 `SYNCTX_COMMAND_URL`로 바꿈)이고, Mattermost가 발급한 명령 토큰이 Gateway Secret의 `command-token`이 된다. 명령은 Gateway가 클러스터에 배포된 뒤(`deploy-synctx.sh`) 채널에서 `/synctx 도움말`로 시험한다. 관리자 계정(`admin`)의 비밀번호는 `~/.cache/synctx/mattermost-admin-password`(권한 600)에 저장된다. 접속은 `kubectl port-forward -n synctx-deps svc/mattermost 8065:8065`.
+
+이 기기처럼 amd64 에뮬레이션이 없으면 Mattermost 파드가 `exec format error`로 재시작을 반복한다(Docker Desktop의 Rosetta는 minikube 노드 안의 중첩 컨테이너에서 쓸 수 없다). Docker Desktop 설정으로 QEMU 에뮬레이션을 쓰거나 `docker run --privileged --rm tonistiigi/binfmt --install amd64`로 qemu binfmt를 등록해야 한다(Docker VM 전체에 적용된다). 등록은 Docker VM이 다시 시작되면 사라질 수 있다. 등록 뒤 이미 재시작을 반복하는 Mattermost 파드는 삭제해 새로 띄운다.
 
 배포되는 서비스:
 

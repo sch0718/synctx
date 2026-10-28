@@ -25,6 +25,7 @@ members = [
     "services/marp",
     "services/sync",
     "services/feedback",
+    "services/collab-gateway",
 ]
 
 [tool.uv.sources]

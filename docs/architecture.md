@@ -17,6 +17,7 @@ synctx는 마이크로서비스 아키텍처로 구성되며, K8s 클러스터�
 | **Sync Engine** | Git → XWiki/OpenProject 동기화 | CronJob + PVC |
 | **Slides Server** | 출판된 프레젠테이션 HTML 서빙 | Deployment + PVC |
 | **Outbound Feedback Exporter** | OpenProject 제한 필드 변경을 서명된 메일 이벤트로 반출 (선택 기능) | CronJob |
+| **Collab Gateway** | 회의 안내·변경·취소·요약을 Mattermost 채널로 전달 (선택 기능, Phase 8.3) | Deployment(1개) + PVC |
 
 ```mermaid
 flowchart TB
@@ -351,6 +352,8 @@ GET /api/search                     본문 검색(q·repo·ref). repo가 없으�
 GET /api/repos/{id}/render          마크다운 렌더링
 GET /api/repos/{id}/download        HTML/PDF 다운로드
 GET /api/repos/{id}/meeting-export  회의 메모 포함 HTML 틀(오프라인, 메모 없음)
+GET /api/meetings                   회의 목록(대시보드 데이터. collab.enabled 저장소만. status·repo·channel·presenter·q·from·to·order)
+GET /meetings                       회의 대시보드 화면(`meetings`는 예약 경로)
 GET /api/repos/{id}/board/{version} 스크럼 보드(칸반) HTML
 GET /raw/{id}/{path}                원본 파일(이미지 등 본문이 참조하는 파일)
 POST /api/repos/{id}/webhook        Git push 알림
@@ -375,6 +378,7 @@ POST /api/repos/{id}/webhook        Git push 알림
 | Marp 연동 | "PDF 변환" / "출판" 버튼 | **신규** |
 | 회의 모드 | `?mode=meeting`: 메모·형광펜·회의 정리, `.md`·메모 포함 HTML 내보내기/가져오기. 서버 판단은 `meeting.py`, 화면은 `static/meeting/`. 회의 문서는 정보 카드(`meeting_card.py`)와 발표 화면 `?mode=present`도 쓰고, 회의 모드 화면은 첫 사용 안내를 보인다(3.6) | **신규 (Phase 8.1a)** |
 | 근거 미리보기·근거 모음 | 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선(미리보기)과 문서 끝 근거 모음으로 보임. 서버 판단은 `evidence.py`, 화면은 `static/meeting/evidence*.js·css`. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리킴(3.6) | **신규 (Phase 8.1b)** |
+| 회의 대시보드 | `/meetings`·`GET /api/meetings`: 저장소 전체 회의 목록·상태 탭·필터와 결정·액션 집계. 서버 판단은 `meeting_index.py`(`git grep`으로 후보를 찾고 `(저장소, 커밋 SHA)`로 캐시), 화면은 `viewer_ui.py`(3.6) | **신규 (Phase 8.1c)** |
 | front matter 분리 | 렌더링 전에 front matter를 본문에서 떼어 냄(일반 보기 포함) | **신규 (Phase 8.1a)** |
 | 인터랙티브 HTML 임베드 | ` ```synctx-html ` 블록을 `synctx_common.html_bundle`로 합본해 CSP meta가 든 sandbox srcdoc iframe으로 렌더링. sanitizer 뒤에 자리표시를 채운다(`embed_view.py`). `enabled`·`render_files`를 함께 켠 HTML `mode=render`, Viewer 화면의 블록 크게 보기 오버레이(다운로드 제외) | **신규 (Phase 9)** |
 
@@ -408,6 +412,7 @@ Viewer에서 마크다운 파일을 열람할 때, `marp: true` front matter가 
 - **회의 정보 카드**: Front Matter의 `synctx.meeting`이 검증을 통과한 문서는 회의 모드를 쓸 수 없는 저장소·브랜치에서도 본문 머리의 경로 아래, 문서 정보 줄 위에 카드를 보인다. 제목, 일시(`starts_at`을 KST로 바꿔 "2026-10-15 (목) 15:00–15:30", 끝 시각은 `starts_at + duration_minutes`), 발표자(`presenters`가 있을 때만), 채널과 진행 상태를 담는다. 상태 글 "취소된 회의"는 서버가 그려 스크립트 없이도 보이고, 나머지는 스크립트가 현재 시각으로 30초마다 바꾼다("시작 전 · N분 후", 하루 이상 남으면 "시작 전", "진행 중 · N분 지남 · M분 남음", "끝남"). 카드 아래 안건 칩은 본문 `h2` 제목(최대 20개)을 링크로 보이고, 화면에 보이는 절의 칩이 현재 항목(`aria-current`)이다. `h3`·`h4` 안에서는 소속 `h2` 칩이 현재 항목으로 남는다. 목차와 안건 칩의 링크 id는 본문 제목 id와 같다(렌더러가 목차 데이터 id를 본문 제목 id에 맞추고, 원시 HTML로 쓴 제목은 목차에 넣지 않는다).
 - **발표 화면 `?mode=present`**: 회의 문서에서만 열리고, 회의 문서가 아니면 일반 문서 화면에 "발표 화면은 회의 문서에서만 쓸 수 있습니다" 안내를 보인다. 회의 문서의 동작 버튼 줄에 "발표하기"가 있다. 상단 바·파일 트리·목차를 숨기고 본문을 한 열로 크게 보이며, 위쪽 띠(회의 제목·시간)와 아래쪽 막대(진행 막대, "이전(←)" "N / M" "다음(→)" "메모 보기(N)" "발표 끝내기(Esc)")를 둔다. 장은 본문 최상위 요소를 `h2`마다 나누고(첫 `h2` 앞 내용이 첫 장), DOM을 옮기지 않고 다른 장의 요소만 숨긴다. 회의 모드의 형광펜·메모가 본문 글자 위치에 붙기 때문이다. 키는 →·PageDown·Space(다음), ←·PageUp·Shift+Space(이전), Home(첫 장), End(마지막 장), N(메모 패널), Esc(발표 끝내기, 문서 화면으로 돌아감)이다. 조합키를 누른 채이거나 입력칸·메모 패널 안에서 입력할 때는 어떤 키도 장을 넘기지 않고, 버튼·링크에 포커스가 있을 때는 Space만 그 요소의 기본 동작에 맡긴다. 현재 장은 `#slide-N`에 남아 새로 고쳐도 그 장에서 시작하고, 장이 바뀌면 화면 낭독기에 "N / M장: 제목"을 알린다. 회의 모드를 쓸 수 있는 문서면 발표 화면에도 회의 모드 자산을 싣고 "메모 보기(N)"는 회의 모드의 메모 버튼을 누른 것과 같으며, 쓸 수 없으면 이 버튼을 숨긴다. 메모 패널이 열려 있으면 Esc는 패널만 닫고, 숨긴 장의 메모 인용문·회의 정리 항목으로 가면 그 장으로 바뀐다. 본문이 비어 있으면 "발표할 내용이 없습니다"를 보이고 이전·다음을 끈다. 발표 중에는 숨긴 화면 요소를 여는 문서 화면 단축키(`t`·`/`·`?`·⌘K)를 쓰지 않는다.
 - **회의 모드 첫 사용 안내**: 회의 모드가 켜진 문서 화면(`?mode=meeting`)에서만 문서 머리의 「회의 모드 나가기」 아래에 "회의 모드 안내" 상자를 보인다. 발표 화면, 회의 모드를 쓸 수 없다는 안내 화면, 일반 문서 화면, 내보낸 HTML에는 없다. 모달이 아니라 본문을 가리지 않고, 첫 자동 표시는 포커스를 옮기지 않는다. 내용은 네 줄이다(메모는 이 브라우저에만 저장되고 공유되지 않음, 「+ 메모」나 본문 드래그로 메모 추가, 「메모」 패널의 「회의 정리」 탭에 결정·액션 메모가 모임, 「.md로 내보내기」로 전하고 「가져오기」로 합침). 「닫기」(안내 안에 포커스가 있을 때는 Esc도 같다)는 이 화면에서만 숨기고 새로 고치면 다시 뜬다. 「다시 보지 않기」는 브라우저 localStorage에 `synctx-meeting-guide=hidden`을 남겨 다른 회의 문서에서도 뜨지 않으며, 저장소를 쓸 수 없으면 이 화면에서만 숨긴다. 다시 열기는 「회의 모드 나가기」 옆 「사용법」 버튼(`?` 버튼이 숨는 767px 이하에서는 이 길뿐)과 `?` 단축키 창의 「회의 모드 안내 보기」이며, 다시 열면 포커스가 안내 제목으로 가고, 저장된 「다시 보지 않기」 값은 지우지 않는다. 표시 판단은 `viewer-core.js`의 `meetingGuideAutoOpen`, 마크업은 `viewer_ui.py`, 동작은 `viewer.js`가 맡는다.
+- **회의 대시보드**: 상단 바의 「회의」(`collab.enabled` 저장소가 있을 때)와 회의 정보 카드의 「회의 대시보드로」가 `/meetings`로 간다. 저장소 전체 회의를 한 화면에서 모아 보는 대시보드 `/view/meetings`(상태 탭 전체·예정·진행 중·종료·취소, 저장소·채널·발표자·기간·제목 필터, 결정사항·액션 아이템 탭)와 JSON `GET /api/meetings`. `collab.enabled`인 저장소의 기본 브랜치에서 `synctx.type: meeting`이고 검증을 통과한 문서만 모으며, 오류 문서는 사유와 함께 「확인 필요」에 보인다. 결정·액션은 회의 문서와 같은 폴더의 `<문서명>.memo.md`(회의 모드 `.md` 내보내기)를 저장소에 커밋하면 그 데이터 블록에서 읽고 서버에는 메모를 저장하지 않는다. 필터는 서버가 처리하는 GET 폼(쿼리 `tab`·`repo`·`channel`·`presenter`·`owner`·`q`·`from`·`to`·`order`)이라 새 스크립트가 없고, 상태는 글자로 표시한다(색 단독 아님). 저장소당 회의 500건, 문서 512 KiB, 메모 파일 256 KiB·메모 1000개까지 읽고 넘으면 일부만 표시한다. 부분 복제(blobless·treeless) 저장소는 안내만 보인다.
 - **근거 미리보기·근거 모음**: 검증을 통과한 `synctx.meeting`이 있는 문서(일반 보기·발표 화면은 회의 모드를 쓸 수 없는 저장소·브랜치에서도, 회의 모드·메모 포함 HTML은 회의 모드를 쓸 수 있는 곳에서)에서 본문 링크 중 같은 문서가 아닌 `.md`/`.markdown` 파일(Git blob)이고 실제로 있는 것을 근거로 본다. 폴더·이미지·외부 링크·같은 문서 `#앵커`·없는 파일은 근거가 아니며 기존 링크 처리 그대로다. 서버(`evidence.py`)는 근거 링크에 `data-evidence="evidence-N"` 속성만 더하고 링크 글자·href는 바꾸지 않아, 본문 글자 오프셋으로 붙는 회의 모드 메모의 위치와 내보내기 본문 일치가 유지된다. 근거 모음은 본문 `<article>` 바깥 바로 뒤의 `<section class="evidence-list">`로 서버가 그리고(근거가 0건이면 없음), 근거 문서별 묶음(본문에 처음 나온 순서) 안에 항목(위치, 발췌, "인용한 곳", "원문 열기")을 둔다. 같은 대상(문서+퍼센트 디코딩한 앵커)은 한 항목으로 합치고, "인용한 곳"은 링크가 든 가장 가까운 앞 `h2`·`h3` 제목 링크다. 문서명은 근거 문서의 front matter `title:` → 첫 `#` 제목 → 파일 이름 순으로 정한다. 발췌는 앵커 위치에 따라 제목 절·표 행·굵은 조문 줄·앵커 없음(문서 첫 부분, 최대 14줄) 규칙으로 잘라 그 부분만 렌더링하고(앵커를 못 찾으면 문서 첫 부분과 안내), 해설 블록(`<div class="commentary">`)은 뺀다. 근거 원문의 `synctx-html` 블록은 설정 줄 대신 "[인터랙티브 HTML: <title>]"(title이 없으면 `src` 파일 이름) 한 줄로 보인다. 발췌 하나는 80줄·16 KiB, 근거 링크 처리는 200개, 서로 다른 근거 파일은 50개까지다. 발췌는 렌더 뒤 발췌 전용 허용 목록 정화를 거쳐(허용 밖 태그는 글자만, `script` 등은 내용째 삭제, 모든 속성 삭제, 링크는 글자만, 이미지는 `[그림: alt]`) 말풍선 데이터(`<script type="application/json" data-synctx-evidence>`, `encode_for_script`)와 근거 모음에 쓴다. 근거 하나가 실패해도 문서는 정상으로 보이고, 근거 조립 전체가 실패하면 근거 없이 보인다.
   - **다른 저장소**: `synctx.meeting.references`(접두어 → `<저장소 id>:<저장소 루트 기준 경로 접두어>`, 최대 20개)가 href 원문 접두어를 다른 저장소 경로로 바꾸며 가장 긴 키가 이긴다. 같은 저장소 근거는 본문과 같은 ref, 다른 저장소 근거는 그 저장소의 기본 ref로 읽는다. 매핑된 링크는 근거가 아니어도 `rewrite_links`가 `/view/<저장소>/<경로>`로 바꾼다(저장소 루트·폴더를 가리키면 `/view/<저장소>?path=<폴더>`). 설정에 없는 저장소를 가리키는 매핑은 무시하고 그 접두어의 링크를 href 원문 그대로 두며, 문서 머리에 "근거 저장소를 찾지 못했습니다: <id>" 안내를 한 번 보인다.
   - **말풍선**: 근거 링크에 포인터를 올리거나 포커스하면 `role="tooltip"` 말풍선(링크의 `aria-describedby`)에 문서명·위치·발췌가 뜬다. 링크 아래에 두고 화면 아래를 넘으면 위로 뒤집으며, 떠난 뒤 200ms에 닫고 말풍선 위에 포인터가 있으면 유지한다. 터치 기기(hover 없음)는 말풍선 없이 이동한다. 말풍선은 `body` 끝에 `data-meeting-ui`로 하나만 두고 z-index는 메모 패널·선택 버튼보다 위다.
@@ -860,6 +865,7 @@ viewer/src/
 ├── viewer_ui.py        # 공통 화면 틀(상단 바·서랍·오류 화면)·검색 결과 페이지 마크업
 ├── meeting.py          # 회의 모드 판단·설정 JSON·템플릿 조각·메모 포함 HTML 내보내기
 ├── meeting_card.py     # 회의 정보 카드의 한국 시간 일시·안건 가공
+├── meeting_index.py    # 회의 대시보드: 회의 문서 수집·상태·필터·.memo.md 결정·액션 집계
 ├── evidence.py         # 회의 문서의 근거 링크 판정·접두어 매핑·발췌·발췌 정화·근거 모음 데이터
 ├── search.py           # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
 └── static/
@@ -936,6 +942,24 @@ feedback/src/
 └── feedback_metrics.py # Feedback 메트릭 누적 보존 + Pushgateway push (synctx_common.metrics_push 사용)
 ```
 
+### 9.7 Collab Gateway 모듈 (Phase 8.3 선택)
+
+```
+collab-gateway/src/
+├── app.py              # FastAPI: healthz·readyz·metrics + 폴링 루프(lifespan) + /api/collab/mattermost/command
+├── commands.py         # /synctx 명령 해석·응답(채널 범위, 한국어 메시지)
+├── ratelimit.py        # 사용자별 분당 슬라이딩 윈도 속도 제한
+├── runner.py           # 한 주기: 회의 읽기 → 알림 결정 → 발송 → 상태 저장
+├── scheduler.py        # 회의 하나의 알림 판정(순수 함수): 예고·변경·취소·요약
+├── state.py            # 알림 상태 파일(원자적 저장, 파일 잠금, 손상 시 격리)
+├── messages.py         # 한국어 메시지, 문서 유래 글의 멘션·마크다운 이스케이프
+├── viewer_client.py    # Viewer GET /api/meetings (Bearer 서비스 토큰)
+├── models.py           # Meeting·MemoItem
+└── adapters/
+    ├── base.py         # MessengerAdapter 인터페이스, SendError(retryable·reason)
+    └── mattermost.py   # 봇 토큰으로 채널 조회·글 게시, 429·5xx 재시도, 슬래시 명령 form 파싱·토큰 검증
+```
+
 ## 10. Helm Chart 설계
 
 ### 10.1 Chart 구조
@@ -975,6 +999,12 @@ helm/synctx/
     ├── sync-networkpolicy.yaml     # Egress 제한 NetworkPolicy
     │
     ├── feedback-cronjob.yaml       # Phase 7 선택: Outbound Feedback Exporter
+    │
+    ├── collab-gateway-deployment.yaml   # Phase 8.3 선택: Collab Gateway (복제본 1, Recreate)
+    ├── collab-gateway-service.yaml      # 메트릭 수집용 synctx/metrics 라벨
+    ├── collab-gateway-pvc.yaml          # 알림 중복 방지 상태 파일
+    ├── collab-gateway-secret.yaml       # 봇 토큰·Viewer 서비스 토큰·명령 토큰
+    ├── collab-gateway-networkpolicy.yaml # Egress: DNS·Viewer·Mattermost만
     │
     ├── slides-deployment.yaml
     ├── slides-configmap.yaml       # Nginx 설정 + sidecar 스크립트 (ConfigMap 2개)
@@ -1387,10 +1417,10 @@ flowchart LR
 
 1. 8.1a 회의 모드 기반: front matter 분리, `synctx.meeting` 검증, `repositories[].collab.enabled`, 메모·형광펜·회의 정리, `.md`·메모 포함 HTML 내보내기/가져오기
 2. 8.1b 근거 미리보기·근거 모음: `synctx.meeting.references` 접두어 매핑(저장소 간 링크 해석), 근거 링크 판정과 발췌 규칙, 발췌 정화, 링크 말풍선, 근거 모음, 메모 포함 HTML 반영
-3. 8.1c 회의 문서 대시보드
+3. 8.1c 회의 문서 대시보드: `/meetings`·`GET /api/meetings`, 상태 탭·필터, 결정·액션 집계(`<문서명>.memo.md`를 Git에 커밋, 서버 저장 없음)
 4. 8.2 Jitsi 내장과 발표자 따라가기
-5. 8.3 Collab Gateway(메신저 어댑터, 회의 안내·알림)
-6. 8.4 `/synctx` 명령과 채널
+5. 8.3 Collab Gateway(메신저 어댑터, 회의 안내·알림): `services/collab-gateway`(Viewer `/api/meetings`를 서비스 토큰으로 읽어 Mattermost에 예고·변경·취소·요약 전달), Helm `collabGateway`(복제본 1·PVC·Secret·NetworkPolicy), Alert 5종. 로컬 Mattermost 시뮬레이션과 Docker Compose는 아직 없다
+6. 8.4 `/synctx` 명령과 채널: Gateway의 `POST /api/collab/mattermost/command`가 `오늘`·`예정`·`회의`·`정리`·`도움말`에 요청자에게만 보이는 메시지로 답한다(채널 범위, 명령 토큰 인증, 사용자별 속도 제한, 감사 로그, Alert). 검색·근거·참여 명령은 Viewer API와 8.2가 필요해 보류
 
 ### Phase 9: 인터랙티브 HTML 임베드
 

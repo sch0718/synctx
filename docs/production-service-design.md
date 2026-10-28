@@ -241,6 +241,9 @@ authz:
 | `OUTBOUND_SMTP_CREDENTIAL` | Outbound Feedback Exporter | approved mail gateway send |
 | `OUTBOUND_FEEDBACK_HMAC_KEY` | Outbound Feedback Exporter, External Importer | event signature |
 | `OUTBOUND_FEEDBACK_HASH_SALT` | Outbound Feedback Exporter | changed_by pseudonymization |
+| `MATTERMOST_BOT_TOKEN` | Collab Gateway | Mattermost 봇 토큰(채널 조회·글 게시) |
+| `VIEWER_SERVICE_TOKEN` | Collab Gateway, Viewer | Viewer `/api/meetings` 서비스 토큰(Gateway는 보내고 Viewer는 비교). 두 쪽이 같은 Secret 값을 쓴다 |
+| `MATTERMOST_COMMAND_TOKEN` | Collab Gateway | 8.4 슬래시 명령 요청 검증용(선택) |
 | `SYNCTX_RENDER_SECRET` | Viewer (렌더 보기) | 렌더 토큰 발급·검증. UTF-8 인코딩 뒤 32바이트 이상, 복수 인스턴스·프로세스는 공유 키 필수 |
 | `SYNCTX_RENDER_SECRET_PREVIOUS` | Viewer (렌더 보기) | 검증 전용 보조 키, 32바이트 이상. 보통 이전 키이며 교체 준비 단계에는 다음 키를 미리 넣음 |
 | `SYNCTX_RENDER_SECRET_FILE`·`SYNCTX_RENDER_SECRET_PREVIOUS_FILE` | Viewer (렌더 보기) | 해당 키의 mounted UTF-8 파일 경로. 직접 값과 동시 지정은 시작 오류 |
@@ -484,7 +487,27 @@ outbound_feedback:
     credential_env: OUTBOUND_SMTP_CREDENTIAL
     from: "synctx-feedback@internal"
     to: "synctx-feedback-import@example.com"
+
+collab:                            # Phase 8.3 Collab Gateway (저장소별 collab.enabled와 별개인 플랫폼 설정)
+  gateway:
+    enabled: false
+    adapter: mattermost            # 첫 구현. 어댑터 인터페이스만 두고 다른 메신저는 만들지 않음
+    viewer_url: "http://synctx-viewer"   # 회의 목록을 읽는 Viewer 주소(http(s)://호스트[:포트], 경로·계정·쿼리 불가)
+    viewer_service_token_env: VIEWER_SERVICE_TOKEN   # Gateway와 Viewer가 같은 이름의 환경변수에서 읽는다
+    mattermost:
+      url: "https://chat.synctx.local"        # enabled이면 필수
+      bot_token_env: MATTERMOST_BOT_TOKEN
+      command_token_env: MATTERMOST_COMMAND_TOKEN   # 8.4 슬래시 명령 검증용
+    channels:                      # 키는 meeting.channel 형식, enabled이면 1개 이상. 매핑이 없는 채널은 건너뛴다
+      team-docs: {team: devteam, channel: team-docs}
+    reminders: [1440, 10]          # 시작 몇 분 전에 알릴지(1~10080, 중복 불가, 큰 값부터 정렬)
+    post_summary: false            # 회의 후 결정·액션 요약 게시(옵션)
+    poll_interval_seconds: 60      # 10 이상
+    commands_enabled: true         # /synctx 슬래시 명령(8.4). 토큰이 없으면 이 값과 상관없이 503
+    command_rate_limit_per_minute: 10   # 사용자별, 1~600
 ```
+
+`collab.gateway`가 꺼져 있으면 나머지 값은 검사하지 않는다. 켜면 `mattermost.url`·`channels`가 필수이고 환경변수 이름은 대문자·숫자·밑줄만 허용한다. 토큰 값은 YAML에 넣지 않고 Secret 환경변수로만 준다.
 
 `html_embed`의 출처는 `https://호스트[:포트]`만 허용하고, 저장소 목록은 최상위 목록의 부분집합이어야 한다. 어기면 서비스가 시작되지 않는다. 신뢰 저장소(`enabled: true`)는 운영자만 지정한다(3.6).
 
@@ -655,6 +678,7 @@ synctx:
 
 - Harness Validator가 필드 형식과 `meeting.id` 중복을 검사한다.
 - Viewer 회의 모드는 `repositories[].collab.enabled: true`인 저장소의 기본 브랜치에서만 켜진다.
+- 회의 대시보드(Phase 8.1c)는 `collab.enabled: true` 저장소의 기본 브랜치에서 `synctx.type: meeting`이고 위 검증을 통과한 문서를 `git grep`(`meeting:`)으로 찾아 모은다. 숨김 경로와 `*.memo.md`는 후보에서 뺀다. 같은 폴더의 `<문서명>.memo.md`가 있으면 회의 모드 `.md` 내보내기의 `synctx-memo-data` 블록(스키마 1, `doc.meeting_id`가 일치)에서 삭제되지 않은 결정·액션(담당자·기한·인용)을 읽는다. 문서 512 KiB·메모 파일 256 KiB·메모 1000개·저장소당 회의 500건을 넘으면 건너뛰거나 일부만 표시하고 사유를 보인다. 메모는 브라우저 localStorage에 남고 서버는 저장하지 않으므로 대시보드에는 저장소에 커밋된 내보내기만 반영된다. 액션 완료 상태는 추적하지 않는다.
 - 근거 미리보기·근거 모음(Phase 8.1b)은 검증을 통과한 `synctx.meeting`이 있는 문서에서 쓴다. 일반 보기·발표 화면에서는 회의 모드가 꺼진 저장소·기본이 아닌 ref에서도 쓰고, 회의 모드와 메모 포함 HTML(`meeting-export`)은 회의 모드가 켜진 곳에서만 열리므로 그곳에서 쓴다.
 - `references`는 근거가 다른 저장소에 있을 때 쓰는 접두어 매핑이다. 키는 본문 링크 href의 원문 접두어(예: `../사내규정/`), 값은 `<저장소 id>:<저장소 루트 기준 경로 접두어>`(예: `internal-regs:사내규정/`)이며 가장 긴 키가 이긴다. 값의 경로에는 `..`·절대경로를 쓸 수 없고 20개를 넘으면 회의 정보 오류다(Harness Validator와 Viewer가 같은 규칙으로 검사). 매핑된 링크는 근거가 아니어도 `/view/<저장소>/<경로>`로 바뀐다(저장소 루트·폴더를 가리키면 `/view/<저장소>?path=<폴더>`). 같은 저장소 안 상대경로 링크는 매핑 없이 그대로 쓴다.
 - 매핑이 설정에 없는 저장소를 가리키면 그 매핑만 무시하고 그 접두어로 시작하는 링크는 href 원문 그대로 둔다. 문서 머리에 "근거 저장소를 찾지 못했습니다: <id>" 안내를 한 번 보인다. 다른 저장소 근거는 그 저장소의 기본 ref에서 읽는다(매핑 값에 ref를 두지 않는다).
@@ -832,6 +856,8 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | GET | `/raw/{repo_id}/{path}?ref=` | viewer | 원본 파일. png·jpg·gif·webp·svg는 그 이미지 형식, 나머지는 `application/octet-stream`. SVG에는 스크립트를 막는 CSP(`default-src 'none'; style-src 'unsafe-inline'; sandbox`)와 `nosniff` |
 | GET | `/api/repos/{repo_id}/download?path=&format=raw\|html\|pdf&ref=` | viewer | 원본·변환 다운로드(기본 `raw`, `pdf`는 Marp 호출) |
 | GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음, 근거 모음·말풍선 포함). 회의 모드 조건 불충족 404 |
+| GET | `/api/meetings?repo=&status=&channel=&presenter=&q=&from=&to=&order=` | viewer 또는 서비스 토큰 | 회의 대시보드 데이터(서비스 토큰: `Authorization: Bearer <값>`이 `collab.gateway.viewer_service_token_env`가 가리키는 Viewer 환경변수와 상수시간 비교로 일치하면 그룹 헤더 검사를 건너뛴다. 이 면제는 이 엔드포인트에만 적용하고 변수가 비어 있으면 어떤 값도 통과하지 못한다. `{"now", "repos": [{"id", "name", "status", "truncated"}], "meetings": [{"repo_id", "repo_name", "path", "id", "title", "starts_at", "ends_at", "duration_minutes", "channel", "presenters", "cancelled", "status", "url", "present_url", "decisions", "actions", "memo_error"}], "invalid": [{"repo_id", "repo_name", "path", "reason"}]}`). `collab.enabled` 저장소의 기본 브랜치만, `status`는 `upcoming`·`ongoing`·`ended`·`cancelled`(그 밖은 400), `repo`가 없거나 collab 대상이 아니면 404, 일시는 한국 시간, `from`·`to`는 `YYYY-MM-DD`(한국 날짜, 포함) |
+| GET | `/meetings?tab=&repo=&channel=&presenter=&owner=&q=&from=&to=&order=` | viewer | 회의 대시보드 HTML 화면(`meetings`는 예약 경로) |
 | GET | `/api/repos/{repo_id}/board/{version}` | viewer | 스크럼 보드 HTML |
 | GET | `/`, `/{repo_id}?ref=&path=`, `/{repo_id}/{path}?ref=&theme=&mode=` | viewer | 화면 경로: 저장소 목록, 폴더 화면, 문서 화면(`mode=meeting` 회의 모드, `mode=present` 발표 화면, 신뢰 저장소 HTML의 `mode=render`, 새 탭 `layout=full`) |
 | POST | `/api/repos/{repo_id}/webhook` | viewer + service token | Git push 알림(저장소 fetch). `SYNCTX_SERVICE_TOKEN`이 있으면 `X-Service-Token`이 같아야 한다 |
@@ -1004,6 +1030,53 @@ Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전
 - front matter의 `status`, `priority`, `version`, `due_date`만 수정한다.
 - 대상 파일이 없거나 현재 front matter와 event의 `from` 값이 다르면 PR에 `synctx-feedback-conflict` label을 붙이고 자동 수정하지 않는다.
 - 자유 텍스트 요건 변경은 PR 본문에 "내부에서 요건 변경 요청 감지"만 표시하고, 실제 상세 내용은 내부 OpenProject 링크를 참조하도록 한다.
+
+### 7.7 Collab Gateway (Phase 8.3 선택)
+
+Collab Gateway는 회의 문서(Phase 8.1)를 Mattermost 채널과 이어 준다. 새로 만드는 데이터 저장소가 없다. 회의 정보는 Viewer의 `GET /api/meetings`에서만 읽고(Git이 source of truth), 이미 보낸 알림만 자기 상태 파일에 둔다.
+
+- **실행 형태**: Deployment 1개(복제본 고정, 교체 전략 `Recreate`)와 PVC 한 개(`/data/collab-gateway`). 폴링 주기는 `collab.gateway.poll_interval_seconds`(기본 60초)이다. `/healthz`·`/readyz`·`/metrics`만 열고 외부에서 들어오는 API는 없다(8.4에서 추가). Ingress 경로를 만들지 않는다.
+- **읽기**: `Authorization: Bearer <VIEWER_SERVICE_TOKEN>`으로 `/api/meetings?from=<오늘-8일>`을 읽는다. 실패하면 이번 주기를 건너뛰고 `synctx_collab_viewer_fetch_failures_total`을 올린다. 형식이 잘못된 항목은 건너뛴다.
+- **채널 매핑**: 회의의 `meeting.channel`을 `collab.gateway.channels`에서 `{team, channel}`로 바꾼다. 매핑이 없으면 그 회의를 건너뛰고(`synctx_collab_unmapped_channel_total`, 경고 로그는 채널당 프로세스 시작 뒤 한 번) 상태에도 남기지 않는다.
+- **알림 종류**:
+
+| 종류 | 보내는 때 | 중복 방지 키 |
+|------|-----------|--------------|
+| 예고 `reminder` | 시작 전 `reminders`(분)마다 한 번. 시작하지 않은 회의에서 아직 안 보낸 시점이 여럿이면(장애 복구 등) 가장 가까운 시점 하나만 보내고 나머지는 건너뜀으로 기록 | `reminder:<분>:<시작 시각>` (일시가 바뀌면 키가 달라져 다시 보낸다) |
+| 변경 `changed` | 제목·일시·길이·발표자·취소 해제가 바뀌고 회의가 끝나기 전 | `changed:<새 상태 해시>` |
+| 취소 `cancelled` | 알려진 회의가 취소로 바뀌고 끝나기 전 | `cancelled` (취소 해제 시 지움) |
+| 요약 `summary` | `post_summary`가 켜져 있고 회의가 끝난 뒤 7일 안에 `.memo.md` 결정·액션이 있을 때(메모 오류가 있으면 제외) | `summary:<내용 해시>` (내용이 바뀌면 다시 보낸다) |
+
+- **처음 본 회의**: 기준 상태만 저장하고 변경·취소·요약은 알리지 않는다(Gateway를 처음 켤 때 알림이 쏟아지지 않게 한다). 처음부터 취소된 회의, 이미 끝난 회의의 요약도 보내지 않는다.
+- **중복 방지와 실패 처리**: 발송에 성공한 직후 상태 파일(원자적 교체, 권한 0600)에 키를 쓴다. 발송 성공과 저장 사이에 프로세스가 죽으면 같은 알림이 한 번 더 나갈 수 있다(최소 한 번 전달). 실패하면 기록하지 않고 다음 주기에 다시 시도하며, 같은 키가 연속 10번 실패하면 포기로 기록한다(`gave_up`). 변경 알림이 실패하는 동안은 기준 상태를 갱신하지 않아 다시 시도한다. 상태 파일이 읽히지 않으면 `.corrupt-<시각>`으로 옮기고 새로 시작한다(그 뒤에는 처음 본 회의 규칙이 적용된다). 마지막으로 본 지 90일이 지난 항목은 지운다. 상태 파일 잠금을 다른 프로세스가 쥐고 있으면 그 주기를 건너뛴다.
+- **Mattermost 호출**: 봇 토큰으로 `GET /api/v4/teams/name/{team}/channels/name/{channel}`(채널 id 캐시) 뒤 `POST /api/v4/posts`. 연결 오류·429(`Retry-After`는 30초까지만 따름)·5xx는 호출 안에서 최대 3번 재시도하고, 401·403(인증)·404(채널 없음)·그 밖의 4xx는 재시도하지 않는다. 채널 게시가 영구 오류로 실패하면 캐시한 채널 id를 버린다. 토큰과 응답 본문은 로그·오류 메시지에 남기지 않는다.
+- **메시지 안전**: 메시지에는 제목·일시·발표자·저장소 이름과 문서·발표 화면 링크만 담는다(요약 알림만 결정·액션 글을 추가). 문서에서 온 모든 글은 줄바꿈·제어 문자를 공백으로 바꾸고 마크다운 특수문자를 이스케이프하며 `@` 뒤에 폭 없는 공백을 넣어 `@channel`·`@all` 멘션과 링크 주입을 막는다. 제목·필드는 200자, 요약 항목은 300자·10건까지 보인다.
+- **보안**: 토큰은 YAML이 아니라 Secret의 환경변수(`MATTERMOST_BOT_TOKEN`, `VIEWER_SERVICE_TOKEN`, `MATTERMOST_COMMAND_TOKEN`)로만 받고, 켰는데 비어 있으면 시작이 실패한다(값은 오류에 싣지 않는다). Helm NetworkPolicy는 DNS·Viewer(8000)·Mattermost 포트로만 나가게 제한한다. Viewer의 서비스 토큰은 `/api/meetings`에만 통한다(5.5).
+- **운영 한계**: Docker Compose 배포는 아직 지원하지 않는다. 로컬 minikube용 Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`, `setup-mattermost.sh`, `verify-collab.sh`)가 있다. 공식 Mattermost 이미지가 amd64 전용이라 ARM64 개발 기기에서는 qemu 에뮬레이션(binfmt)이 있어야 하고, 없으면 `exec format error`로 기동하지 못한다(local-development.md 5.2). Apple Silicon의 `synctx` minikube에서 에뮬레이션으로 Mattermost 10.11.19를 띄워, 봇 토큰으로 Gateway의 Mattermost 어댑터가 올린 시험 글이 채널에서 읽히는 것까지 확인했다. 클러스터 안에서 Viewer와 Gateway 파드가 함께 도는 전체 흐름은 아직 확인하지 못했다. Alert 규칙은 `promtool test rules`로 확인한다.
+
+#### 7.7.1 `/synctx` 명령 (Phase 8.4)
+
+Mattermost 슬래시 명령 `/synctx`는 같은 Gateway가 `POST /api/collab/mattermost/command`로 받는다. 새 Viewer API를 만들지 않고, 알림이 쓰는 폴링이 읽어 둔 `/api/meetings` 데이터로만 답한다.
+
+| 명령 | 응답 |
+|------|------|
+| `/synctx 오늘` | 이 채널에 매핑된 회의 중 오늘(한국 날짜)에 시작하는 것(시간순, 상태: 예정·진행 중·종료·취소) |
+| `/synctx 예정 [일수]` | 지금부터 N일(기본 7, 1~30) 안에 진행 중이거나 시작하는 회의를 날짜별로 |
+| `/synctx 회의 <id 또는 제목>` | 회의 정보(일시·상태·발표자·저장소·결정/액션 건수)와 문서·발표 화면 링크 |
+| `/synctx 정리 <id 또는 제목>` | 결정사항·액션 아이템(담당·기한). `.memo.md`가 없으면 안내, 읽기 오류면 읽지 못했다는 안내 |
+| `/synctx 도움말` | 명령 목록 |
+
+영어 별칭 `today`·`upcoming`·`meeting`·`summary`·`help`를 받는다. 검색·근거·참여(Jitsi)는 만들지 않았다(검색은 Viewer 검색 API가 협업 저장소만 거르지 못하고, 근거는 노출하는 API가 없으며, 참여는 8.2가 필요하다).
+
+- **인증**: form 본문의 `token`을 환경변수 `MATTERMOST_COMMAND_TOKEN`과 상수시간으로 비교한다(`mattermost.command_token_env`). 불일치·누락은 401(`synctx_collab_commands_total{result="unauthorized"}`, 본문은 읽지 않은 것처럼 처리), 토큰이 없거나 `collab.gateway.commands_enabled: false`이거나 Gateway가 꺼져 있으면 503이다(알림 기능은 그대로 동작). 필수 필드(`team_domain`·`channel_name`·`user_id`)가 없으면 400, 본문이 16 KiB를 넘거나 필드가 50개를 넘으면 413·400이다.
+- **채널 범위**: 요청의 `team_domain`·`channel_name`(소문자로 비교)을 `channels`에서 거꾸로 찾아, 그 채팅 채널에 매핑된 `meeting.channel` 키들의 회의만 보인다(키가 여럿이어도 된다). 매핑이 없으면 회의 목록을 읽지 않고 "이 채널에 연결된 회의가 없습니다"만 답한다. 다른 채널 회의는 id를 알아도 "찾지 못했습니다"로 답한다.
+- **응답**: 항상 HTTP 200에 `{"response_type": "ephemeral", "text": ...}`(요청자에게만 보임)이다. 한 응답은 목록 20건·후보 5건·15000자까지다. 회의 제목·메모·발표자 글은 알림과 같은 이스케이프를 거친다(멘션·링크 주입 방지). 예상하지 못한 오류는 "처리하지 못했습니다"로만 답하고 내용을 싣지 않는다.
+- **응답 시간(3초 제한)**: 폴링이 마지막으로 읽은 목록이 `poll_interval_seconds × 3` 안이면 그대로 쓰고, 오래됐으면 2초 제한으로 Viewer를 직접 읽는다. 실패하면 "지금 회의 정보를 읽지 못했습니다"(`unavailable`)로 답한다. 폴링이 한 번 실패해도 직전 목록으로 답한다.
+- **입력 검증**: 제어 문자는 공백으로 바꾸고 인자는 200자 이하, 일수는 1~30의 정수(`14`, `14일`), 제목은 부분 일치(대소문자 무시)다. id가 정확히 같은 회의가 있으면 제목 일치보다 우선하고, 여러 건이 맞으면 id와 제목 후보 5건을 보여 주며 id로 다시 입력하게 한다.
+- **속도 제한**: 사용자(`user_id`)별 분당 `command_rate_limit_per_minute`(기본 10)회, 프로세스 메모리의 슬라이딩 윈도(추적 키 10000개 상한)다. 초과하면 안내만 답하고(`rate_limited`) 인증에 실패한 요청은 횟수를 쓰지 않는다.
+- **감사·관측**: 로그 `collab_command command=… result=… channel=<매핑된 키> user=<사용자 id의 SHA-256 앞 12자> ms=…`만 남기고 명령 본문·토큰·사용자 id 원문은 남기지 않는다. 메트릭 `synctx_collab_commands_total{command, result}`(`command`: `today`·`upcoming`·`meeting`·`summary`·`help`·`unknown`, `result`: `ok`·`no_channel`·`not_found`·`ambiguous`·`invalid`·`rate_limited`·`unauthorized`·`unavailable`·`error`)와 Alert `SynctxCollabCommandUnauthorized`.
+- **등록**: Mattermost가 명령 토큰을 직접 발급한다. 명령은 트리거 `synctx`, 메서드 POST, 호출 주소 `http://<Gateway Service>/api/collab/mattermost/command`로 만들고 자동 완성 힌트를 둔다. 발급된 토큰을 Secret의 `command-token`에 넣는다. Mattermost 서버는 `ServiceSettings.AllowedUntrustedInternalConnections`에 Gateway 호스트를 허용해야 사내 주소로 호출한다. 로컬은 `setup-mattermost.sh`가 REST로 등록한다.
+- **확인 범위**: 명령 해석·채널 범위·인증·속도 제한·응답 형식은 단위·엔드포인트 테스트로 확인했다. 슬래시 명령 등록은 로컬 Mattermost 10.11.19(amd64 에뮬레이션)에서 실제로 확인했다(이 과정에서 명령 목록 조회 경로가 `GET /api/v4/commands?team_id=&custom_only=true`임을 바로잡았다). Mattermost가 `/synctx` 실행을 Gateway로 전달해 응답이 오는 흐름도 같은 로컬 Mattermost에서 확인했다: 호스트에서 가짜 Viewer(`/api/meetings`)와 Gateway를 루프백에 띄우고(Mattermost는 `host.minikube.internal`로 호출), 관리자 REST `commands/execute`로 `도움말`·`오늘`·`예정`·`회의`·`정리`·없는 회의·미지원 명령을 실행해 모두 요청자에게만 보이는 응답을 받았고 Mattermost가 발급한 토큰이 인증을 통과했으며 제목의 `@channel`이 멘션이 되지 않았다. 로그에는 사용자 id 해시와 명령 이름·결과만 남았다. 사람이 채팅 화면에서 직접 누르는 경로, 클러스터 안 Viewer·Gateway 파드가 함께 도는 전체 흐름은 아직 확인하지 못했다.
 
 ## 8. 배포 설계
 
@@ -1269,6 +1342,11 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `synctx_feedback_mail_failures_total`
 - `synctx_feedback_last_success_timestamp` (실패 없이 끝난 실행의 시각)
 - `synctx_html_render_total{repo_id, result}` (`result`: `ok`, `denied_token`, `denied_dest`, `disabled`, `not_html`, `too_large`, `bundle_error`. `too_large`는 합본 전 `blob_size_resolved` 사전 413, `bundle_error`는 합본 중 실패·크기 초과. `/render` 결과만 집계, 토큰·SHA·경로 라벨 금지, 모르는 저장소는 `unknown`)
+- `synctx_collab_notifications_total{kind, result}` (`kind`: `reminder`, `changed`, `cancelled`, `summary`. `result`: `sent`, `failed`, `gave_up`. Gateway가 0으로 먼저 만들어 둔다)
+- `synctx_collab_unmapped_channel_total`
+- `synctx_collab_viewer_fetch_failures_total`
+- `synctx_collab_commands_total{command, result}` (`/synctx` 명령 처리 결과. 7.7.1. 0으로 먼저 만들어 둔다)
+- `synctx_collab_last_success_timestamp` (Viewer에서 회의를 읽는 데 성공한 주기의 시각)
 - `synctx_html_bundle_total` (synctx-html 블록 처리 결과. `result`: `ok`, `disabled`, `missing_file`, `outside_repo`, `disallowed_host`, `too_large`, `invalid_block`, `unsupported`)
 
 HTTP 메트릭은 `scope["route"]`로 렌더 경로를 식별해 standalone `/view/render`·K8s `/render` 모두 `/render/{token}/{repo_id}/{path}` 고정 라벨로 정규화한다(`_normalize_path`). authz·경로 거부·파일 조회 실패는 기존 HTTP 상태별 메트릭으로 확인한다. 신규 렌더 Alert 임계값은 운영 확인 뒤 정한다.
@@ -1277,7 +1355,7 @@ HTTP 메트릭은 `scope["route"]`로 렌더 경로를 식별해 standalone `/vi
 
 | 출처 | 경로 |
 |------|------|
-| Viewer·CDN·Marp | `synctx/metrics: "true"` 라벨이 붙은 Service의 `/metrics`를 ServiceMonitor(`synctx`)가 수집한다 |
+| Viewer·CDN·Marp·Collab Gateway | `synctx/metrics: "true"` 라벨이 붙은 Service의 `/metrics`를 ServiceMonitor(`synctx`)가 수집한다 |
 | Sync Engine (CronJob) | 실행이 끝나면 저장소별 누적값을 Pushgateway(`synctx-pushgateway:9091`)에 push하고, ServiceMonitor(`synctx-pushgateway`, `honorLabels: true`)가 수집한다 |
 | Outbound Feedback Exporter (CronJob) | 실행이 끝나면 누적값을 같은 Pushgateway에 `job="synctx-feedback"` 그룹으로 push한다 |
 
@@ -1317,6 +1395,7 @@ Outbound Feedback CronJob도 실행마다 새 프로세스이므로 같은 방�
 - readiness failure 5분 지속 (`SynctxReadinessFailure`)
 - Viewer 5xx 응답 비율 5분간 5% 초과 (`SynctxViewerHighErrorRate`)
 - synctx-html 합본이 허용되지 않은 외부 주소 또는 크기 초과로 거부됨 (`SynctxHtmlBundleRejected`, 저장소별 1시간 안에 1건 이상, warning)
+- Collab Gateway(`collabGateway.enabled`일 때만): 발송 실패 30분 안에 5회 이상 (`SynctxCollabNotificationFailures`, warning), 발송 포기 1시간 안에 1건 이상 (`SynctxCollabNotificationGaveUp`, critical), Viewer 조회 실패 15분 안에 10회 이상 (`SynctxCollabViewerFetchFailing`, warning), 회의 조회 성공 없이 10분 초과 (`SynctxCollabStalled`, critical), 채널 매핑 누락 (`SynctxCollabUnmappedChannel`, warning), `/synctx` 명령 인증 실패 10분 안에 5회 이상 (`SynctxCollabCommandUnauthorized`, warning)
 
 Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound Feedback Alert(메일 발송 실패, redaction 실패)는 Pushgateway로 수집한 시계열로 평가한다. `scripts/tests/test_prometheus_rules.py`가 Helm이 렌더한 PrometheusRule을 `promtool test rules`로 평가한다(`scripts/tests/prometheus/*.test.yaml`). promtool이 없으면 `PROMTOOL` 환경변수로 컨테이너 명령을 준다.
 
@@ -1336,10 +1415,13 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 | Marp 출판 인증 | pytest(Marp TestClient) | `publish_auth` → `GIT_PUBLISH_TOKEN` → `repositories[0].auth` 순서, `publish_auth_fallback` 경고 |
 | Offline build | vendor artifact only | 외부 네트워크 없이 이미지 빌드 |
 | Meeting mode | pytest(TestClient) + `node --test`(memo-core.js) | 회의 모드 판단, 스크립트 JSON 인코딩, 내보내기 본문 텍스트 일치, 메모 위치 복원·병합·탭 간 저장 |
+| Meeting dashboard | pytest(`meeting_index.py` 단위, 실제 Git clone, Viewer TestClient) | 후보 판정(`meeting:`·숨김 경로·`.memo.md` 제외), 검증 실패 사유, 상태 경계·시간대, 필터·정렬, 메모 파일 파서(삭제·잘못된 항목·id 불일치·크기·개수 상한), 캐시, 부분 복제·미준비 저장소, 권한(authz), 비 collab 저장소 제외, 본문 이스케이프 |
+| Meeting evidence |
 | Meeting evidence | pytest(`evidence.py` 단위, Viewer TestClient, frontmatter 검증) + `node --test`(evidence-core.js) | 발췌 규칙(앵커 없음·명시 앵커·제목 slug·표 행·굵은 조문 경계·앵커 못 찾음·해설 블록·`synctx-html` 블록 한 줄 안내·상한), 접두어 매핑(가장 긴 키·없는 저장소·`..` 거부), 근거 링크 판정, 발췌 정화, `references` 형식 오류, 본문 글자가 근거 없는 렌더와 같음, 메모 포함 HTML의 근거 데이터·외부 참조 없음, 7개 테마 글자 대비 |
 | HTML embed | pytest(`html_bundle` 단위, Viewer TestClient, Sync fake Git) | 합본 규칙·CSP meta·매크로 이스케이프, Viewer 렌더링·CSP, Sync 다시 처리할 조건(묶음 파일 변경, 정책 변경, 누락 파일 복구, 참조 교체) |
 | HTML render | WP1 단위 + WP2 TestClient·로그·메트릭 + WP3 `node --test`·DOM·실제 브라우저 + WP4 배포 검사 | ref 포함 정규형 토큰·만료·교체 키·`_FILE`·SHA reader 예외 변환, 독립 clone 파드 2개 중 한쪽만 fetch 후 다른 쪽 SHA 재확인·404, 두 플래그 opt-in·재시작 후 해제, 읽기 전 크기 검사·사전 413 라벨, `%2e%2e` 경로 400, authz 403·FastAPI 422·404 JSON 오류의 sandbox/no-referrer/no-store, standalone 경로의 CSP·메트릭·로그, 상대 `target=pf` 중첩 문서, 소스 보기 유지, iframe 재로드 없는 확대·복귀, 토큰 로그 비노출·라벨 정규화, 두 로컬·Docker 경로와 Helm 키 전달. 운영 SSO 쿠키 SameSite·Secure의 2단계 중첩 요청은 운영 시험(미완료)이며 로컬·무인증 Chromium 결과와 구분. 렌더 미사용 운영 업그레이드 회귀와 롤링 키 공존 검증 포함. Chromium spike는 설계 근거이며 구현 수용 시험은 별도(상세 `html-embed-design.md` 14.9) |
-| Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync·Feedback fake Pushgateway | Sync·Feedback Alert 발생·미발생 시점, 실행 간 누적값, 0 기준값, push 그룹 |
+| Alert rule | `promtool test rules`(Pushgateway 모양 시계열) + Sync·Feedback fake Pushgateway | Sync·Feedback Alert 발생·미발생 시점, 실행 간 누적값, 0 기준값, push 그룹. Collab Gateway Alert 5종의 발생·미발생·해소 시점(`collab-alerts.test.yaml`, 직접 수집 시계열) |
+| Collab Gateway | pytest(`services/collab-gateway/tests`: 스케줄러·상태·메시지·Mattermost 어댑터(httpx MockTransport)·Viewer 클라이언트·러너·앱·명령 해석·속도 제한·명령 엔드포인트) + pytest(`scripts/tests/test_helm_collab_gateway.py`: `helm template`) | 예고 시점·장애 복구·일시 변경·처음 본 회의, 변경·취소·요약, 중복 방지·재시작, 재시도·포기, 매핑 누락, 상태 파일 손상·잠금, 멘션·링크 이스케이프, 토큰 비노출, Helm 복제본 고정·PVC·Secret·NetworkPolicy·검증 실패, `/synctx` 채널 범위·토큰 인증·속도 제한·ephemeral 응답·감사 로그, 슬래시 명령 등록 REST(모의 전송) |
 | Viewer 화면·검색 | pytest(`viewer_ui`·`search`·`linear_inline` 단위, Viewer TestClient) + `node --test`(viewer-core.js) | 상단 바·서랍·오류 안내 화면 이스케이프, 본문 검색 기한·동시 실행 제한·상태, 파일 찾기·최근 문서, Markdown 인라인 렌더 결과가 python-markdown과 같음, 오류 `detail` 고정 문구·git 인증정보 가림 |
 | 배포 옵션 | pytest(`scripts/tests`: `helm template`, `deploy.sh`·`compose.sh`, `run-viewer.sh`, `run-lite.sh`, `seed_cdn.py`) | 서비스 옵션과 D1·D2·D8 렌더 실패, Pushgateway 배포 조건, 게이트웨이 설정·`nginx -t`·TLS·신뢰 프록시 검사, 로컬 Viewer 설정 생성, 경량 소스·단일 컨테이너 인자·캐시·Secret·빌드 위임(fake Docker), CDN 시드 |
 
@@ -1531,10 +1613,26 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
   - [x] 발췌 전용 허용 목록 정화
   - [x] 링크 말풍선(포인터·키보드·Esc)과 근거 모음(인용한 곳·원문 열기)
   - [x] 메모 포함 HTML에 근거 모음·말풍선 포함
-- [ ] 8.1c 회의 문서 대시보드
+- [x] 8.1c 회의 문서 대시보드
+  - [x] `GET /api/meetings`·`/meetings`(상태 탭·저장소/채널/발표자/기간/제목 필터)와 회의 수집·캐시(`meeting_index.py`)
+  - [x] `<문서명>.memo.md` 결정·액션 집계(담당자·기한, 서버 저장 없음)
+  - [x] 상단 바 「회의」·회의 정보 카드 「회의 대시보드로」 링크
 - [ ] 8.2 Jitsi 내장
 - [ ] 8.3 Collab Gateway
+  - [x] `collab.gateway` 설정 모델과 Viewer `/api/meetings` 서비스 토큰 인증
+  - [x] `services/collab-gateway`: 예고·변경·취소·요약 알림, 상태 파일 중복 방지, Mattermost 어댑터, 채널 매핑, 메트릭
+  - [x] Helm `collabGateway`(복제본 1·PVC·Secret·NetworkPolicy·검증)와 Alert 5종(promtool 규칙 테스트)
+  - [x] 로컬 minikube Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`·`setup-mattermost.sh`·`verify-collab.sh`, 값 파일 `values-local.collab.secret.yaml`)
+  - [x] 실제 Mattermost(10.11.19, amd64 에뮬레이션)에서 어댑터로 올린 글이 채널에 도달함을 `verify-collab.sh`로 확인
+  - [ ] 클러스터 안에서 Viewer·Gateway 파드가 함께 돌며 실제 회의 알림이 도달하는 전체 흐름(미확인. Viewer가 읽을 회의 저장소 토큰이 필요하다)
+  - [x] 운영 Runbook(12.10: 알림 장애, 봇·서비스 토큰 교체, 상태 파일 초기화)
+  - [ ] Docker Compose 배포(제외 결정, 미구현)
 - [ ] 8.4 `/synctx` 명령과 채널
+  - [x] `/synctx 오늘`·`예정`·`회의`·`정리`·`도움말`(채널 범위, 토큰 인증, 속도 제한, 요청자에게만 보이는 응답, 감사 로그, 메트릭·Alert)
+  - [x] 로컬 Mattermost에 슬래시 명령 등록(`setup-mattermost.sh`, Mattermost가 발급한 명령 토큰을 Secret에 사용. 실제 Mattermost에서 등록 확인)
+  - [ ] 검색·근거·참여 명령(보류: 검색은 Viewer 검색 API의 협업 저장소 필터, 근거는 노출 API, 참여는 8.2가 먼저)
+  - [x] 실제 Mattermost에서 `/synctx` 실행이 Gateway로 전달돼 응답이 오는 흐름 확인(호스트의 가짜 Viewer·Gateway, `commands/execute`)
+  - [ ] 클러스터 안 Viewer·Gateway 파드와 채팅 화면에서 직접 누르는 전체 흐름(미확인. 회의 저장소 접근 토큰이 필요)
 
 완료 기준(8.1a):
 
@@ -1548,7 +1646,25 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 - `synctx.meeting.references`로 다른 저장소의 문서를 근거로 가리킬 수 있고, 설정에 없는 저장소는 안내만 보이며 링크는 그대로 남는다.
 - 메모 포함 HTML을 네트워크 없이 열어도 말풍선과 근거 모음이 동작한다(외부 참조 없음).
 
-### Phase 9: 인터랙티브 HTML 임베드
+완료 기준(8.1c):
+
+- `collab.enabled` 저장소의 기본 브랜치에 있는 회의 문서가 `/view/meetings`에 상태·일시순으로 모이고, 오류 문서는 사유와 함께 「확인 필요」에 보인다.
+- 같은 폴더에 `<문서명>.memo.md`(회의 모드 `.md` 내보내기)를 커밋하면 결정사항·액션 아이템이 대시보드에 집계되고, 서버는 메모를 저장하지 않는다.
+- `collab.enabled`가 꺼진 저장소의 회의는 목록·API에 나오지 않는다.
+
+완료 기준(8.3):
+
+- `meeting.channel`이 `collab.gateway.channels`에 매핑된 회의는 설정한 시점마다 한 번 Mattermost 채널에 안내가 가고, 재시작해도 같은 알림이 다시 가지 않는다(발송과 상태 저장 사이에 죽은 경우 제외).
+- 회의 일시·제목·발표자 변경과 취소가 채널에 알려지고, 처음 켤 때 기존 회의에 대한 알림이 쏟아지지 않는다.
+- 메시지에 담긴 문서 유래 글이 멘션이나 링크가 되지 않고, 토큰이 로그·오류에 남지 않는다.
+- 실제 Mattermost에서의 도달은 `verify-collab.sh`로 확인했다(어댑터 단위. Viewer·Gateway 파드를 거친 전체 흐름은 미확인).
+
+완료 기준(8.4):
+
+- Mattermost 채널에서 `/synctx 오늘`·`예정`·`회의`·`정리`를 실행하면 그 채널에 매핑된 회의만 요청자에게만 보이는 메시지로 나오고, 다른 채널의 회의는 id를 알아도 나오지 않는다.
+- 명령 토큰이 틀리면 응답하지 않고(401) 로그·메트릭에만 남으며, 사용자별 분당 호출 수가 제한된다.
+- 로그에는 명령 본문·토큰·사용자 id 원문이 남지 않는다.
+- 검색·근거·참여 명령은 이번 범위가 아니다. 클러스터 안 파드를 거친 전체 흐름은 미확인이다.
 
 - [x] XWiki `markdown/1.2` 안 html 매크로 실행 확인 (로컬 XWiki 16.10.17에서 확인)
 - [x] 설정 모델과 출처·부분집합 검사
@@ -1683,6 +1799,16 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 7. `enabled` 또는 `render_files`를 해제할 때는 플랫폼 설정을 반영하고 Viewer Deployment의 rollout restart를 수행한다. 로컬 minikube에서는 직접 kubectl을 실행하지 않고 `scripts/local/steps/deploy-synctx.sh`의 재시작 단계를 쓴다. `config = load_config()`가 import 때 한 번만 실행되므로 모든 파드가 새 설정으로 재시작됐는지 확인한 뒤 기존 유효 토큰도 403인지 확인한다. 이미 실행 중인 iframe은 강제로 종료하지 않는다.
 8. 파드별 `cat-file -e {sha}^{commit}` 실패는 서명된 ref fetch 후 같은 SHA를 재확인한다. 여전히 없으면 404·원래 화면 새로 고침으로 복구한다. 루트 초과 상대 경로의 서명 불일치는 만료로 안내하지 않는다. 키·토큰은 출력하지 않는다.
 9. 접근·앱 로그와 메트릭 라벨에 토큰이 없는지 점검한다. 인그레스·EFK 잔존 위험은 수용한 범위이며 로그 접근권한·보존 기간을 확인한다. 앞단에서 `/render`에 XFO·`frame-ancestors`를 추가했다면 중첩 프레임이 차단되므로 해당 경로 예외를 확인한다.
+
+### 12.10 Collab Gateway 알림 장애·토큰 교체
+
+1. `SynctxCollabNotificationFailures`·`SynctxCollabNotificationGaveUp`: Gateway 로그의 `collab_notification_failed`·`collab_notification_gave_up`의 `reason`을 본다. `auth`는 봇 토큰, `channel_not_found`는 `channels`의 team·channel 이름(또는 봇의 채널 참여), `network`·`http_5xx`는 Mattermost 접근과 NetworkPolicy(`collabGateway.networkPolicy.mattermost`)를 확인한다. 토큰·응답 본문은 로그에 없다.
+2. `gave_up`으로 기록된 알림은 다시 보내지 않는다. 원인을 고친 뒤에도 이미 시작한 회의의 예고는 의미가 없으므로 그대로 둔다. 취소·변경 알림을 꼭 다시 보내야 하면 해당 회의 항목을 상태 파일에서 지운다(6번).
+3. `SynctxCollabViewerFetchFailing`·`SynctxCollabStalled`: Viewer 상태와 `VIEWER_SERVICE_TOKEN`이 Gateway와 Viewer에서 같은 Secret 값인지 본다(Viewer가 403이면 두 값이 다르거나 Viewer를 재시작하지 않은 것이다).
+4. `SynctxCollabUnmappedChannel`: 로그의 `collab_unmapped_channel channel=<값>`을 보고 `.synctx.yaml`의 `collab.gateway.channels`에 그 채널을 추가한다. 채널 매핑이 없는 동안 그 회의는 상태에도 남지 않으므로, 매핑을 추가하면 처음 본 회의로 취급되어 변경·취소 이력은 알리지 않는다.
+5. `/synctx` 명령이 안 될 때: `SynctxCollabCommandUnauthorized`가 울리면 Mattermost의 명령 토큰과 Secret `command-token`이 같은지, Gateway를 재시작했는지 본다(Mattermost에서 명령을 지웠다 다시 만들면 토큰이 바뀐다). Mattermost에서 "Command with a trigger of 'synctx' failed"가 보이면 호출 주소·Gateway Service·`AllowedUntrustedInternalConnections`와 NetworkPolicy를 확인한다. 응답이 "지금 회의 정보를 읽지 못했습니다"면 `SynctxCollabViewerFetchFailing` 절차(3번)를 따른다. 명령 토큰 교체는 Mattermost에서 명령을 새로 만들어 값을 Secret(`command-token`)에 넣고 Gateway를 재시작한다.
+6. 봇 토큰 교체: Mattermost에서 새 토큰을 만들고 Secret(`bot-token`)을 바꾼 뒤 Gateway를 재시작한다(복제본 1개, `Recreate`). 서비스 토큰을 바꿀 때는 Secret의 `viewer-service-token`을 바꾸고 Viewer와 Gateway를 둘 다 재시작한다. 상태 파일을 초기화하려면 Gateway를 내린 뒤 PVC의 `collab_gateway_state.json`을 지운다. 이후 모든 회의가 처음 본 회의로 취급되어 변경·취소·요약은 알리지 않고, 시작 전 시점이 지난 예고는 가장 가까운 것 하나만 다시 간다.
+7. 상태 파일이 손상되면 `.corrupt-<시각>`으로 옮겨지고(로그 `collab_state_reset`) 새로 시작한다. 같은 PVC를 쓰는 두 프로세스가 동시에 돌면 한쪽은 `collab_cycle_skipped`를 남기고 그 주기를 건너뛴다.
 
 ## 13. 남은 외부 검증 항목
 
