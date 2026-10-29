@@ -28,6 +28,18 @@ tests:
               summary: "Sync Engine 30분 이상 성공 없음"
               description: "Sync Engine이 30분 넘게 성공적인 동기화를 완료하지 못했습니다."
 
+  # repo_id 없이 값 0으로 들어온 계열은 Sync의 마지막 성공 시각이 아니므로 울리지 않는다
+  - interval: 5m
+    input_series:
+      - series: 'synctx_sync_last_success_timestamp{job="synctx"}'
+        values: '0x12'
+      - series: 'synctx_sync_last_success_timestamp{job="synctx-sync",repo_id="ok"}'
+        values: '0+300x12'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SynctxSyncNoSuccess
+        exp_alerts: []
+
   # Sync가 0부터 둔 계열이 1로 오르면 첫 인증 오류도 증가로 잡힌다
   - interval: 1m
     input_series:

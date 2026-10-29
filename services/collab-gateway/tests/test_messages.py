@@ -59,6 +59,13 @@ def test_changed_message_lists_changes():
     assert "변경" in text and "일시" in text and "10-16 10:00" in text and "이" in text
 
 
+def test_changed_message_does_not_repeat_changed_fields_below():
+    m = meeting()
+    text = messages.changed_message(m, [("일시", "2026-10-15 14:00 (60분)", "2026-10-15 15:00 (60분)")], BASE)
+    assert text.count("- 일시:") == 1 and "→" in text
+    assert "- 저장소:" in text
+
+
 def test_cancelled_message():
     text = messages.cancelled_message(meeting(cancelled=True), BASE)
     assert "취소" in text and "DX 회의" in text

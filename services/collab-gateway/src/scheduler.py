@@ -43,15 +43,18 @@ def snapshot_of(m: Meeting) -> dict:
 
 
 def _when(snap: dict) -> str:
-    start = datetime.fromisoformat(snap["starts_at"])
-    return f"{start:%Y-%m-%d %H:%M} ({snap['duration_minutes']}분)"
+    start = datetime.fromisoformat(snap["starts_at"]).astimezone(KST)
+    label = start.strftime("%Y-%m-%d %H:%M:%S" if start.second else "%Y-%m-%d %H:%M")
+    return f"{label} ({snap['duration_minutes']}분)"
 
 
 def diff_snapshots(old: dict, new: dict) -> list[tuple[str, str, str]]:
     changes = []
     if old["title"] != new["title"]:
         changes.append(("제목", old["title"], new["title"]))
-    if old["starts_at"] != new["starts_at"] or old["duration_minutes"] != new["duration_minutes"]:
+    old_start = datetime.fromisoformat(old["starts_at"]).astimezone(KST)
+    new_start = datetime.fromisoformat(new["starts_at"]).astimezone(KST)
+    if old_start != new_start or old["duration_minutes"] != new["duration_minutes"]:
         changes.append(("일시", _when(old), _when(new)))
     if old["presenters"] != new["presenters"]:
         changes.append(("발표자", ", ".join(old["presenters"]) or "없음", ", ".join(new["presenters"]) or "없음"))

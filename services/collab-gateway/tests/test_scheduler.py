@@ -40,6 +40,23 @@ class TestSnapshot:
         labels = [c[0] for c in scheduler.diff_snapshots(old, new)]
         assert labels == ["제목", "일시", "발표자"]
 
+    def test_same_instant_in_other_offset_is_not_a_change(self):
+        old = scheduler.snapshot_of(meeting())
+        old["starts_at"] = "2026-10-15T06:00:00+00:00"
+        assert scheduler.diff_snapshots(old, scheduler.snapshot_of(meeting())) == []
+
+    def test_old_snapshot_in_other_offset_is_shown_in_kst(self):
+        old = scheduler.snapshot_of(meeting())
+        old["starts_at"] = "2026-10-15T06:00:00+00:00"
+        new = scheduler.snapshot_of(meeting(duration_minutes=90))
+        assert scheduler.diff_snapshots(old, new) == [("일시", "2026-10-15 15:00 (60분)", "2026-10-15 15:00 (90분)")]
+
+    def test_seconds_only_change_is_not_shown_as_identical(self):
+        old = scheduler.snapshot_of(meeting())
+        new = scheduler.snapshot_of(meeting(starts_at=START + timedelta(seconds=30)))
+        [(label, before, after)] = scheduler.diff_snapshots(old, new)
+        assert label == "일시" and before != after
+
     def test_diff_includes_cancel_toggle(self):
         old = scheduler.snapshot_of(meeting(cancelled=True))
         new = scheduler.snapshot_of(meeting())

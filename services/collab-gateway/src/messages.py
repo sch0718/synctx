@@ -47,9 +47,11 @@ def _title_link(m: Meeting, base_url: str) -> str:
     return f"[{escape(m.title)}]({_url(base_url, m.url)})"
 
 
-def _facts(m: Meeting) -> list[str]:
-    lines = [f"- 일시: {time_label(m.starts_at, m.duration_minutes)}"]
-    if m.presenters:
+def _facts(m: Meeting, exclude: tuple[str, ...] = ()) -> list[str]:
+    lines = []
+    if "일시" not in exclude:
+        lines.append(f"- 일시: {time_label(m.starts_at, m.duration_minutes)}")
+    if m.presenters and "발표자" not in exclude:
         lines.append(f"- 발표자: {escape(', '.join(m.presenters))}")
     lines.append(f"- 저장소: {escape(m.repo_name)}")
     return lines
@@ -61,7 +63,8 @@ def reminder_message(m: Meeting, base_url: str) -> str:
 
 def changed_message(m: Meeting, changes: list[tuple[str, str, str]], base_url: str) -> str:
     rows = [f"- {escape(label)}: {escape(old)} → {escape(new)}" for label, old, new in changes]
-    return "\n".join([f":pencil2: **회의 변경** · {_title_link(m, base_url)}", *rows, *_facts(m), _links(m, base_url)])
+    facts = _facts(m, tuple(label for label, _, _ in changes))
+    return "\n".join([f":pencil2: **회의 변경** · {_title_link(m, base_url)}", *rows, *facts, _links(m, base_url)])
 
 
 def cancelled_message(m: Meeting, base_url: str) -> str:

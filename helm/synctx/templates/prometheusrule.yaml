@@ -26,7 +26,7 @@ spec:
         {{- end }}
         # 1. Sync가 30분 이상 성공하지 못함
         - alert: SynctxSyncNoSuccess
-          expr: time() - synctx_sync_last_success_timestamp > 1800
+          expr: time() - synctx_sync_last_success_timestamp{repo_id!=""} > 1800
           for: 5m
           labels:
             severity: critical
