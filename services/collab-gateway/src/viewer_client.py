@@ -13,6 +13,8 @@ from models import DocumentLink, EvidenceResult, Meeting, MemoItem, SearchResult
 
 logger = logging.getLogger(__name__)
 
+FAILED_REPO_STATUSES = ("failed", "timeout", "unavailable")
+
 TIMEOUT_SECONDS = 10.0
 COMMAND_TIMEOUT_SECONDS = 2.0
 SEARCH_REPO_LIMIT = 5
@@ -169,6 +171,11 @@ class ViewerClient:
         payload = await self._get("/api/meetings", params)
         if not isinstance(payload.get("meetings"), list):
             raise ViewerError("Viewer 응답 형식이 올바르지 않습니다")
+        repos = payload.get("repos")
+        failed = [r.get("id") for r in repos if isinstance(r, dict) and r.get("status") in FAILED_REPO_STATUSES] if isinstance(repos, list) else []
+        if failed:
+            logger.warning("viewer_repos_failed repos=%s", ",".join(str(r) for r in failed))
+            raise ViewerError("Viewer가 일부 저장소의 회의를 읽지 못했습니다")
         meetings = [m for m in map(parse_meeting, payload["meetings"]) if m is not None]
         skipped = len(payload["meetings"]) - len(meetings)
         if skipped:

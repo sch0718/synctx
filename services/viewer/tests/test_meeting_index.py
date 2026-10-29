@@ -95,6 +95,13 @@ class TestCollect:
         assert res.invalid[0].path == "docs/bad.md"
         assert res.invalid[0].reason
 
+    def test_unparsable_front_matter_only_invalidates_that_document(self):
+        res = collect({"docs/bad.md": meeting_doc(mid="bad", starts="2026-10-32T15:00:00+09:00"),
+                       "docs/ok.md": meeting_doc(mid="ok")})
+        assert res.status == "ok"
+        assert [m.id for m in res.meetings] == ["ok"]
+        assert [i.path for i in res.invalid] == ["docs/bad.md"]
+
     def test_unavailable_and_unsupported(self):
         assert collect({}, status="cloning").status == "unavailable"
         assert collect({}, storage_mode="blobless").status == "unsupported"

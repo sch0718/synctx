@@ -222,3 +222,18 @@ def test_jitsi_metadata_is_optional_and_validated():
     m = parse_meeting(api_meeting(jitsi=meta))
     assert m.jitsi_enabled and m.joinable_from.isoformat() == meta['joinable_from']
     assert m.joinable_until.isoformat() == meta['joinable_until']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["failed", "timeout", "unavailable"])
+async def test_repo_level_failure_is_not_treated_as_empty_meetings(status):
+    payload = {"meetings": [], "repos": [{"id": "r", "name": "저장소", "status": status, "truncated": False}], "invalid": []}
+    with pytest.raises(ViewerError):
+        await client_for(lambda r: httpx.Response(200, json=payload)).fetch_meetings()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_repo_is_not_a_fetch_failure():
+    payload = {"meetings": [api_meeting()], "invalid": [],
+               "repos": [{"id": "r", "status": "ok", "truncated": False}, {"id": "p", "status": "unsupported", "truncated": False}]}
+    assert len(await client_for(lambda r: httpx.Response(200, json=payload)).fetch_meetings()) == 1

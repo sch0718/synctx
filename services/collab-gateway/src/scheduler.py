@@ -65,7 +65,8 @@ def _digest(value) -> str:
 
 
 def _summary_digest(m: Meeting) -> str:
-    return _digest([[i.text, i.owner, i.due] for i in m.decisions] + [[i.text, i.owner, i.due] for i in m.actions])
+    return _digest([["decision", i.text, i.owner, i.due] for i in m.decisions]
+                   + [["action", i.text, i.owner, i.due] for i in m.actions])
 
 
 def plan_meeting(m: Meeting, entry: Optional[dict], *, reminders: list[int], post_summary: bool, now: datetime) -> Plan:
@@ -94,6 +95,7 @@ def plan_meeting(m: Meeting, entry: Optional[dict], *, reminders: list[int], pos
         key = f"changed:{_digest(new)}"
         if key not in sent:
             notes.append(Notification("changed", key, m, changes))
+            drop.extend(k for k in sent if k.startswith("changed:") and k != key)
 
     if not m.cancelled and now < m.starts_at:
         start = _start_iso(m)

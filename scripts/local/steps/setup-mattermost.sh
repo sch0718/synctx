@@ -15,7 +15,7 @@ if [ ${#CHANNELS[@]} -eq 0 ]; then
     CHANNELS=("team-docs")
 fi
 LOCAL_PORT="${MATTERMOST_LOCAL_PORT:-18065}"
-COMMAND_URL="${SYNCTX_COMMAND_URL:-http://synctx-collab-gateway/api/collab/mattermost/command}"
+COMMAND_URL="${SYNCTX_COMMAND_URL:-http://synctx-collab-gateway.${NAMESPACE}.svc.cluster.local/api/collab/mattermost/command}"
 ADMIN_PASSWORD_FILE="${HOME}/.cache/synctx/mattermost-admin-password"
 COLLAB_VALUES_FILE="${PROJECT_ROOT}/helm/synctx/values-local.collab.secret.yaml"
 

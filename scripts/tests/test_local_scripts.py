@@ -353,7 +353,7 @@ def test_setup_mattermost_writes_private_values_file(tmp_path):
         assert f"channel create --team synctx --name {channel}" in calls
     uv_call = next(line for line in calls.splitlines() if line.startswith("uv "))
     assert "mattermost_bot.py" in uv_call and "--team synctx --bot synctx-bot" in uv_call and uv_call.endswith("chan-a chan-b")
-    assert "--command-url http://synctx-collab-gateway/api/collab/mattermost/command" in uv_call
+    assert "--command-url http://synctx-collab-gateway.synctx.svc.cluster.local/api/collab/mattermost/command" in uv_call
     assert "SECRETBOTTOKEN" not in result.stdout and "SECRETCMDTOKEN" not in result.stdout
     password_file = tmp_path / "home" / ".cache" / "synctx" / "mattermost-admin-password"
     assert oct(password_file.stat().st_mode & 0o777) == "0o600"
@@ -378,14 +378,14 @@ def test_setup_mattermost_fails_without_a_token_and_writes_no_file(tmp_path, bot
 
 def test_command_url_matches_gateway_service_and_endpoint():
     setup = SETUP_MATTERMOST.read_text()
-    url = re.search(r'COMMAND_URL="\$\{SYNCTX_COMMAND_URL:-([^}]+)\}"', setup).group(1)
-    assert url == "http://synctx-collab-gateway/api/collab/mattermost/command"
+    url = re.search(r'COMMAND_URL="\$\{SYNCTX_COMMAND_URL:-(.+)\}"', setup).group(1)
+    assert url == "http://synctx-collab-gateway.${NAMESPACE}.svc.cluster.local/api/collab/mattermost/command"
     values, _ = _values_local()
     assert values["collabGateway"]["networkPolicy"]["mattermost"]["namespace"]
     gateway_app = (ROOT / "services" / "collab-gateway" / "src" / "app.py").read_text()
     assert 'COMMAND_PATH = "/api/collab/mattermost/command"' in gateway_app
     mattermost_env = [m for m in _deploy_mattermost_env()]
-    assert "synctx-collab-gateway" in mattermost_env and "host.minikube.internal" in mattermost_env
+    assert "synctx-collab-gateway.${NAMESPACE}.svc.cluster.local" in mattermost_env and "host.minikube.internal" in mattermost_env
 
 
 def test_setup_mattermost_requires_running_mattermost(tmp_path):

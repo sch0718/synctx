@@ -177,3 +177,12 @@ def test_read_failure_is_counted_and_has_fixed_detail(client, monkeypatch):
 def test_ref_parameter_cannot_select_another_branch(client):
     response = client.get('/api/meetings/r/now/jitsi?ref=feature', headers=GROUPS)
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize('grep_status', ['failed', 'timeout'])
+def test_repo_read_failure_is_unavailable_not_missing(client, grep_status):
+    import app
+    app.repo_managers['r'].grep_status = grep_status
+    meeting_index.clear_cache()
+    response = client.get('/api/meetings/r/now/jitsi', headers=GROUPS)
+    assert response.status_code == 503 and response.json()['detail']['reason'] == 'unavailable'

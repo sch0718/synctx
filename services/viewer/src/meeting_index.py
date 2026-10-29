@@ -207,7 +207,11 @@ def _build(repo_id: str, repo_name: str, manager: Any, sha: str) -> RepoMeetings
         if text is None:
             invalid.append(InvalidMeeting(repo_id, repo_name, path, "문서가 너무 커서 회의 정보를 읽지 않았습니다"))
             continue
-        found, bad = _entry_from_document(repo_id, repo_name, path, text)
+        try:
+            found, bad = _entry_from_document(repo_id, repo_name, path, text)
+        except (ValueError, TypeError):
+            invalid.append(InvalidMeeting(repo_id, repo_name, path, "front matter를 해석하지 못했습니다"))
+            continue
         if bad is not None:
             invalid.append(bad)
         if found is None:
@@ -249,6 +253,9 @@ def collect(repo_id: str, repo_name: str, manager: Any) -> RepoMeetings:
     if result.status == "ok":
         _cache[repo_id] = (sha, result)
     return result
+
+
+FAILED_STATUSES = ("failed", "timeout", "unavailable")
 
 
 def status_of(entry: MeetingEntry, now: datetime) -> str:

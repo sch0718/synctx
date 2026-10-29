@@ -34,7 +34,7 @@ export JITSI_HOST ADVERTISE_IPS PROJECT_ROOT
 umask 077
 JITSI_VALUES_FILE="${PROJECT_ROOT}/helm/synctx/values-local.jitsi.secret.yaml"
 export JITSI_VALUES_FILE
-uv run --offline --frozen --all-packages python - <<'PY'
+uv run --project "${PROJECT_ROOT}" --offline --frozen --all-packages python - <<'PY'
 import os
 import secrets
 from pathlib import Path

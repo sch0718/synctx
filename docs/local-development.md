@@ -228,7 +228,7 @@ minikube tunnel -p "${MINIKUBE_PROFILE:-minikube}"
 ./scripts/local/steps/deploy-synctx.sh               # 위 값 파일이 있으면 Collab Gateway도 배포
 ```
 
-봇 계정·토큰과 `/synctx` 슬래시 명령은 `mmctl --local`이 지원하지 않아 관리자로 로그인해 REST API로 만든다(`scripts/local/steps/mattermost_bot.py`). 슬래시 명령의 호출 주소는 `http://synctx-collab-gateway/api/collab/mattermost/command`(환경변수 `SYNCTX_COMMAND_URL`로 바꿈)이고, Mattermost가 발급한 명령 토큰이 Gateway Secret의 `command-token`이 된다. 명령은 Gateway가 클러스터에 배포된 뒤(`deploy-synctx.sh`) 채널에서 `/synctx 도움말`로 시험한다. 관리자 계정(`admin`)의 비밀번호는 `~/.cache/synctx/mattermost-admin-password`(권한 600)에 저장된다. 접속은 `kubectl port-forward -n synctx-deps svc/mattermost 8065:8065`.
+봇 계정·토큰과 `/synctx` 슬래시 명령은 `mmctl --local`이 지원하지 않아 관리자로 로그인해 REST API로 만든다(`scripts/local/steps/mattermost_bot.py`). 슬래시 명령의 호출 주소는 `http://synctx-collab-gateway.synctx.svc.cluster.local/api/collab/mattermost/command`(환경변수 `SYNCTX_COMMAND_URL`로 바꿈)이고, Mattermost가 발급한 명령 토큰이 Gateway Secret의 `command-token`이 된다. 명령은 Gateway가 클러스터에 배포된 뒤(`deploy-synctx.sh`) 채널에서 `/synctx 도움말`로 시험한다. 관리자 계정(`admin`)의 비밀번호는 `~/.cache/synctx/mattermost-admin-password`(권한 600)에 저장된다. 접속은 `kubectl port-forward -n synctx-deps svc/mattermost 8065:8065`.
 
 이 기기처럼 amd64 에뮬레이션이 없으면 Mattermost 파드가 `exec format error`로 재시작을 반복한다(Docker Desktop의 Rosetta는 minikube 노드 안의 중첩 컨테이너에서 쓸 수 없다). Docker Desktop 설정으로 QEMU 에뮬레이션을 쓰거나 `docker run --privileged --rm tonistiigi/binfmt --install amd64`로 qemu binfmt를 등록해야 한다(Docker VM 전체에 적용된다). 등록은 Docker VM이 다시 시작되면 사라질 수 있다. 등록 뒤 이미 재시작을 반복하는 Mattermost 파드는 삭제해 새로 띄운다.
 

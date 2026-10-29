@@ -53,7 +53,7 @@ validate_options() {
         [ -n "${SYNCTX_TLS_CERT:-}" ] && [ -n "${SYNCTX_TLS_KEY:-}" ] || fail "Jitsi에는 HTTPS TLS 설정이 필요합니다"
         [ -n "${SYNCTX_JITSI_ADVERTISE_IPS:-}" ] || fail "SYNCTX_JITSI_ADVERTISE_IPS를 지정하세요"
         [ -n "${JITSI_JICOFO_PASSWORD:-}" ] && [ -n "${JITSI_JVB_PASSWORD:-}" ] || fail "Jitsi XMPP 암호 파일(secrets.env)이 필요합니다"
-        if ! uv run --offline --frozen --all-packages python "${DOCKER_SCRIPT_DIR}/validate_jitsi.py" "$(abs_path "${SYNCTX_CONFIG_FILE:-}")"; then
+        if ! uv run --project "${PROJECT_ROOT}" --offline --frozen --all-packages python "${DOCKER_SCRIPT_DIR}/validate_jitsi.py" "$(abs_path "${SYNCTX_CONFIG_FILE:-}")"; then
             fail "Jitsi 설정·키 검증 실패"
         fi
     fi

@@ -850,7 +850,10 @@ def _verify_jitsi_access(x_forwarded_groups: str = Header(default="")):
 def meeting_jitsi(repo_id: str, meeting_id: str, request: Request, x_forwarded_user: str = Header(default="")):
     try:
         _require_collab_repo(repo_id)
-        found = [m for result in _collect_meetings(repo_id) for m in result.meetings if m.id == meeting_id]
+        collected = _collect_meetings(repo_id)
+        found = [m for result in collected for m in result.meetings if m.id == meeting_id]
+        if not found and any(result.status in meeting_index.FAILED_STATUSES for result in collected):
+            raise LookupError("meeting repository unavailable")
         if len(found) != 1:
             raise HTTPException(status_code=404, detail="회의를 찾지 못했습니다")
     except HTTPException:

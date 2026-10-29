@@ -167,6 +167,14 @@ class TestChanged:
         key = plan(m, entry_for(old)).notifications[0].key
         assert plan(m, entry_for(old, sent={key: "t"})).notifications == []
 
+    def test_returning_to_an_earlier_state_notifies_again(self):
+        a, b = meeting(title="A"), meeting(title="B")
+        first = plan(b, entry_for(a)).notifications[0]
+        back = plan(a, entry_for(b, sent={first.key: "t"}))
+        assert kinds(back) == ["changed"] and back.drop == [first.key]
+        again = plan(b, entry_for(a, sent={back.notifications[0].key: "t"}))
+        assert kinds(again) == ["changed"] and again.notifications[0].key == first.key
+
     def test_changed_after_end_is_silent(self):
         old = meeting()
         p = plan(meeting(title="새 제목"), entry_for(old), now=START + timedelta(days=1))
@@ -212,3 +220,9 @@ class TestSummary:
     def test_expires_after_seven_days(self):
         m = self.ended()
         assert plan(m, entry_for(m), now=START + timedelta(days=9), summary=True).notifications == []
+
+
+def test_summary_digest_separates_decisions_from_actions():
+    as_decision = meeting(decisions=(item("점검", "김", "2026-10-20"),))
+    as_action = meeting(actions=(item("점검", "김", "2026-10-20"),))
+    assert scheduler._summary_digest(as_decision) != scheduler._summary_digest(as_action)

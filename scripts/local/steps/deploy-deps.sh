@@ -530,9 +530,9 @@ spec:
               value: "true"
             - name: MM_SERVICESETTINGS_ENABLECOMMANDS
               value: "true"
-            # 슬래시 명령 호출 주소: 클러스터 안 Gateway(synctx-collab-gateway)와 호스트에서 직접 돌리는 개발용 Gateway
+            # 슬래시 명령 호출 주소: 클러스터 안 Gateway(synctx-collab-gateway.<네임스페이스>.svc.cluster.local)와 호스트에서 직접 돌리는 개발용 Gateway
             - name: MM_SERVICESETTINGS_ALLOWEDUNTRUSTEDINTERNALCONNECTIONS
-              value: "synctx-collab-gateway,host.minikube.internal"
+              value: "synctx-collab-gateway.${NAMESPACE}.svc.cluster.local,host.minikube.internal"
             - name: MM_TEAMSETTINGS_ENABLEOPENSERVER
               value: "true"
             - name: MM_PLUGINSETTINGS_ENABLE
