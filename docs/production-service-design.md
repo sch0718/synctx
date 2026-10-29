@@ -1078,7 +1078,7 @@ Collab Gateway는 회의 문서(Phase 8.1)를 Mattermost 채널과 이어 준다
 - **Mattermost 호출**: 봇 토큰으로 `GET /api/v4/teams/name/{team}/channels/name/{channel}`(채널 id 캐시) 뒤 `POST /api/v4/posts`. 연결 오류·429(`Retry-After`는 30초까지만 따름)·5xx는 호출 안에서 최대 3번 재시도하고, 401·403(인증)·404(채널 없음)·그 밖의 4xx는 재시도하지 않는다. 채널 게시가 영구 오류로 실패하면 캐시한 채널 id를 버린다. 토큰과 응답 본문은 로그·오류 메시지에 남기지 않는다.
 - **메시지 안전**: 메시지에는 제목·일시·발표자·저장소 이름과 문서·발표 화면 링크만 담는다(요약 알림만 결정·액션 글을 추가). 문서에서 온 모든 글은 줄바꿈·제어 문자를 공백으로 바꾸고 마크다운 특수문자를 이스케이프하며 `@` 뒤에 폭 없는 공백을 넣어 `@channel`·`@all` 멘션과 링크 주입을 막는다. 제목·필드는 200자, 요약 항목은 300자·10건까지 보인다.
 - **보안**: 토큰은 YAML이 아니라 Secret의 환경변수(`MATTERMOST_BOT_TOKEN`, `VIEWER_SERVICE_TOKEN`, `MATTERMOST_COMMAND_TOKEN`)로만 받고, 켰는데 비어 있으면 시작이 실패한다(값은 오류에 싣지 않는다). Helm NetworkPolicy는 DNS·Viewer(8000)·Mattermost 포트로만 나가게 제한한다. Viewer의 서비스 토큰은 `/api/meetings`와 그 하위 근거 목록 API, `/api/search`에만 통한다(5.5). 기존 Viewer(8000) 호출과 Secret을 그대로 사용한다.
-- **운영 한계**: Docker Compose 배포는 아직 지원하지 않는다. 로컬 minikube용 Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`, `setup-mattermost.sh`, `verify-collab.sh`)가 있다. 공식 Mattermost 이미지가 amd64 전용이라 ARM64 개발 기기에서는 qemu 에뮬레이션(binfmt)이 있어야 하고, 없으면 `exec format error`로 기동하지 못한다(local-development.md 5.2). Apple Silicon의 `synctx` minikube에서 에뮬레이션으로 Mattermost 10.11.19를 띄워, 봇 토큰으로 Gateway의 Mattermost 어댑터가 올린 시험 글이 채널에서 읽히는 것까지 확인했다. 클러스터 안에서 Viewer와 Gateway 파드가 함께 도는 전체 흐름은 아직 확인하지 못했다. Alert 규칙은 `promtool test rules`로 확인한다.
+- **운영 한계**: Docker Compose 배포는 아직 지원하지 않는다. 로컬 minikube용 Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`, `setup-mattermost.sh`, `verify-collab.sh`)가 있다. 공식 Mattermost 이미지가 amd64 전용이라 ARM64 개발 기기에서는 qemu 에뮬레이션(binfmt)이 있어야 하고, 없으면 `exec format error`로 기동하지 못한다(local-development.md 5.2). Apple Silicon의 `synctx` minikube에서 에뮬레이션으로 Mattermost 10.11.19를 띄워, 봇 토큰으로 Gateway의 Mattermost 어댑터가 올린 시험 글이 채널에서 읽히는 것까지 확인했다. 2026-10-29에는 같은 클러스터에 Viewer·Gateway 파드를 함께 배포하고, `meeting-docs`의 임시 브랜치에 올린 가상 회의로 시작 안내·변경·취소 알림이 채널에 도달하는 것과 Gateway 지표(Viewer 조회 실패 0회)를 확인했다. 요약 알림(`post_summary`)은 확인하지 못했다. Alert 규칙은 `promtool test rules`로 확인한다.
 
 #### 7.7.1 `/synctx` 명령 (Phase 8.4)
 
@@ -1105,7 +1105,7 @@ Mattermost 슬래시 명령 `/synctx`는 같은 Gateway가 `POST /api/collab/mat
 - **속도 제한**: 사용자(`user_id`)별 분당 `command_rate_limit_per_minute`(기본 10)회, 프로세스 메모리의 슬라이딩 윈도(추적 키 10000개 상한)다. 초과하면 안내만 답하고(`rate_limited`) 인증에 실패한 요청은 횟수를 쓰지 않는다.
 - **감사·관측**: 로그 `collab_command command=… result=… channel=<매핑된 키> user=<사용자 id의 SHA-256 앞 12자> ms=…`만 남기고 명령 본문·토큰·사용자 id 원문은 남기지 않는다. 메트릭 `synctx_collab_commands_total{command, result}`(`command`: `today`·`upcoming`·`meeting`·`summary`·`search`·`evidence`·`help`·`unknown`, `result`: `ok`·`no_channel`·`not_found`·`ambiguous`·`invalid`·`rate_limited`·`unauthorized`·`unavailable`·`error`)와 Alert `SynctxCollabCommandUnauthorized`.
 - **등록**: Mattermost가 명령 토큰을 직접 발급한다. 명령은 트리거 `synctx`, 메서드 POST, 호출 주소 `http://<Gateway Service>/api/collab/mattermost/command`로 만들고 자동 완성 힌트를 둔다. 발급된 토큰을 Secret의 `command-token`에 넣는다. Mattermost 서버는 `ServiceSettings.AllowedUntrustedInternalConnections`에 Gateway 호스트를 허용해야 사내 주소로 호출한다. 로컬은 `setup-mattermost.sh`가 REST로 등록하며 힌트에 `검색 <키워드>`·`근거 <id>`를 포함한다.
-- **확인 범위**: 검색·근거는 pytest와 httpx MockTransport로 인증·범위·상한·발췌 제외·타임아웃·오류를 확인하며, 실제 Mattermost·클러스터 실행은 아직 확인하지 못했다. 기존 명령 해석·채널 범위·인증·속도 제한·응답 형식은 단위·엔드포인트 테스트로 확인했다. 슬래시 명령 등록은 로컬 Mattermost 10.11.19(amd64 에뮬레이션)에서 실제로 확인했다(이 과정에서 명령 목록 조회 경로가 `GET /api/v4/commands?team_id=&custom_only=true`임을 바로잡았다). Mattermost가 `/synctx` 실행을 Gateway로 전달해 응답이 오는 흐름도 같은 로컬 Mattermost에서 확인했다: 호스트에서 가짜 Viewer(`/api/meetings`)와 Gateway를 루프백에 띄우고(Mattermost는 `host.minikube.internal`로 호출), 관리자 REST `commands/execute`로 `도움말`·`오늘`·`예정`·`회의`·`정리`·없는 회의·미지원 명령을 실행해 모두 요청자에게만 보이는 응답을 받았고 Mattermost가 발급한 토큰이 인증을 통과했으며 제목의 `@channel`이 멘션이 되지 않았다. 로그에는 사용자 id 해시와 명령 이름·결과만 남았다. 사람이 채팅 화면에서 직접 누르는 경로, 클러스터 안 Viewer·Gateway 파드가 함께 도는 전체 흐름은 아직 확인하지 못했다.
+- **확인 범위**: 검색·근거는 pytest와 httpx MockTransport로 인증·범위·상한·발췌 제외·타임아웃·오류를 확인하며, 실제 Mattermost·클러스터 실행은 2026-10-29에 확인했다(검색 결과와 근거 없음 안내까지이며 근거 목록이 있는 회의는 확인하지 못했다). 기존 명령 해석·채널 범위·인증·속도 제한·응답 형식은 단위·엔드포인트 테스트로 확인했다. 슬래시 명령 등록은 로컬 Mattermost 10.11.19(amd64 에뮬레이션)에서 실제로 확인했다(이 과정에서 명령 목록 조회 경로가 `GET /api/v4/commands?team_id=&custom_only=true`임을 바로잡았다). Mattermost가 `/synctx` 실행을 Gateway로 전달해 응답이 오는 흐름도 같은 로컬 Mattermost에서 확인했다: 호스트에서 가짜 Viewer(`/api/meetings`)와 Gateway를 루프백에 띄우고(Mattermost는 `host.minikube.internal`로 호출), 관리자 REST `commands/execute`로 `도움말`·`오늘`·`예정`·`회의`·`정리`·없는 회의·미지원 명령을 실행해 모두 요청자에게만 보이는 응답을 받았고 Mattermost가 발급한 토큰이 인증을 통과했으며 제목의 `@channel`이 멘션이 되지 않았다. 로그에는 사용자 id 해시와 명령 이름·결과만 남았다. 사람이 채팅 화면에서 직접 누르는 경로, 클러스터 안 Viewer·Gateway 파드가 함께 도는 전체 흐름은 아직 확인하지 못했다.
 
 ## 8. 배포 설계
 
@@ -1666,7 +1666,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
   - [x] Helm `collabGateway`(복제본 1·PVC·Secret·NetworkPolicy·검증)와 Alert 5종(promtool 규칙 테스트)
   - [x] 로컬 minikube Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`·`setup-mattermost.sh`·`verify-collab.sh`, 값 파일 `values-local.collab.secret.yaml`)
   - [x] 실제 Mattermost(10.11.19, amd64 에뮬레이션)에서 어댑터로 올린 글이 채널에 도달함을 `verify-collab.sh`로 확인
-  - [ ] 클러스터 안에서 Viewer·Gateway 파드가 함께 돌며 실제 회의 알림이 도달하는 전체 흐름(미확인. Viewer가 읽을 회의 저장소 토큰이 필요하다)
+  - [x] 클러스터 안에서 Viewer·Gateway 파드가 함께 돌며 실제 회의 알림이 도달하는 전체 흐름(2026-10-29, `meeting-docs` 임시 브랜치의 가상 회의로 시작 안내·변경(제목을 되돌렸다 다시 바꾸는 경우 포함)·취소가 채널에 도달, 임시 브랜치는 삭제. 요약 알림은 미확인)
   - [x] 운영 Runbook(12.10: 알림 장애, 봇·서비스 토큰 교체, 상태 파일 초기화)
   - [ ] Docker Compose 배포(제외 결정, 미구현)
 - [ ] 8.4 `/synctx` 명령과 채널
@@ -1674,9 +1674,10 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
   - [x] 로컬 Mattermost에 슬래시 명령 등록(`setup-mattermost.sh`, Mattermost가 발급한 명령 토큰을 Secret에 사용. 실제 Mattermost에서 등록 확인)
   - [x] 검색·근거 명령(Viewer 서비스 토큰·협업 필터·근거 API, 채널 저장소별 검색 최대 5개·비협업 참조 제외·검색 발췌 제외·항목 단위 링크 검증·partial/omitted·5/20건과 초과 안내·명령별 실패 문구·합산 기한·자동완성 힌트 pytest/MockTransport 검증)
   - [x] 참여 명령(`join`, 8.2 A1 코드·단위 테스트, 실제 Jitsi 검증은 8.2 미완료 항목)
-  - [ ] 검색·근거 명령을 실제 Mattermost·클러스터 Viewer·Gateway로 실행 확인
+  - [x] 검색·근거 명령을 실제 Mattermost·클러스터 Viewer·Gateway로 실행 확인(2026-10-29, 검색 결과와 근거 없음 안내. 근거 목록이 있는 회의는 미확인)
   - [x] 실제 Mattermost에서 `/synctx` 실행이 Gateway로 전달돼 응답이 오는 흐름 확인(호스트의 가짜 Viewer·Gateway, `commands/execute`)
-  - [ ] 클러스터 안 Viewer·Gateway 파드와 채팅 화면에서 직접 누르는 전체 흐름(미확인. 회의 저장소 접근 토큰이 필요)
+  - [x] 클러스터 안 Viewer·Gateway 파드를 거친 `/synctx` 도움말·오늘·예정·회의·참여·정리·검색·근거 실행(2026-10-29, 관리자 REST `commands/execute`)
+  - [ ] 채팅 화면에서 사람이 직접 `/synctx`를 누르는 경로
 
 완료 기준(8.1a):
 
@@ -1701,14 +1702,14 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 - `meeting.channel`이 `collab.gateway.channels`에 매핑된 회의는 설정한 시점마다 한 번 Mattermost 채널에 안내가 가고, 재시작해도 같은 알림이 다시 가지 않는다(발송과 상태 저장 사이에 죽은 경우 제외).
 - 회의 일시·제목·발표자 변경과 취소가 채널에 알려지고, 처음 켤 때 기존 회의에 대한 알림이 쏟아지지 않는다.
 - 메시지에 담긴 문서 유래 글이 멘션이나 링크가 되지 않고, 토큰이 로그·오류에 남지 않는다.
-- 실제 Mattermost에서의 도달은 `verify-collab.sh`로 확인했다(어댑터 단위. Viewer·Gateway 파드를 거친 전체 흐름은 미확인).
+- 실제 Mattermost에서의 도달은 `verify-collab.sh`로 확인했다(어댑터 단위). Viewer·Gateway 파드를 거친 전체 흐름은 2026-10-29에 확인했다(8.3 체크리스트 참조).
 
 완료 기준(8.4):
 
 - Mattermost 채널에서 `/synctx 오늘`·`예정`·`회의`·`정리`를 실행하면 그 채널에 매핑된 회의만 요청자에게만 보이는 메시지로 나오고, 다른 채널의 회의는 id를 알아도 나오지 않는다.
 - 명령 토큰이 틀리면 응답하지 않고(401) 로그·메트릭에만 남으며, 사용자별 분당 호출 수가 제한된다.
 - 로그에는 명령 본문·토큰·사용자 id 원문이 남지 않는다.
-- 검색은 채널에 매핑된 회의의 저장소 id 최대 5개를 각각 요청해 경로·링크 최대 5건, 근거는 채널 안 회의의 제목·링크 최대 20건을 발췌 없이 답한다. 상한 초과는 `… 외 N건`, 일부 근거 생략은 `partial`·`omitted` 안내로 알린다(pytest 검증). 참여 명령(join)은 구현되어 회의 문서·발표 링크와 참여 시간 사유를 안내한다. 참여·검색·근거의 실제 Mattermost 실행과 클러스터 안 파드를 거친 전체 흐름은 미확인이다.
+- 검색은 채널에 매핑된 회의의 저장소 id 최대 5개를 각각 요청해 경로·링크 최대 5건, 근거는 채널 안 회의의 제목·링크 최대 20건을 발췌 없이 답한다. 상한 초과는 `… 외 N건`, 일부 근거 생략은 `partial`·`omitted` 안내로 알린다(pytest 검증). 참여 명령(join)은 구현되어 회의 문서·발표 링크와 참여 시간 사유를 안내한다. 참여·검색·근거를 2026-10-29에 클러스터 안 파드와 실제 Mattermost로 실행해 확인했다(관리자 REST `commands/execute`. 영상 회의가 꺼져 있어 참여는 "영상 회의가 꺼져 있습니다" 안내 경로였다. 채팅 화면에서 사람이 직접 누른 경로와 근거 목록이 있는 회의는 미확인이다).
 
 - [x] XWiki `markdown/1.2` 안 html 매크로 실행 확인 (로컬 XWiki 16.10.17에서 확인)
 - [x] 설정 모델과 출처·부분집합 검사
