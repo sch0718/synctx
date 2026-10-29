@@ -70,6 +70,19 @@ scripts/local/run-viewer.sh --port 18100
   curl -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:18000/view/api/repos/meeting-docs/webhook
   ```
 
+### 0.3 선택 실행 Chromium 브라우저 시험
+
+시스템 Google Chrome과 루트 dependency group `browser`의 Playwright(Python)가 필요하다. 브라우저 바이너리는 내려받지 않으며 `channel="chrome"`으로 설치된 Chrome을 실행한다. 개발 의존성은 네트워크가 가능한 환경에서 미리 준비한다(`uv sync`는 worktree의 `.venv`에 workspace 전체와 `browser` group을 설치한다).
+
+```bash
+uv sync --all-packages --group browser
+uv run --group browser pytest services/viewer/tests/browser -v
+```
+
+시험은 임시 Git 저장소와 loopback 포트의 Viewer·CSP 요청 수신 서버를 사용한다. 외부 네트워크 요청은 허용하지 않으며, 종료 시 서버 스레드와 Chrome을 정리한다. 일반 `uv run pytest`나 `uv run pytest services/viewer/tests -q`에서는 browser 시험을 skip한다. 선택 실행하려면 위처럼 browser 디렉터리(또는 그 안의 시험 파일)만 명시한다. 다른 시험 경로와 한 명령에 섞으면 환경 변수·이벤트 루프가 남아 무관한 시험이 깨지므로 시험이 사용 오류로 거부한다. Playwright 또는 시스템 Chrome이 없을 때도 collection 오류 없이 skip한다. 실행 결과에 skip이 있으면 해당 브라우저 동작을 확인한 것으로 보지 않는다.
+
+시험 범위는 `synctx-html` 버튼 동작, opaque origin·부모 document/저장소/쿠키 격리, CSP의 fetch·이미지 차단, 렌더 보기의 상대 링크와 ref·SHA 유지, 위조 토큰 거부, 만료 안내 뒤 원래 Viewer 화면 새로 고침, 블록 크게 보기·Esc·포커스 복귀다. 위조·만료 토큰의 응답은 설계 14.3에 따라 403이며 자동 토큰 갱신은 하지 않는다. 독립 캐시 파드 2개·운영 SSO·Edge·Firefox·Safari·실제 클릭 전체 화면은 별도 확인이 필요하다.
+
 ## 1. 운영 vs 로컬 환경 비교
 
 | 구성 요소 | 운영 (폐쇄망) | 로컬 (minikube) |

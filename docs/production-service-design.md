@@ -1733,7 +1733,11 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 - [x] WP3 화면 맞춤·비율·전체 화면·새 탭, `synctx-html` 블록 크게 보기·Esc·포커스 복귀와 클라이언트 테스트
 - [x] WP4 WP1 설정·환경변수 이름 확정 후 Helm Secret·values-production 복수 파드 조건·Docker 키/파일 전달·두 로컬 실행 경로의 설정 생성·문서 반영과 배포 검사
 - [ ] 운영 SSO 쿠키 SameSite·Secure의 2단계 중첩 요청 시험과 실패 시 대안 선택. 로컬·무인증 사용과 분리
-- [ ] 구현 후 Chromium 중첩 프레임·독립 캐시 파드 2개 중 한쪽만 fetch·만료/404 복구·JSON 오류 헤더·standalone 경로·실제 클릭 전체 화면 수용 시험, Edge·Firefox·Safari 확인
+- [x] Chromium 자동 시험(`services/viewer/tests/browser/`, 선택 실행). 2026-10-29 macOS 시스템 Google Chrome(headless, Playwright `channel="chrome"`)에서 8개 통과했다. Chrome 외 브라우저 결과는 아니다.
+  - 하네스: `test_viewer_serves_synctx_html_block` — standalone `/view` 경로의 블록 버튼 동작
+  - 격리·CSP: `test_iframe_origin_is_opaque`, `test_iframe_cannot_read_viewer_storage`, `test_external_requests_blocked_by_csp` — opaque origin·부모 document/저장소/쿠키 접근 거부·별도 loopback 수신 서버에 fetch/이미지 요청 미도달 및 CSP 위반 이벤트
+  - 렌더 보기: `test_render_mode_runs_html_and_relative_link_same_snapshot`, `test_tampered_token_returns_403_without_execution`, `test_expired_token_recovers`, `test_block_zoom_overlay_esc_restores_focus` — 상대 `target=pf` 중첩 프레임·같은 ref/SHA·위조 거부·만료 안내 후 Viewer 새로 고침·iframe 재로드 없는 크게 보기와 Esc/포커스 복귀. 위조·만료는 설계 14.3의 403 계약이며 자동 갱신 시험은 아니다.
+- [ ] 독립 캐시 파드 2개 중 한쪽만 fetch·404 복구·JSON 오류 헤더·실제 클릭 전체 화면 수용 시험, Edge·Firefox·Safari 확인(이번 브라우저 시험 범위 밖·미확인). 운영 SSO 시험도 위 별도 항목대로 미확인으로 유지
 
 완료 기준:
 
