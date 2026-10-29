@@ -42,10 +42,11 @@ spec:
             {{- $_ := set $env "DISABLE_HTTPS" "1" }}
             {{- $_ := set $env "ENABLE_P2P" "false" }}
             {{- $_ := set $env "ENABLE_HTTP_REDIRECT" "0" }}
-            {{- $_ := set $env "XMPP_BOSH_URL_BASE" (printf "http://%s-jitsi-prosody:5280" (include "synctx.fullname" $)) }}
+            {{- $_ := set $env "XMPP_BOSH_URL_BASE" (printf "http://%s-jitsi-prosody.%s.svc.%s:5280" (include "synctx.fullname" $) $.Release.Namespace ($j.clusterDomain | default "cluster.local")) }}
             {{- $_ := set $env "JVB_WS_DOMAIN" $j.host }}
-            {{- $_ := set $env "JVB_WS_SERVER_ID" "jvb" }}
-            {{- $_ := set $env "JVB_WS_SERVER" (printf "%s-jitsi-jvb" (include "synctx.fullname" $)) }}
+            {{- $_ := set $env "JVB_WS_SERVER_ID" (printf "%s-jitsi-jvb.%s.svc.%s" (include "synctx.fullname" $) $.Release.Namespace ($j.clusterDomain | default "cluster.local")) }}
+            {{- $_ := set $env "COLIBRI_WEBSOCKET_REGEX" (regexReplaceAll "\\." (printf "%s-jitsi-jvb.%s.svc.%s" (include "synctx.fullname" $) $.Release.Namespace ($j.clusterDomain | default "cluster.local")) "\\.") }}
+            {{- $_ := set $env "JVB_WS_SERVER" (printf "%s-jitsi-jvb.%s.svc.%s" (include "synctx.fullname" $) $.Release.Namespace ($j.clusterDomain | default "cluster.local")) }}
             {{- end }}
             {{- if eq $component "prosody" }}
             {{- $_ := set $env "XMPP_MUC_MODULES" "token_affiliation" }}
@@ -60,7 +61,7 @@ spec:
             {{- $_ := set $env "JVB_TCP_HARVESTER_DISABLED" (ternary "false" "true" $j.jvb.tcpFallback) }}
             {{- $_ := set $env "JVB_TCP_PORT" "4443" }}
             {{- $_ := set $env "JVB_WS_DOMAIN" $j.host }}
-            {{- $_ := set $env "JVB_WS_SERVER_ID" "jvb" }}
+            {{- $_ := set $env "JVB_WS_SERVER_ID" (printf "%s-jitsi-jvb.%s.svc.%s" (include "synctx.fullname" $) $.Release.Namespace ($j.clusterDomain | default "cluster.local")) }}
             {{- $_ := set $env "JVB_ENABLE_APIS" "rest,colibri" }}
             {{- end }}
             {{- range $name, $value := $env }}

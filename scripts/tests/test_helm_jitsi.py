@@ -246,3 +246,14 @@ def test_manifest_reads_shared_tag_with_inline_comment(tmp_path):
     tag = yaml.safe_load((CHART / "values.yaml").read_text())["jitsi"]["imageTag"]
     for component in ("web", "prosody", "jicofo", "jvb"):
         assert f"# image: registry.local:5000/jitsi/{component}:{tag} -> fake-digest\n" in output.read_text()
+
+
+def test_web_proxy_targets_use_fqdn_because_nginx_ignores_search_domains(tmp_path):
+    items = manifests(render(tmp_path, None, "--namespace", "synctx"))
+    web = env(items, "jitsi-web")
+    assert web["XMPP_BOSH_URL_BASE"]["value"] == "http://synctx-jitsi-prosody.synctx.svc.cluster.local:5280"
+    assert web["JVB_WS_SERVER"]["value"] == "synctx-jitsi-jvb.synctx.svc.cluster.local"
+    jvb_id = "synctx-jitsi-jvb.synctx.svc.cluster.local"
+    assert web["COLIBRI_WEBSOCKET_REGEX"]["value"] == r"synctx-jitsi-jvb\.synctx\.svc\.cluster\.local"
+    assert web["JVB_WS_SERVER_ID"]["value"] == jvb_id
+    assert env(items, "jitsi-jvb")["JVB_WS_SERVER_ID"]["value"] == jvb_id

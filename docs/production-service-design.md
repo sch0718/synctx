@@ -1657,9 +1657,11 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
   - [x] A2 정적: Helm 네 워크로드·HTTPS·Secret·설정 불일치 검증, NodePort의 JVB_PORT/containerPort/Service port/nodePort 일치(기본 31000), IP만 광고·XMPP 암호 길이·태그 덮어쓰기 렌더 검사, Viewer 현재/이전 키·Prosody 현재 앱 키 연결
   - [x] A2 정적: Compose profile·게이트웨이 프록시·키 파일 전달, 로컬 선택 배포·Mattermost 자원 보호, 반입 목록
   - [x] A2 정적: test_helm_jitsi.py·test_docker_deploy.py·test_local_scripts.py와 Alert 테스트 명세 추가
-  - [ ] A2 런타임: 이미지 실존·아키텍처·반입, 공식 이미지 기동·probe·token_affiliation 권한·Jicofo 인증 해제·web P2P 해제 유효성·JVB NodePort/hostPort 도달·UDP 방화벽·외부 STUN 요청 없음 확인
-  - [ ] minikube Jitsi 스크립트 실행
-  - [ ] 로컬 실제 Jitsi 접속·입장·참가자 역할·데이터 채널 따라가기, 운영 미디어 품질 검증
+  - [x] A2 런타임(2026-10-29, Apple Silicon minikube `synctx`, 네이티브 arm64): `stable-9823` 네 이미지의 태그 실존(amd64·arm64 매니페스트), 공식 이미지 기동·probe, Viewer 코드가 만든 JWT로 XMPP 입장(발표자 `owner/moderator`, 참석자 `member/participant`), 무토큰·서명 변조·다른 방 토큰 거부, Jicofo 인증 해제 상태에서 conference 생성과 JVB brewery 브리지 인식
+  - [x] 이 확인에서 찾아 고친 결함: Jitsi web의 nginx는 검색 도메인을 쓰지 않아 짧은 서비스 이름(`/xmpp-websocket`의 prosody, `/colibri-ws`의 `jvb`)을 해석하지 못해 502였다. web 프록시 대상(`XMPP_BOSH_URL_BASE`·`JVB_WS_SERVER`·`JVB_WS_SERVER_ID`(web·JVB 동일)·`COLIBRI_WEBSOCKET_REGEX`)을 서비스 FQDN으로 바꿨다(클러스터 도메인은 `jitsi.clusterDomain`, 기본 `cluster.local`). 수정 뒤 `/colibri-ws`가 JVB까지 도달한다(존재하지 않는 방 요청은 JVB가 403)
+  - [x] minikube Jitsi 스크립트 실행(`deploy-jitsi.sh`, Mattermost를 0으로 줄인 상태, Collab Gateway는 꺼짐)
+  - [ ] A2 런타임 남은 것: 이미지 반입(`registry.local:5000`), web P2P 해제 유효성, JVB NodePort/hostPort 도달, UDP 방화벽, 외부 STUN 요청 없음 확인
+  - [ ] 로컬 실제 브라우저 접속·입장, 데이터 채널(endpoint message) 발표자 따라가기, 운영 미디어 품질 검증(이번 확인은 XMPP 수준까지이며 브라우저·미디어는 하지 않았다)
 - [ ] 8.3 Collab Gateway
   - [x] `collab.gateway` 설정 모델과 Viewer `/api/meetings` 서비스 토큰 인증
   - [x] `services/collab-gateway`: 예고·변경·취소·요약 알림, 상태 파일 중복 방지, Mattermost 어댑터, 채널 매핑, 메트릭
