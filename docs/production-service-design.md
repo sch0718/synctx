@@ -1078,7 +1078,7 @@ Collab Gateway는 회의 문서(Phase 8.1)를 Mattermost 채널과 이어 준다
 - **Mattermost 호출**: 봇 토큰으로 `GET /api/v4/teams/name/{team}/channels/name/{channel}`(채널 id 캐시) 뒤 `POST /api/v4/posts`. 연결 오류·429(`Retry-After`는 30초까지만 따름)·5xx는 호출 안에서 최대 3번 재시도하고, 401·403(인증)·404(채널 없음)·그 밖의 4xx는 재시도하지 않는다. 채널 게시가 영구 오류로 실패하면 캐시한 채널 id를 버린다. 토큰과 응답 본문은 로그·오류 메시지에 남기지 않는다.
 - **메시지 안전**: 메시지에는 제목·일시·발표자·저장소 이름과 문서·발표 화면 링크만 담는다(요약 알림만 결정·액션 글을 추가). 문서에서 온 모든 글은 줄바꿈·제어 문자를 공백으로 바꾸고 마크다운 특수문자를 이스케이프하며 `@` 뒤에 폭 없는 공백을 넣어 `@channel`·`@all` 멘션과 링크 주입을 막는다. 제목·필드는 200자, 요약 항목은 300자·10건까지 보인다.
 - **보안**: 토큰은 YAML이 아니라 Secret의 환경변수(`MATTERMOST_BOT_TOKEN`, `VIEWER_SERVICE_TOKEN`, `MATTERMOST_COMMAND_TOKEN`)로만 받고, 켰는데 비어 있으면 시작이 실패한다(값은 오류에 싣지 않는다). Helm NetworkPolicy는 DNS·Viewer(8000)·Mattermost 포트로만 나가게 제한한다. Viewer의 서비스 토큰은 `/api/meetings`와 그 하위 근거 목록 API, `/api/search`에만 통한다(5.5). 기존 Viewer(8000) 호출과 Secret을 그대로 사용한다.
-- **운영 한계**: Docker Compose 배포는 아직 지원하지 않는다. 로컬 minikube용 Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`, `setup-mattermost.sh`, `verify-collab.sh`)가 있다. 공식 Mattermost 이미지가 amd64 전용이라 ARM64 개발 기기에서는 qemu 에뮬레이션(binfmt)이 있어야 하고, 없으면 `exec format error`로 기동하지 못한다(local-development.md 5.2). Apple Silicon의 `synctx` minikube에서 에뮬레이션으로 Mattermost 10.11.19를 띄워, 봇 토큰으로 Gateway의 Mattermost 어댑터가 올린 시험 글이 채널에서 읽히는 것까지 확인했다. 2026-10-29에는 같은 클러스터에 Viewer·Gateway 파드를 함께 배포하고, `meeting-docs`의 임시 브랜치에 올린 가상 회의로 시작 안내·변경·취소 알림이 채널에 도달하는 것과 Gateway 지표(Viewer 조회 실패 0회)를 확인했다. 요약 알림(`post_summary`)은 확인하지 못했다. Alert 규칙은 `promtool test rules`로 확인한다.
+- **운영 한계**: Docker Compose 배포는 아직 지원하지 않는다. 로컬 minikube용 Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`, `setup-mattermost.sh`, `verify-collab.sh`)가 있다. 공식 Mattermost 이미지가 amd64 전용이라 ARM64 개발 기기에서는 qemu 에뮬레이션(binfmt)이 있어야 하고, 없으면 `exec format error`로 기동하지 못한다(local-development.md 5.2). Apple Silicon의 `synctx` minikube에서 에뮬레이션으로 Mattermost 10.11.19를 띄워, 봇 토큰으로 Gateway의 Mattermost 어댑터가 올린 시험 글이 채널에서 읽히는 것까지 확인했다. 2026-10-29에는 같은 클러스터에 Viewer·Gateway 파드를 함께 배포하고, `meeting-docs`의 임시 브랜치에 올린 가상 회의로 시작 안내·변경·취소 알림이 채널에 도달하는 것과 Gateway 지표(Viewer 조회 실패 0회)를 확인했다. 요약 알림(`post_summary`, 로컬은 `values-local.yaml`에서 켠다)은 2026-10-30에 종료된 가상 회의로 Gateway 상태 파일에 `summary:` 전송 기록이 남고 실패가 0건인 것까지 확인했다(채널 표시 문구는 미확인). Alert 규칙은 `promtool test rules`로 확인한다.
 
 #### 7.7.1 `/synctx` 명령 (Phase 8.4)
 
@@ -1668,7 +1668,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
   - [x] Helm `collabGateway`(복제본 1·PVC·Secret·NetworkPolicy·검증)와 Alert 5종(promtool 규칙 테스트)
   - [x] 로컬 minikube Mattermost 시뮬레이션 스크립트(`deploy-deps.sh --mattermost`·`setup-mattermost.sh`·`verify-collab.sh`, 값 파일 `values-local.collab.secret.yaml`)
   - [x] 실제 Mattermost(10.11.19, amd64 에뮬레이션)에서 어댑터로 올린 글이 채널에 도달함을 `verify-collab.sh`로 확인
-  - [x] 클러스터 안에서 Viewer·Gateway 파드가 함께 돌며 실제 회의 알림이 도달하는 전체 흐름(2026-10-29, `meeting-docs` 임시 브랜치의 가상 회의로 시작 안내·변경(제목을 되돌렸다 다시 바꾸는 경우 포함)·취소가 채널에 도달, 임시 브랜치는 삭제. 요약 알림은 미확인)
+  - [x] 클러스터 안에서 Viewer·Gateway 파드가 함께 돌며 실제 회의 알림이 도달하는 전체 흐름(2026-10-29, `meeting-docs` 임시 브랜치의 가상 회의로 시작 안내·변경(제목을 되돌렸다 다시 바꾸는 경우 포함)·취소가 채널에 도달, 임시 브랜치는 삭제. 요약 알림은 2026-10-30에 전송 기록까지 확인, 채널 표시는 미확인)
   - [x] 운영 Runbook(12.10: 알림 장애, 봇·서비스 토큰 교체, 상태 파일 초기화)
   - [ ] Docker Compose 배포(제외 결정, 미구현)
 - [ ] 8.4 `/synctx` 명령과 채널

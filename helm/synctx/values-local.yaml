@@ -243,6 +243,7 @@ synctxConfig:
         enabled: true
         viewer_url: "http://synctx-viewer"
         poll_interval_seconds: 30
+        post_summary: true
         mattermost:
           url: "http://mattermost.synctx-deps.svc.cluster.local:8065"
         channels:
