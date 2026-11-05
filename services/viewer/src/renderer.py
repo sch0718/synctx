@@ -856,33 +856,35 @@ body {
 
 CORPORATE_CSS = """
 body {
-  font-family: "Public Sans", "Nanum Gothic", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-size: 14px; line-height: 1.57; color: #1C252E; background: #fff; margin: 0; padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", Helvetica, Arial, sans-serif;
+  font-size: 14px; line-height: 1.57; color: #1A1A1A; background: #fff; margin: 0; padding: 0;
 }
+body::before { content: ""; display: block; height: 6px; background: #EF3B24; }
 .markdown-body {
   max-width: 980px; margin: 0 auto; padding: 45px; box-sizing: border-box;
 }
 @media (max-width: 767px) { .markdown-body { padding: 15px; } }
 .markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6 {
-  margin-top: 40px; margin-bottom: 8px; font-weight: 800; line-height: 1.25; color: #000;
+  margin-top: 40px; margin-bottom: 8px; font-weight: 800; line-height: 1.25; color: #1A1A1A;
 }
-.markdown-body h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 3px solid #E01E1F; }
-.markdown-body h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid #DFE3E8; }
+.markdown-body h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid #E5E5E5; }
+.markdown-body h1::before { content: ""; display: block; width: 46px; height: 4px; margin-bottom: 14px; background: #EF3B24; }
+.markdown-body h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid #E5E5E5; }
 .markdown-body h3 { font-size: 1.25em; font-weight: 700; }
 .markdown-body h4 { font-size: 1.1em; font-weight: 700; }
 .markdown-body h5 { font-size: 1em; font-weight: 700; }
 .markdown-body h6 { font-size: 0.95em; font-weight: 600; }
 .markdown-body p { margin-top: 0; margin-bottom: 1.25rem; }
-.markdown-body a { color: #E01E1F; text-decoration: none; }
-.markdown-body a:hover { text-decoration: underline; }
+.markdown-body a { color: #B02A14; text-decoration: none; }
+.markdown-body a:hover { text-decoration: underline; text-decoration-color: #EF3B24; }
 .markdown-body strong { font-weight: 700; }
 .markdown-body blockquote {
-  margin: 0 0 16px; padding: 6px 16px; color: #454F5B;
-  border-left: none; background: #F9FAFB; border-radius: 0 8px 8px 0; position: relative;
+  margin: 0 0 16px; padding: 6px 16px; color: #6D6E71;
+  border-left: none; background: #F7F7F7; border-radius: 0 8px 8px 0; position: relative;
 }
 .markdown-body blockquote::before {
-  content: ""; position: absolute; left: 0; top: 1px; bottom: 1px;
-  width: 4px; background: #E01E1F; border-radius: 4px;
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 4px; background: #EF3B24;
 }
 .markdown-body blockquote>:first-child { margin-top: 0; }
 .markdown-body blockquote>:last-child { margin-bottom: 0; }
@@ -892,28 +894,28 @@ body {
 .markdown-body li > p { margin-top: 16px; }
 .markdown-body li + li { margin-top: .25em; }
 .markdown-body code {
-  padding: 2px 4px; font-size: 85%; background: rgba(145,158,171,.2); border-radius: 4px;
-  font-family: "D2Coding", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; color: #1C252E;
+  padding: 2px 4px; font-size: 85%; background: #F7F7F7; border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; color: #B02A14;
 }
 .markdown-body pre {
   margin-top: 0; margin-bottom: 16px; padding: 24px; overflow: auto;
-  font-size: 14px; line-height: 1.57; background: #F9FAFB;
-  border: 1px solid rgba(145,158,171,.16); border-radius: 8px;
+  font-size: 14px; line-height: 1.57; background: #F7F7F7;
+  border: 1px solid #E5E5E5; border-radius: 8px;
 }
 .markdown-body pre code {
-  display: inline; padding: 0; background: transparent; border: 0; font-size: 100%; white-space: pre;
+  display: inline; padding: 0; background: transparent; border: 0; font-size: 100%; white-space: pre; color: #1A1A1A;
 }
 .markdown-body table {
   border-spacing: 0; border-collapse: collapse; margin-bottom: 16px;
   display: block; width: max-content; max-width: 100%; overflow: auto; font-size: 14px;
 }
 .markdown-body table th {
-  font-weight: 600; padding: 8px; border: 1px solid rgba(145,158,171,.2); background: #F4F6F8; color: #454F5B;
+  font-weight: 600; padding: 8px; border: 1px solid #E5E5E5; background: #F7F7F7; color: #6D6E71;
 }
-.markdown-body table td { padding: 8px; border: 1px solid rgba(145,158,171,.2); }
+.markdown-body table td { padding: 8px; border: 1px solid #E5E5E5; }
 .markdown-body table tr { background: #fff; }
-.markdown-body table tr:nth-child(odd) { background: #F9FAFB; }
-.markdown-body hr { height: 1px; margin: 24px 0; background: #DFE3E8; border: 0; }
+.markdown-body table tr:nth-child(odd) { background: #F7F7F7; }
+.markdown-body hr { height: 1px; margin: 24px 0; background: #E5E5E5; border: 0; }
 .markdown-body img { max-width: 100%; height: auto; border-radius: 16px; margin-bottom: 1.25rem; }
 .markdown-body>*:first-child { margin-top: 0!important; }
 .markdown-body>*:last-child { margin-bottom: 0!important; }
@@ -975,9 +977,9 @@ THEME_VARS_CSS = """
     --shadow-sm: 0 1px 2px 0 rgba(145,158,171,0.16);
 }
 [data-theme="corporate"] {
-    --primary: #D91D1E; --primary-light: #E84A4B; --primary-lighter: #FDE8E8; --primary-dark: #B01819;
-    --bg-default: #ffffff; --bg-neutral: #F4F6F8; --bg-card: #ffffff;
-    --text-primary: #1C252E; --text-secondary: #637381; --text-disabled: #919EAB;
+    --primary: #B02A14; --primary-light: #EF3B24; --primary-lighter: #FDECEA; --primary-dark: #8F2210;
+    --bg-default: #ffffff; --bg-neutral: #F7F7F7; --bg-card: #ffffff;
+    --text-primary: #1A1A1A; --text-secondary: #6D6E71; --text-disabled: #919EAB;
     --on-primary: #ffffff;
     --border-color: rgba(145,158,171,0.2);
     --shadow-card: 0 0 2px 0 rgba(145,158,171,0.2), 0 12px 24px -4px rgba(145,158,171,0.12);

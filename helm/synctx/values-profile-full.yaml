@@ -1,0 +1,8 @@
+# 전체: Viewer + CDN + Marp + Slides + Draw.io + Sync + Feedback
+# Feedback은 미리 만들어 둔 Secret(synctx-feedback)을 참조한다. 키는 values.yaml의 feedback.secrets 주석을 따른다.
+# Collab Gateway·Jitsi는 사이트별 값(.synctx.yaml의 collab 설정, 호스트, TLS, 시크릿)이 필요해 이 프리셋에 넣지 않는다. docs/install.md를 본다.
+# 사용법: helm upgrade --install synctx helm/synctx -f helm/synctx/values-profile-full.yaml
+feedback:
+  enabled: true
+  secrets:
+    existingSecret: synctx-feedback

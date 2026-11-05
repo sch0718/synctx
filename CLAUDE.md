@@ -12,6 +12,7 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 | `README.md` | 서비스 소개(소개 그림, 할 수 있는 일, 시작하기, 메뉴별 도움말 표, 데이터 위치, 릴리스). 개발자용 내용은 두지 않는다 |
 | `docs/development.md` | 개발 문서: 프로젝트 배경, 아키텍처 다이어그램, 서비스 테이블, 배포 방식, 서비스별 기능, 프로젝트 구조, 기술 스택 |
 | `docs/help/` | Viewer 메뉴별 도움말. `scripts/build_motion.py`가 `scripts/motion/help_pages.py`로 그림·글을 생성(직접 고치지 않는다) |
+| `docs/install.md` | 설치 방식 선택: 구성(전체·선택·정적)×대상(K8s·Compose·정적) 지원 범위, 프리셋, 정적 Viewer(Cloudflare Pages) 설치·롤백 |
 | `docs/architecture.md` | 상세 아키텍처: 설계 결정, 서비스별 설계, 모듈 구조, Helm Chart, 개발 단계 |
 | `docs/production-service-design.md` | 운영 설계: 보안, .synctx.yaml 스키마, API 스펙, 배포, 관측성, Runbook, 체크리스트 |
 | `docs/reusable-assets.md` | 기존 저장소(markdown_converter, example_system 등)에서 재사용할 자산 목록 |

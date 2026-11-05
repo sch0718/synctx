@@ -153,6 +153,7 @@ flowchart TB
 
 - **K8s (Helm)**: `<서비스>.enabled`로 켜고 끈다. 예: `--set drawio.enabled=false`. 꺼진 서비스는 Deployment·Service·Ingress 경로를 만들지 않는다.
 - **Docker Compose**: 옵션 파일 `deploy/docker/synctx.env`의 `SYNCTX_SERVICES=viewer,cdn,marp,slides`처럼 켤 서비스를 쉼표로 적는다. 외부 포트는 `gateway`(nginx) 하나만 연다.
+- **정적 Viewer(시연·열람용)**: 위 표의 서비스가 아니라 Viewer 화면을 빌드 때 정적 파일로 구워 Cloudflare Pages(Direct Upload)에 올리고 Access로 열람자를 제한한다. 빌드는 `scripts/static-export/build.sh`, 배포는 GitHub Actions(`.github/workflows/static-export.yml`)다. 폐쇄망 운영 구성이 아니며 컨테이너 이미지를 만들지 않는다. 설치·롤백은 [설치 방식 선택](install.md), 설계는 [정적 Viewer 내보내기 설계](superpowers/specs/2026-11-05-static-viewer-export-design.md)를 따른다.
 - 서비스 사이 의존성(CDN 없이 Viewer를 쓰는 경우 등)과 알려진 한계는 [아키텍처 설계](architecture.md)의 "서비스 옵션과 의존성"을 참조한다.
 
 ### Docker Compose 빠른 시작
@@ -375,6 +376,8 @@ synctx/
 ├── run.sh                             # Markdown·회의 Viewer 실행 (--docker 선택)
 ├── pyproject.toml                     # uv workspace (shared·services 묶음)
 ├── uv.lock
+├── static-export.sample.yaml          # 정적 내보내기 설정 예시(static-export.yaml로 복사, 시연용)
+├── .github/workflows/static-export.yml # 정적 Viewer 빌드·검사·Pages 배포(시연용, workflow_dispatch)
 ├── synctx-sample.yaml                 # .synctx.yaml 예시
 ├── .context/                          # 이 저장소의 하네스 컨텍스트
 ├── docs/                              # 프로젝트 참고 문서
@@ -384,6 +387,8 @@ synctx/
 │   ├── architecture.md
 │   ├── production-service-design.md
 │   ├── local-development.md
+│   ├── install.md                     # 설치 방식 선택(구성 프리셋, 정적 Viewer 설치·롤백)
+│   ├── superpowers/                   # 설계(specs/)와 구현 계획(plans/) 문서
 │   ├── html-embed-design.md
 │   ├── viewer-index-design.md
 │   ├── viewer-index-mockup.html
@@ -406,6 +411,7 @@ synctx/
 │   │   │   ├── meeting_card.py        # 회의 정보 카드의 한국 시간 일시·안건 가공
 │   │   │   ├── meeting_index.py       # 회의 대시보드: 회의 문서 수집·상태·필터·.memo.md 결정·액션 집계
 │   │   │   ├── evidence.py            # 회의 문서의 근거 링크 판정·접두어 매핑·발췌·발췌 정화·근거 모음 데이터
+│   │   │   ├── static_export/         # 정적 사이트 내보내기(config·runtime·crawl·pages·themes·build·verify·access_check, CLI는 __main__.py)
 │   │   │   ├── search.py              # 본문 검색(기한·동시 실행 제한·줄 일부 나누기)
 │   │   │   ├── static/viewer.css      # 화면 틀·3단 배치·반응형
 │   │   │   ├── static/viewer-core.js  # 문서 검색 묶음·검색 예약·파일 목록 로더·최근 본 문서·회의 진행 상태·안건 소속 절·발표 장 나누기와 키 판단 로직
@@ -522,6 +528,7 @@ synctx/
 │       ├── values.yaml
 │       ├── values-production.yaml
 │       ├── values-local.yaml          # 로컬 minikube (run-viewer.sh 설정의 원본)
+│       ├── values-profile-{docs,present,full}.yaml # 설치 프리셋(문서만·발표 포함·전체, 기본 값은 바뀌지 않음)
 │       ├── files/
 │       │   ├── nginx.conf             # Slides Nginx 설정
 │       │   ├── sync-sidecar.sh        # Slides sync sidecar 스크립트
@@ -560,6 +567,7 @@ synctx/
 │       ├── compose.tls.yaml           # TLS일 때 덧붙이는 443 포트·인증서 마운트
 │       ├── synctx.env.example         # 옵션·이미지·포트 예시 (복사해서 synctx.env로 사용)
 │       ├── secrets.env.example        # 토큰 예시 (복사해서 secrets.env로 사용)
+│       ├── profiles/                  # 설치 프리셋 옵션 파일(docs·present·all-supported)
 │       └── .gitignore                 # synctx.env, secrets.env, .generated/, tls/ 제외
 │
 ├── cdn-data/                          # CDN 초기 벤더 파일
@@ -568,6 +576,7 @@ synctx/
 │   └── chart.js/4.4.4/
 │
 └── scripts/
+    ├── static-export/                 # 정적 Viewer 빌드(build.sh)와 배포 후 Access 점검(check-access.sh), 시연용
     ├── docker/                        # Docker 단일 Viewer·Compose 배포 스크립트
     │   ├── run-viewer.sh              # 단일 Viewer 컨테이너 실행·기존 스크립트로 빌드 위임
     │   ├── deploy.sh                  # 검사 → 게이트웨이 설정 생성 → up → 꺼진 서비스 정리 → CDN 채우기

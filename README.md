@@ -33,6 +33,7 @@
 1. **읽기** — 사내 브라우저로 운영자가 알려 준 synctx 주소의 `/view/`를 엽니다. 등록된 저장소가 카드로 보입니다.
 2. **쓰기** — 외부망에서 문서를 Markdown으로 쓰고 GitHub에 올립니다. 내부 GitLab 미러로 반입되면 Viewer에 나타납니다. 회의 문서는 Front Matter에 `synctx.type: meeting`과 `synctx.meeting`(id·title·starts_at·channel)을 적습니다.
 3. **혼자 써 보기** — 이 저장소를 받아 `./run.sh --repo <Git 주소>`를 실행하면 문서·회의 Viewer만 http://127.0.0.1:18000/view/ 에 뜹니다(`uv`·Git 필요). `./run.sh --docker --build --repo <Git 주소>`는 Viewer 컨테이너 하나로 띄웁니다. Marp 미리보기까지 보려면 `scripts/local/run-viewer.sh`를 씁니다. 자세한 내용은 [개발 문서](docs/development.md)의 「Markdown·회의 Viewer 빠른 시작」과 [로컬 개발 환경](docs/local-development.md)에 있습니다.
+4. **설치 방식 고르기** — 전체·서비스별·정적 열람 중 무엇을 어디에 설치할지는 [설치 방식 선택](docs/install.md)에서 고릅니다. 정적 열람은 운영 구성이 아니라 별도 시연·열람용입니다.
 
 ## 간단한 사용법
 

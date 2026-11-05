@@ -1329,6 +1329,27 @@ scripts/docker/deploy.sh [--env-file 경로] [--secrets-file 경로] [--check]
 3. Ctrl-C로 중지하면 `--rm`으로 컨테이너만 제거된다. 같은 `--volume`으로 재실행해 캐시를 재사용한다. 캐시 삭제 전에 필요한 내용을 백업하고 브라우저 메모는 별도로 내보낸다.
 4. 자동 테스트는 fake Docker의 명령 인자·readonly mount·이름만 전달하는 Secret·태그·빌드 위임을 검증한다. 실제 이미지 빌드와 대상 플랫폼, daemon·Git 서버·TLS·인증 프록시 연결은 해당 환경에서 확인한다. Markdown·회의 보기와 메모 포함 내보내기, 캐시 재사용, Ctrl-C 종료를 함께 확인한다.
 
+### 8.8 정적 Viewer 내보내기 비밀 값·Access 점검 (시연용 구성)
+
+운영 구성이 아니라 시연·열람용 정적 Viewer(Cloudflare Pages)의 비밀 값과 점검을 3.4의 운영 Secret 표와 분리해 적는다. 운영 체크리스트와 Phase 번호는 바뀌지 않는다. 설치 절차는 [설치 방식 선택](install.md)을 따른다.
+
+| 비밀 값 | 저장 위치 | 용도 |
+|---------|-----------|------|
+| `GIT_READ_TOKEN` | GitHub Actions 저장소 Secrets | 대상 문서 저장소 Contents 읽기 전용(fine-grained, 만료일 설정). 설정 파일에는 `auth.credential_env` 이름만 둔다 |
+| `CLOUDFLARE_API_TOKEN` | GitHub Actions 저장소 Secrets | Account → Cloudflare Pages → Edit 권한. 사전 점검(preflight)·배포(deploy) job에서만 쓰고 build job에는 넘기지 않는다 |
+| `CLOUDFLARE_ACCOUNT_ID` | GitHub Actions 저장소 Secrets | 배포 대상 계정. `CLOUDFLARE_API_TOKEN`과 같은 job에서만 쓴다 |
+
+비밀이 아닌 설정은 GitHub Actions 저장소 Variables에 둔다. 둘 다 워크플로가 읽으며 비어 있으면 배포·점검이 실패한다.
+
+| 변수 | 내용 |
+|------|------|
+| `CLOUDFLARE_PAGES_PROJECT` | Pages(Direct Upload) 프로젝트 이름. `wrangler pages deploy --project-name`에 쓴다 |
+| `STATIC_EXPORT_CHECK_URLS` | 접근 점검 대상 https 주소를 공백으로 구분한 목록(운영 `*.pages.dev`·미리보기·커스텀 도메인의 `/view/`). 비어 있으면 `check-access.sh`가 사용법을 출력하고 종료 코드 2로 끝난다 |
+
+- 토큰은 환경변수로만 받고 URL·로그·산출물에 남기지 않는다. 예외는 종류(`type(exc).__name__`)만 기록하고, 산출물 검사는 토큰 값·`ghp_`·`github_pat_`·`Authorization` 패턴·`.git`을 찾는다. 워크플로는 `pull_request`로 실행하지 않는다.
+- 배포 순서는 Access 앱 → 사전 점검 → 배포 → 배포 후 점검 → 주소 공유다. `scripts/static-export/check-access.sh`는 세션 없이 요청해 Access 로그인(302 등)이나 401·403이면 통과로 본다. 실패하면 워크플로가 실패하지만 올라간 배포를 자동으로 지우지는 않으며, 사람이 사이트를 먼저 내리고 Access를 고친다.
+- 점검 판정(`access_check.judge_access_response`)만 가짜 응답으로 시험한다. 실제 Cloudflare 계정의 Access 정책 상태, Pages 배포 삭제 권한은 확인하지 못했다.
+
 ## 9. 관측성과 운영
 
 ### 9.1 로그

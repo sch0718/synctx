@@ -1,0 +1,12 @@
+# 문서만 보기: Viewer + CDN
+# 사용법: helm upgrade --install synctx helm/synctx -f helm/synctx/values-profile-docs.yaml
+sync:
+  enabled: false
+feedback:
+  enabled: false
+marp:
+  enabled: false
+slides:
+  enabled: false
+drawio:
+  enabled: false

@@ -1,0 +1,109 @@
+name: Static Export
+
+# Viewer 화면을 정적 사이트로 빌드해 Cloudflare Pages(Direct Upload)에 올린다.
+# pull_request 류 트리거는 쓰지 않는다. 시크릿(읽기 토큰·Cloudflare 토큰)이 포크·외부 PR 실행에 전달되면 안 된다.
+on:
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: "내보낼 저장소 id 목록(쉼표 구분, 비우면 설정 파일의 전체)"
+        required: false
+        default: ""
+      first_deploy:
+        description: "첫 배포 전 사전 점검: 비밀 없는 자리표시 페이지만 먼저 올려 보호 호스트를 점검한다"
+        type: boolean
+        required: false
+        default: false
+  # 문서 저장소 변경을 자동으로 알 방법이 없어 일정 실행을 선택으로 둔다. 쓰려면 아래 주석을 풀고 시각을 정한다.
+  # schedule:
+  #   - cron: '0 21 * * 0-4'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-export
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    # 첫 배포 전에만 돈다. 문서 산출물·읽기 토큰은 쓰지 않는다.
+    if: ${{ inputs.first_deploy }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - name: 자리표시 페이지 만들기
+        run: |
+          mkdir -p placeholder
+          printf '%s\n' '<!doctype html><meta charset="utf-8"><title>placeholder</title><p>access check placeholder</p>' > placeholder/index.html
+          printf '%s\n' 'User-agent: *' 'Disallow: /' > placeholder/robots.txt
+          printf '%s\n' '/*' '  X-Robots-Tag: noindex' > placeholder/_headers
+      # --branch는 운영 브랜치로 고정한다. 프로젝트의 production branch 설정과 같아야 한다(다르면 미리보기 배포가 된다).
+      - uses: cloudflare/wrangler-action@v3.14.1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy placeholder --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main
+      - name: 보호 호스트 점검(운영 pages.dev·미리보기·커스텀 도메인)
+        env:
+          CHECK_URLS: ${{ vars.STATIC_EXPORT_CHECK_URLS }}
+        run: scripts/static-export/check-access.sh $CHECK_URLS
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5.4.2
+      # build.sh는 빌드 끝에서 산출물 검사(토큰·.git·한도·깨진 링크)를 돌리고 실패하면 비정상 종료한다.
+      # 그러면 이 job이 실패해 deploy가 실행되지 않는다.
+      - name: 빌드와 산출물 검사
+        env:
+          GIT_READ_TOKEN: ${{ secrets.GIT_READ_TOKEN }}
+          STATIC_EXPORT_REPOS: ${{ inputs.repos }}
+        run: scripts/static-export/build.sh
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: static-export-dist
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    needs: [build, preflight]
+    # preflight는 선택 job이라 건너뛰어질 수 있다. build 성공이 필수이고 preflight는 성공 또는 건너뜀일 때만 배포한다.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.preflight.result == 'success' || needs.preflight.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: static-export-dist
+          path: dist
+      # 항상 운영 브랜치로만 올린다. 프로젝트의 production branch 설정과 같아야 한다.
+      # 브랜치 별칭(<branch>.<project>.pages.dev)의 Access 보호 여부는 미확인이다.
+      - uses: cloudflare/wrangler-action@v3.14.1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main
+      # 필수 단계다. 실패하면 워크플로가 실패한다. 이미 올라간 배포는 자동으로 지우지 않는다
+      # (Pages 배포 삭제가 Pages: Edit 토큰 권한으로 되는지 미확인). 실패하면 사람이 사이트를 먼저 내리고 Access를 고친 뒤 다시 점검한다.
+      - name: 배포 후 Access 점검
+        env:
+          CHECK_URLS: ${{ vars.STATIC_EXPORT_CHECK_URLS }}
+        run: scripts/static-export/check-access.sh $CHECK_URLS

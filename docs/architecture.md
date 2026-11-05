@@ -1364,6 +1364,27 @@ Prosody만 JWT를 검증하도록 Jicofo의 기존 `ENABLE_AUTH`를 0으로 덮�
 
 Viewer는 JWT를 로컬 서명하며 Jitsi 요청은 브라우저가 보낸다. 현재 NetworkPolicy는 Sync·Gateway만 선택하므로 Viewer egress 규칙을 늘리지 않는다. 외부 public_url 방식도 동일하다. Alert `SynctxJitsiTokenFailures`는 스택 배포 여부와 무관하게 `collab.jitsi.enabled`일 때 렌더한다.
 
+### 10.9 정적 Viewer 내보내기 (시연·열람용, 운영 구성 아님)
+
+기존 Viewer 화면을 빌드 때 정적 파일로 구워 Cloudflare Pages(Direct Upload)에 올리는 별도 시연·열람용 기능이다. 새 서비스·Phase·이미지가 아니며 폐쇄망 운영 구성(런타임 외부망 없음, 이미지 태그 규칙)의 대상이 아니다. 설계 전문은 [정적 Viewer 내보내기 설계](superpowers/specs/2026-11-05-static-viewer-export-design.md)에 있다.
+
+```mermaid
+flowchart LR
+    A[static-export.yaml 읽기] --> B[Viewer ASGI 기동]
+    B --> C[저장소 clone 또는 fetch]
+    C --> D[페이지·트리 JSON·그림 수집]
+    D --> E[정적 모드 주입·테마 CSS 외부화]
+    E --> F[_headers·_redirects·robots.txt 출력]
+    F --> G{산출물 검사 통과?}
+    G -->|예| H[Pages Direct Upload]
+    G -->|아니오| I[배포 중단]
+```
+
+- 새 코드는 `services/viewer/src/static_export/`에만 둔다. `app.py`·`renderer.py`는 `corporate` 테마 상수 외에 바꾸지 않는다(`corporate`는 참고 양식 색·글꼴로 갱신, 운영 Viewer의 `corporate` 모양도 바뀐다).
+- 정적 사이트는 항상 `/view/` 아래에 두고 `/`는 `_redirects`로 보낸다. 저장소당 ref 하나이며 검색·회의 API·발표·다운로드·`synctx-html` 블록은 제외하고 진입점을 숨긴다. 점(`.`)으로 시작하는 경로 구간(`.claude/`·`.github/` 등)은 `include`가 직접 적지 않는 한 기본 제외한다. 테마 7종은 외부 CSS로 내보내고 `localStorage` 선택값을 shim이 반영한다(저장소가 막힌 브라우저에서는 전환이 유지되지 않는다).
+- 한도(파일 20,000개·파일당 25 MiB) 초과, 깨진 내부 링크, 토큰 문자열·`.git`, 저장소 페이지의 `data-expand-path`는 산출물 검사(`verify.py`)에서 빌드를 실패시킨다.
+- 알려진 한계: Cloudflare Access 설정은 자동 시험으로 보장되지 않아 배포 후 `check-access.sh` 점검이 유일한 확인 수단이다. 일부 Cloudflare 조건(Access 무료 조건, 미리보기 별칭 보호, Direct Upload 월 한도)은 공식 문서로 확인하지 못했다(설계 13절).
+
 ## 11. 제약 사항과 고려 사항
 
 | 항목 | 상태 | 비고 |

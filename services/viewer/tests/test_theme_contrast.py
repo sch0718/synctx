@@ -206,3 +206,14 @@ def test_jitsi_panel_reasons_and_disabled_button_keep_aa_contrast():
             assert contrast(rgb(values['--text-primary'])[0], rgb(values[background])[0]) >= 4.5
     assert _decl(_css_rule('.jitsi-join:disabled', css), 'opacity') == '1'
     assert 'outline: 2px solid var(--primary)' in css
+
+
+@pytest.mark.parametrize("background", ["#FFFFFF", "#F7F7F7"])
+def test_corporate_link_and_code_text_meet_aa(background):
+    assert contrast(rgb("#B02A14")[0], rgb(background)[0]) >= 4.5
+    from renderer import THEME_CSS
+    css = THEME_CSS["corporate"]
+    link = re.search(r"\.markdown-body a \{([^}]*)\}", css).group(1)
+    code = re.search(r"\.markdown-body code \{([^}]*)\}", css).group(1)
+    for rule in (link, code):
+        assert contrast(rgb(_decl(rule, "color"))[0], rgb(background)[0]) >= 4.5

@@ -1,0 +1,18 @@
+# 정적 Viewer 내보내기 설정 예시. 복사해서 static-export.yaml로 쓴다.
+# 토큰 값은 이 파일에 쓰지 않는다. 환경변수 이름만 auth.credential_env에 적는다.
+title: 문서 사이트
+theme: corporate            # github-light, github-dark, cayman, minimal, hacker, modernist, corporate
+default_repo: team-docs       # 선택. 없으면 저장소 목록 화면이 첫 화면이다
+
+repositories:
+  - id: team-docs
+    name: 문서 저장소
+    url: https://git.example.com/team/docs.git
+    default_ref: main
+    auth:
+      credential_env: GIT_READ_TOKEN
+    # 경로의 어느 구간이든 점(.)으로 시작하면(.claude/, .github/, .hidden.md) 기본으로 내보내지 않는다.
+    # include가 그 숨김 경로를 직접 적은 경우에만 내보낸다(예: .github/docs/). include: ["docs/"]는 docs/.draft/를 켜지 않는다.
+    include: []          # 비어 있으면 숨김이 아닌 모든 파일. 값이 있으면 이 경로 접두로 시작하는 파일만 내보낸다
+    exclude:             # 이 경로 접두로 시작하는 파일은 내보내지 않는다(include보다 우선)
+      - internal/

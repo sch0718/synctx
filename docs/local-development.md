@@ -83,6 +83,18 @@ uv run --group browser pytest services/viewer/tests/browser -v
 
 시험 범위는 `synctx-html` 버튼 동작, opaque origin·부모 document/저장소/쿠키 격리, CSP의 fetch·이미지 차단, 렌더 보기의 상대 링크와 ref·SHA 유지, 위조 토큰 거부, 만료 안내 뒤 원래 Viewer 화면 새로 고침, 블록 크게 보기·Esc·포커스 복귀다. 위조·만료 토큰의 응답은 설계 14.3에 따라 403이며 자동 토큰 갱신은 하지 않는다. 독립 캐시 파드 2개·운영 SSO·Edge·Firefox·Safari·실제 클릭 전체 화면은 별도 확인이 필요하다.
 
+### 0.4 정적 Viewer 내보내기 로컬 실행 (시연용)
+
+비공개 저장소의 Markdown을 정적 사이트로 만들어 브라우저에서 확인한다. Cloudflare에 올리지 않고 로컬에서만 열어 본다. 설정은 `static-export.sample.yaml`을 `static-export.yaml`로 복사해 저장소 항목을 채운다(토큰은 환경변수 이름만 적는다).
+
+```bash
+export GIT_READ_TOKEN=...            # 비공개 저장소일 때만. 값은 설정 파일에 쓰지 않는다
+scripts/static-export/build.sh --config static-export.yaml --out dist
+python3 -m http.server 8080 --directory dist
+```
+
+`build.sh`는 빌드 끝에서 산출물 검사(토큰·`.git`·한도·깨진 링크)를 돌리고 실패하면 종료 코드 1로 끝난다(`dist`는 남는다). 설정 오류는 2다. `--repos a,b`나 환경변수 `STATIC_EXPORT_REPOS`로 일부 저장소만 내보내며 인자가 우선한다. 출력 디렉터리는 전용 폴더여야 하고(이전 빌드 표지가 없는 비어 있지 않은 폴더는 거부) 시작 때 비운다. http://127.0.0.1:8080/view/ 를 연다(`/`를 `/view/`로 보내는 `_redirects`는 Cloudflare Pages에서만 적용되고 `http.server`는 무시한다). 검색·회의·발표·다운로드는 정적 사이트에서 숨겨진다. 설치·배포·Access 설정은 [설치 방식 선택](install.md)을 따른다.
+
 ## 1. 운영 vs 로컬 환경 비교
 
 | 구성 요소 | 운영 (폐쇄망) | 로컬 (minikube) |

@@ -1,0 +1,8 @@
+# 발표 포함: Viewer + CDN + Marp + Slides
+# 사용법: helm upgrade --install synctx helm/synctx -f helm/synctx/values-profile-present.yaml
+sync:
+  enabled: false
+feedback:
+  enabled: false
+drawio:
+  enabled: false

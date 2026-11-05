@@ -140,3 +140,15 @@ def test_inline_patterns_stay_linear(text):
     started = time.monotonic()
     renderer.render_markdown(text)
     assert time.monotonic() - started < 1.0
+
+
+def test_corporate_doc_css_follows_style_tokens():
+    css = renderer.THEME_CSS["corporate"]
+    for token in ("#1A1A1A", "#6D6E71", "#F7F7F7", "#B02A14", "#EF3B24"):
+        assert token in css
+    assert "#E01E1F" not in css
+    link_rule = re.search(r"\.markdown-body a \{([^}]*)\}", css).group(1)
+    assert re.search(r"(?<![-\w])color:\s*#B02A14", link_rule)
+    text_colors = re.findall(r"(?<![-\w])color:\s*(#[0-9A-Fa-f]{6})", css)
+    assert "#EF3B24" not in [c.upper() for c in text_colors]
+    assert "Apple SD Gothic Neo" in css and "Public Sans" not in css and "Nanum Gothic" not in css
