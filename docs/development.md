@@ -153,7 +153,7 @@ flowchart TB
 
 - **K8s (Helm)**: `<서비스>.enabled`로 켜고 끈다. 예: `--set drawio.enabled=false`. 꺼진 서비스는 Deployment·Service·Ingress 경로를 만들지 않는다.
 - **Docker Compose**: 옵션 파일 `deploy/docker/synctx.env`의 `SYNCTX_SERVICES=viewer,cdn,marp,slides`처럼 켤 서비스를 쉼표로 적는다. 외부 포트는 `gateway`(nginx) 하나만 연다.
-- **정적 Viewer(시연·열람용)**: 위 표의 서비스가 아니라 Viewer 화면을 빌드 때 정적 파일로 구워 Cloudflare Pages(Direct Upload)에 올리고 Access로 열람자를 제한한다. 빌드는 `scripts/static-export/build.sh`, 배포는 GitHub Actions(`.github/workflows/static-export.yml`)다. 폐쇄망 운영 구성이 아니며 컨테이너 이미지를 만들지 않는다. 설치·롤백은 [설치 방식 선택](install.md), 설계는 [정적 Viewer 내보내기 설계](superpowers/specs/2026-11-05-static-viewer-export-design.md)를 따른다.
+- **정적 Viewer(시연·열람용)**: 위 표의 서비스가 아니라 Viewer 화면을 빌드 때 정적 파일로 구워 Cloudflare Pages(Direct Upload)에 올리고 Access로 열람자를 제한한다(공개 모드면 Access 없이 공개). 빌드는 `scripts/static-export/build.sh`, 배포는 GitHub Actions(`.github/workflows/static-export.yml`)다. 폐쇄망 운영 구성이 아니며 컨테이너 이미지를 만들지 않는다. 설치·롤백은 [설치 방식 선택](install.md), 설계는 [정적 Viewer 내보내기 설계](superpowers/specs/2026-11-05-static-viewer-export-design.md)를 따른다.
 - 서비스 사이 의존성(CDN 없이 Viewer를 쓰는 경우 등)과 알려진 한계는 [아키텍처 설계](architecture.md)의 "서비스 옵션과 의존성"을 참조한다.
 
 ### Docker Compose 빠른 시작

@@ -118,7 +118,7 @@ Jitsi는 프리셋에 포함하지 않고(`SYNCTX_JITSI=false`) 필요할 때 �
 
 ## 정적 Viewer(Cloudflare Pages)
 
-비공개 Git 저장소의 Markdown을 Viewer 화면 그대로 정적 사이트로 내보내 Cloudflare Pages(Direct Upload)에 올리고 Cloudflare Access로 열람자를 제한한다. 폐쇄망 운영 구성이 아니라 시연·열람용이다.
+비공개 Git 저장소의 Markdown을 Viewer 화면 그대로 정적 사이트로 내보내 Cloudflare Pages(Direct Upload)에 올리고 Cloudflare Access로 열람자를 제한한다. 폐쇄망 운영 구성이 아니라 시연·열람용이다. 누구나 보게 하려면 [공개 모드](#공개-모드access-없음)로 Access 없이 올릴 수 있다.
 
 ### 준비물
 
@@ -143,7 +143,8 @@ GitHub Actions 저장소 Variables 2종도 등록한다. 비어 있으면 배포
 | 변수 | 내용 |
 |------|------|
 | `CLOUDFLARE_PAGES_PROJECT` | Pages(Direct Upload) 프로젝트 이름 |
-| `STATIC_EXPORT_CHECK_URLS` | 접근 점검 대상 https 주소를 공백으로 구분한 목록(운영 `*.pages.dev`·미리보기·커스텀 도메인의 `/view/`) |
+| `STATIC_EXPORT_CHECK_URLS` | 접근 점검 대상 https 주소를 공백으로 구분한 목록(운영 `*.pages.dev`·미리보기·커스텀 도메인의 `/view/`). 공개 모드면 두지 않아도 된다 |
+| `STATIC_EXPORT_PUBLIC` | 선택. `true`일 때만(대소문자 무관) 공개 모드(Access 점검 생략). 없거나 다른 값이면 Access 점검을 한다 |
 
 토큰은 URL·로그·산출물에 남기지 않는다. 설정 파일에는 환경변수 이름만 둔다.
 
@@ -155,6 +156,14 @@ GitHub Actions 저장소 Variables 2종도 등록한다. 비어 있으면 배포
 4. **배포 후 점검**: 배포 직후 같은 `check-access.sh`가 워크플로 안에서 실행된다. 실패하면 워크플로도 실패한다. 이미 올라간 배포는 자동으로 지워지지 않으므로 아래 롤백 순서로 사람이 막는다.
 
 점검을 통과하기 전에는 주소를 공유하지 않는다. 주소를 알려 주지 않는 것만으로는 올라간 문서가 막히지 않는다.
+
+### 공개 모드(Access 없음)
+
+내보낸 문서를 로그인 없이 누구나 보게 할 때 쓴다. 저장소 변수 `STATIC_EXPORT_PUBLIC`을 `true`로 두면 사전 점검 job과 배포 후 Access 점검을 건너뛰고, Access 앱도 만들지 않는다. 빌드 산출물 검사(토큰 문자열·`.git`·한도·깨진 링크)는 그대로 돈다. 검색 노출은 산출물의 `robots.txt`(`Disallow: /`)와 `X-Robots-Tag: noindex` 헤더로만 막으며, 주소를 아는 사람은 모두 볼 수 있다.
+
+- 켜기 전에 `static-export.yaml`의 `include`·`exclude`로 공개해도 되는 경로만 남았는지 확인한다. 비공개 저장소라도 내보낸 문서는 공개된다.
+- 첫 배포는 `first_deploy` 없이 워크플로를 실행한다. 배포 뒤 문서가 열리는지 직접 확인한다.
+- Access로 돌아가려면 Access 앱을 먼저 만들고 `STATIC_EXPORT_CHECK_URLS`를 채운 뒤 `STATIC_EXPORT_PUBLIC`을 지운다.
 
 ### 내보내기 범위
 

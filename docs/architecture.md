@@ -1383,7 +1383,7 @@ flowchart LR
 - 새 코드는 `services/viewer/src/static_export/`에만 둔다. `app.py`·`renderer.py`는 `corporate` 테마 상수 외에 바꾸지 않는다(`corporate`는 참고 양식 색·글꼴로 갱신, 운영 Viewer의 `corporate` 모양도 바뀐다).
 - 정적 사이트는 항상 `/view/` 아래에 두고 `/`는 `_redirects`로 보낸다. 저장소당 ref 하나이며 검색·회의 API·발표·다운로드·`synctx-html` 블록은 제외하고 진입점을 숨긴다. 점(`.`)으로 시작하는 경로 구간(`.claude/`·`.github/` 등)은 `include`가 직접 적지 않는 한 기본 제외한다. 테마 7종은 외부 CSS로 내보내고 `localStorage` 선택값을 shim이 반영한다(저장소가 막힌 브라우저에서는 전환이 유지되지 않는다).
 - 한도(파일 20,000개·파일당 25 MiB) 초과, 깨진 내부 링크, 토큰 문자열·`.git`, 저장소 페이지의 `data-expand-path`는 산출물 검사(`verify.py`)에서 빌드를 실패시킨다.
-- 알려진 한계: Cloudflare Access 설정은 자동 시험으로 보장되지 않아 배포 후 `check-access.sh` 점검이 유일한 확인 수단이다. 일부 Cloudflare 조건(Access 무료 조건, 미리보기 별칭 보호, Direct Upload 월 한도)은 공식 문서로 확인하지 못했다(설계 13절).
+- 알려진 한계: Cloudflare Access 설정은 자동 시험으로 보장되지 않아 배포 후 `check-access.sh` 점검이 유일한 확인 수단이다. 저장소 변수 `STATIC_EXPORT_PUBLIC=true`인 공개 모드는 이 점검 없이 Access 없이 배포한다. 일부 Cloudflare 조건(Access 무료 조건, 미리보기 별칭 보호, Direct Upload 월 한도)은 공식 문서로 확인하지 못했다(설계 13절).
 
 ## 11. 제약 사항과 고려 사항
 

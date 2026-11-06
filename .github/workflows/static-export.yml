@@ -28,7 +28,8 @@ concurrency:
 jobs:
   preflight:
     # 첫 배포 전에만 돈다. 문서 산출물·읽기 토큰은 쓰지 않는다.
-    if: ${{ inputs.first_deploy }}
+    # 공개 모드(저장소 변수 STATIC_EXPORT_PUBLIC=true)에서는 막을 Access가 없으므로 돌지 않는다.
+    if: ${{ inputs.first_deploy && vars.STATIC_EXPORT_PUBLIC != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -103,7 +104,9 @@ jobs:
           command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main
       # 필수 단계다. 실패하면 워크플로가 실패한다. 이미 올라간 배포는 자동으로 지우지 않는다
       # (Pages 배포 삭제가 Pages: Edit 토큰 권한으로 되는지 미확인). 실패하면 사람이 사이트를 먼저 내리고 Access를 고친 뒤 다시 점검한다.
+      # 공개 모드는 저장소 변수 STATIC_EXPORT_PUBLIC을 'true'로 둘 때만 켜진다(Actions 문자열 비교라 대소문자는 무시한다). 변수가 없거나 다른 값이면 점검한다.
       - name: 배포 후 Access 점검
+        if: ${{ vars.STATIC_EXPORT_PUBLIC != 'true' }}
         env:
           CHECK_URLS: ${{ vars.STATIC_EXPORT_CHECK_URLS }}
         run: scripts/static-export/check-access.sh $CHECK_URLS

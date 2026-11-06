@@ -1345,9 +1345,10 @@ scripts/docker/deploy.sh [--env-file 경로] [--secrets-file 경로] [--check]
 |------|------|
 | `CLOUDFLARE_PAGES_PROJECT` | Pages(Direct Upload) 프로젝트 이름. `wrangler pages deploy --project-name`에 쓴다 |
 | `STATIC_EXPORT_CHECK_URLS` | 접근 점검 대상 https 주소를 공백으로 구분한 목록(운영 `*.pages.dev`·미리보기·커스텀 도메인의 `/view/`). 비어 있으면 `check-access.sh`가 사용법을 출력하고 종료 코드 2로 끝난다 |
+| `STATIC_EXPORT_PUBLIC` | 선택. `true`면(대소문자 무관) 공개 모드로 사전 점검 job과 배포 후 Access 점검을 건너뛴다(이때 `STATIC_EXPORT_CHECK_URLS`는 쓰지 않는다). 없거나 다른 값이면 점검한다 |
 
 - 토큰은 환경변수로만 받고 URL·로그·산출물에 남기지 않는다. 예외는 종류(`type(exc).__name__`)만 기록하고, 산출물 검사는 토큰 값·`ghp_`·`github_pat_`·`Authorization` 패턴·`.git`을 찾는다. 워크플로는 `pull_request`로 실행하지 않는다.
-- 배포 순서는 Access 앱 → 사전 점검 → 배포 → 배포 후 점검 → 주소 공유다. `scripts/static-export/check-access.sh`는 세션 없이 요청해 Access 로그인(302 등)이나 401·403이면 통과로 본다. 실패하면 워크플로가 실패하지만 올라간 배포를 자동으로 지우지는 않으며, 사람이 사이트를 먼저 내리고 Access를 고친다.
+- 배포 순서는 Access 앱 → 사전 점검 → 배포 → 배포 후 점검 → 주소 공유다. `scripts/static-export/check-access.sh`는 세션 없이 요청해 Access 로그인(302 등)이나 401·403이면 통과로 본다. 실패하면 워크플로가 실패하지만 올라간 배포를 자동으로 지우지는 않으며, 사람이 사이트를 먼저 내리고 Access를 고친다. 공개 모드는 Access 앱 없이 배포하며 검색 노출은 `robots.txt`·`noindex` 헤더로만 막는다(설치 문서 「공개 모드」).
 - 점검 판정(`access_check.judge_access_response`)만 가짜 응답으로 시험한다. 실제 Cloudflare 계정의 Access 정책 상태, Pages 배포 삭제 권한은 확인하지 못했다.
 
 ## 9. 관측성과 운영

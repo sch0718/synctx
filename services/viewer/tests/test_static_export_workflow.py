@@ -107,6 +107,14 @@ def test_deploy_runs_check_access_as_required_step():
     assert check_index > deploy_index
 
 
+def test_access_check_is_skipped_only_for_explicit_public_mode():
+    # 변수가 없거나 'true'가 아니면 점검이 돈다. 공개 모드는 명시적으로만 켠다.
+    public_off = "vars.STATIC_EXPORT_PUBLIC != 'true'"
+    check = [s for s in _steps("deploy") if "check-access.sh" in s.get("run", "")]
+    assert all(s.get("if") == "${{ " + public_off + " }}" for s in check)
+    assert public_off in WF["jobs"]["preflight"]["if"]
+
+
 def test_preflight_deploys_placeholder_without_documents():
     pre = WF["jobs"]["preflight"]
     text = yaml.safe_dump(pre)
