@@ -6,12 +6,13 @@ import { handleAuth, handleLogin } from '../src/auth';
 import { handleInvite } from '../src/invite';
 import type { Env } from '../src/env';
 import { DEFAULT_CSP, RAW_SVG_CSP } from '../src/http';
-import { handleRequest } from '../src/middleware';
+import { ACCOUNT_LINK, handleRequest } from '../src/middleware';
+import { handleSettings } from '../src/settings';
 import { loginCsp } from '../src/pages/login';
 import { addMember, makeEnv, OWNER, post, request, seedSession } from './helpers';
 
 const INDEX_HTML =
-  '<!doctype html><html><body><ul>' +
+  '<!doctype html><html><body><header class="shell-header"><a href="/view/">synctx</a></header><ul>' +
   '<li data-repo-id="repo-a"><a href="/view/repo-a">A 저장소</a></li>' +
   '<li data-repo-id="repo-b"><a href="/view/repo-b">B 저장소</a></li></ul>' +
   '<select><option value="">저장소 선택</option><option value="repo-a" data-repo-id="repo-a">A 저장소</option>' +
@@ -24,6 +25,7 @@ function nextFor(req: Request, env: Env) {
     if (path === '/login') return handleLogin(req, env);
     if (path.startsWith('/auth/')) return handleAuth(req, env);
     if (path === '/admin') return handleAdminPage(req, env);
+    if (path === '/settings') return handleSettings(req, env);
     if (path.startsWith('/api/admin/')) return handleAdminApi(req, env);
     if (path.startsWith('/invite/')) return handleInvite(req, env, path.slice('/invite/'.length));
     const staticHeaders = { 'Content-Security-Policy': 'default-src *' };
@@ -126,6 +128,23 @@ describe('저장소 이름 숨김', () => {
   it('전체 관리자에게는 모두 보인다', async () => {
     const html = await (await run(request('/view/', { session: await seedSession(OWNER) }))).text();
     expect(html).toContain('B 저장소');
+  });
+});
+
+describe('설정 버튼', () => {
+  it('로그인한 사람의 Viewer 머리글 끝에 설정 버튼을 붙인다', async () => {
+    await addMember('repo-a', 'viewer@example.com', 'viewer');
+    for (const identity of [OWNER, 'viewer@example.com']) {
+      const html = await (await run(request('/view/', { session: await seedSession(identity) }))).text();
+      expect(html).toContain(`synctx</a>${ACCOUNT_LINK}</header>`);
+    }
+  });
+
+  it('/settings도 로그인하지 않으면 로그인으로 보낸다', async () => {
+    const res = await run(request('/settings'));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe('/login?next=%2Fsettings');
+    expectCommonHeaders(res, DEFAULT_CSP);
   });
 });
 

@@ -1,5 +1,5 @@
 import { purgeSessions, type D1Database as PackageD1 } from '@sch0718/firebase-session/worker';
-import { isAdmin, isOwner } from '../authz';
+import { canOpenAdmin } from '../authz';
 import type { Env } from '../env';
 import { escapeHtml, htmlResponse, loginRedirect } from '../http';
 import { deniedPage } from '../pages/denied';
@@ -16,10 +16,7 @@ export async function handleAdminPage(req: Request, env: Env, deps: SessionDeps 
   }
   const session = await readSession(req, env, deps);
   if (!session) return loginRedirect(url);
-  const manager = await env.DB.prepare("SELECT 1 FROM repo_members WHERE identity = ? AND role = 'manager' LIMIT 1")
-    .bind(session.identity)
-    .first();
-  if (!isOwner(env, session.identity) && !manager && !(await isAdmin(env.DB, session.identity))) {
+  if (!(await canOpenAdmin(env, session.identity))) {
     return htmlResponse(403, deniedPage(session.identity));
   }
   const now = Date.now();
@@ -32,7 +29,7 @@ export async function handleAdminPage(req: Request, env: Env, deps: SessionDeps 
       '<h1 class="page-title">관리</h1>' +
         `<p>로그인: <code class="identity">${escapeHtml(session.identity)}</code></p>` +
         '<div id="admin-root"><p>불러오는 중입니다.</p></div>' +
-        '<p><a href="/view/">문서 첫 화면으로</a></p>' +
+        '<p><a href="/view/">문서 첫 화면으로</a> · <a href="/settings">설정</a></p>' +
         logoutForm(),
       { scripts: ['/view/static/synctx-auth/admin.js'] },
     ),

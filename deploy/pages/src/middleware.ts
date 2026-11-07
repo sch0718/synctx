@@ -18,16 +18,33 @@ function isHtml(res: Response): boolean {
   return (res.headers.get('Content-Type') ?? '').toLowerCase().startsWith('text/html');
 }
 
-/** 볼 수 없는 저장소의 `[data-repo-id]` 요소(첫 화면 카드, 저장소 선택 항목)를 지운다. */
-export function filterRepoElements(res: Response, visible: Set<string> | 'all'): Response {
-  if (visible === 'all' || !isHtml(res)) return res;
-  return new HTMLRewriter()
-    .on('[data-repo-id]', {
+const PERSON_ICON =
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/>' +
+  '<path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>';
+
+/** Viewer 머리글 끝에 붙이는 설정 버튼(로그아웃·기기 관리는 설정 화면에 있다). */
+export const ACCOUNT_LINK = `<a class="icon-btn shell-account" href="/settings" aria-label="설정·로그아웃" title="설정·로그아웃">${PERSON_ICON}</a>`;
+
+/**
+ * 로그인한 사람에게 주는 Viewer HTML을 고친다.
+ * 볼 수 없는 저장소의 `[data-repo-id]` 요소(첫 화면 카드, 저장소 선택 항목)를 지우고, 머리글에 설정 버튼을 붙인다.
+ */
+export function decorateViewerHtml(res: Response, visible: Set<string> | 'all'): Response {
+  if (!isHtml(res)) return res;
+  const rw = new HTMLRewriter().on('header.shell-header', {
+    element(el) {
+      el.append(ACCOUNT_LINK, { html: true });
+    },
+  });
+  if (visible !== 'all') {
+    rw.on('[data-repo-id]', {
       element(el) {
         if (!visible.has(el.getAttribute('data-repo-id') ?? '')) el.remove();
       },
-    })
-    .transform(res);
+    });
+  }
+  return rw.transform(res);
 }
 
 async function route({ request, env, next, deps }: MiddlewareInput): Promise<Routed> {
@@ -52,7 +69,7 @@ async function route({ request, env, next, deps }: MiddlewareInput): Promise<Rou
     return { res: htmlResponse(403, deniedPage(session.identity)), csp: DEFAULT_CSP };
   }
   const asset = await next();
-  const res = isHtml(asset) ? filterRepoElements(asset, await visibleRepos(env, session.identity)) : asset;
+  const res = isHtml(asset) ? decorateViewerHtml(asset, await visibleRepos(env, session.identity)) : asset;
   const svg = target.kind === 'repo' && path.startsWith('/raw/') && /\.svg$/i.test(path) && res.status === 200;
   return { res, csp: svg ? RAW_SVG_CSP : DEFAULT_CSP };
 }

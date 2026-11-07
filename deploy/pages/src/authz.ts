@@ -21,6 +21,15 @@ export async function isAdmin(db: D1Database, identity: string): Promise<boolean
   return (await db.prepare('SELECT 1 FROM site_roles WHERE identity = ?').bind(identity).first()) !== null;
 }
 
+/** 관리 화면을 열 수 있는가: 전체 관리자·관리자·저장소 담당자. */
+export async function canOpenAdmin(env: Env, identity: string): Promise<boolean> {
+  if (isOwner(env, identity) || (await isAdmin(env.DB, identity))) return true;
+  const manager = await env.DB.prepare("SELECT 1 FROM repo_members WHERE identity = ? AND role = 'manager' LIMIT 1")
+    .bind(identity)
+    .first();
+  return manager !== null;
+}
+
 export async function repoRole(db: D1Database, identity: string, repoId: string): Promise<RepoRole | null> {
   const row = await db
     .prepare('SELECT role FROM repo_members WHERE repo_id = ? AND identity = ?')
@@ -89,6 +98,7 @@ export function isFunctionPath(pathname: string): boolean {
   return (
     pathname === '/login' ||
     pathname === '/admin' ||
+    pathname === '/settings' ||
     /^\/(auth|invite|admin|api\/admin)\//.test(pathname)
   );
 }

@@ -30,6 +30,37 @@ function readConfig(): LoginConfig | null {
   }
 }
 
+/** 설정 화면 「로그인한 기기」에 보일 이름. landmark의 deviceLabel과 같은 규칙이다. */
+function deviceLabel(ua: string): string {
+  const device = /iPhone/i.test(ua)
+    ? 'iPhone'
+    : /iPad/i.test(ua)
+      ? 'iPad'
+      : /Android/i.test(ua)
+        ? 'Android'
+        : /Mac/i.test(ua)
+          ? 'Mac'
+          : /Windows/i.test(ua)
+            ? 'Windows'
+            : /Linux/i.test(ua)
+              ? 'Linux'
+              : '기기';
+  const browser = /KAKAOTALK/i.test(ua)
+    ? '카카오톡'
+    : /NAVER\(inapp/i.test(ua)
+      ? '네이버'
+      : /Edg/i.test(ua)
+        ? 'Edge'
+        : /Chrome|CriOS/i.test(ua)
+          ? 'Chrome'
+          : /Firefox|FxiOS/i.test(ua)
+            ? 'Firefox'
+            : /Safari/i.test(ua)
+              ? 'Safari'
+              : '브라우저';
+  return `${device} · ${browser}`.slice(0, 40);
+}
+
 async function post(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Response> {
   return fetch(path, {
     method: 'POST',
@@ -51,7 +82,7 @@ async function failureText(res: Response): Promise<string> {
 }
 
 async function googleSession(auth: ReturnType<typeof firebaseAuth>, idToken: string, next: string) {
-  const res = await post('/auth/session', { label: '브라우저' }, { Authorization: `Bearer ${idToken}` });
+  const res = await post('/auth/session', { label: deviceLabel(navigator.userAgent) }, { Authorization: `Bearer ${idToken}` });
   await auth.signOut().catch(() => undefined); // 세션 쿠키만 쓴다. Firebase 로그인 상태는 남기지 않는다.
   if (res.ok) location.assign(next);
   else say(await failureText(res));
@@ -103,7 +134,7 @@ async function callbackMode() {
     code: callback.code,
     codeVerifier: callback.codeVerifier,
     redirectUri: callback.redirectUri,
-    label: '브라우저',
+    label: deviceLabel(navigator.userAgent),
   });
   if (res.ok) location.replace(next);
   else say(await failureText(res));

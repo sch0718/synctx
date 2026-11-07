@@ -1,0 +1,68 @@
+import type { DeviceSessionRow } from '@sch0718/firebase-session/worker';
+import type { RepoInfo } from '../admin/repos';
+import { escapeHtml } from '../http';
+import { logoutForm, page } from './layout';
+
+export interface SettingsInput {
+  identity: string;
+  repos: RepoInfo[];
+  admin: boolean;
+  sessions: DeviceSessionRow[];
+}
+
+const STYLE =
+  '<style>.settings section{margin:24px 0}.settings h2{font-size:16px;margin:0 0 8px}' +
+  '.settings-devices{list-style:none;padding:0;margin:0 0 8px}' +
+  '.settings-devices li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border-color)}' +
+  '.settings-devices form{margin:0}.settings .muted{color:var(--text-secondary);font-size:13px}</style>';
+
+const when = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Seoul' });
+
+export function providerLabel(identity: string): string {
+  if (identity.startsWith('kakao:')) return '카카오';
+  if (identity.startsWith('naver:')) return '네이버';
+  return 'Google';
+}
+
+function revokeForm(fields: string, label: string): string {
+  return `<form method="post" action="/auth/sessions/revoke">${fields}<button type="submit" class="btn">${label}</button></form>`;
+}
+
+function device(s: DeviceSessionRow): string {
+  const action = s.current
+    ? '<strong>이 기기</strong>'
+    : revokeForm(`<input type="hidden" name="id" value="${escapeHtml(s.id)}">`, '로그아웃시키기');
+  return (
+    `<li><span>${escapeHtml(s.label)}</span>` +
+    `<span class="muted">마지막 사용 ${escapeHtml(when.format(s.lastUsedAt))}</span>${action}</li>`
+  );
+}
+
+/** GET /settings. 계정·볼 수 있는 저장소·로그인한 기기·로그아웃. */
+export function settingsPage(input: SettingsInput): string {
+  const repos = input.repos.length
+    ? '<ul>' +
+      input.repos.map((r) => `<li><a href="/view/${encodeURIComponent(r.id)}/">${escapeHtml(r.name)}</a></li>`).join('') +
+      '</ul>'
+    : '<p>아직 볼 수 있는 저장소가 없습니다. 관리자에게 위 계정 값을 알려 주세요.</p>';
+  const others = input.sessions.filter((s) => !s.current).length;
+  return page(
+    '설정',
+    '<div class="settings"><h1 class="page-title">설정</h1>' +
+      '<section aria-labelledby="settings-account"><h2 id="settings-account">계정</h2>' +
+      `<p>${providerLabel(input.identity)}로 로그인했습니다.</p>` +
+      `<p><code class="identity">${escapeHtml(input.identity)}</code></p>` +
+      '<p class="muted">권한을 받을 때 관리자에게 이 값을 알려 주세요.</p></section>' +
+      `<section aria-labelledby="settings-repos"><h2 id="settings-repos">볼 수 있는 저장소</h2>${repos}</section>` +
+      (input.admin
+        ? '<section aria-labelledby="settings-admin"><h2 id="settings-admin">관리</h2><p><a href="/admin">관리 화면 열기</a></p></section>'
+        : '') +
+      '<section aria-labelledby="settings-devices"><h2 id="settings-devices">로그인한 기기</h2>' +
+      `<ul class="settings-devices">${input.sessions.map(device).join('')}</ul>` +
+      (others > 1 ? revokeForm('<input type="hidden" name="target" value="others">', '다른 기기 모두 로그아웃') : '') +
+      '</section>' +
+      `<section aria-labelledby="settings-logout"><h2 id="settings-logout">로그아웃</h2>${logoutForm()}</section>` +
+      '<p><a href="/view/">문서 첫 화면으로</a></p></div>',
+    { head: STYLE },
+  );
+}

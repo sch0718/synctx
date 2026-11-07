@@ -168,7 +168,7 @@ GitHub Actions 저장소 Variables 2종도 등록한다. 비어 있으면 배포
 
 ### 로그인 모드(Pages Functions·D1)
 
-로그인한 사람만, 저장소마다 정해진 사람만 보게 한다. Google·카카오·네이버로 로그인하고(`@sch0718/firebase-session`), 세션은 `__Host-synctx_session` 쿠키, 역할은 D1 `synctx-pages`에 둔다. 열람자·담당자·관리자는 사이트의 `/admin` 화면에서 관리한다. 코드는 `deploy/pages/`(Functions·관리 화면·D1 마이그레이션)이고 설계는 [로그인·열람 제한 설계](superpowers/specs/2026-11-07-static-viewer-login-admin-design.md)다. 저장소 추가는 아직 `static-export.yaml`을 고치는 PR로 한다.
+로그인한 사람만, 저장소마다 정해진 사람만 보게 한다. Google·카카오·네이버로 로그인하고(`@sch0718/firebase-session`), 세션은 `__Host-synctx_session` 쿠키, 역할은 D1 `synctx-pages`에 둔다. 열람자·담당자·관리자는 사이트의 `/admin` 화면에서 관리한다. 로그인한 사람은 문서 화면 오른쪽 위의 사람 모양 버튼으로 `/settings`를 열어 자기 계정 값, 볼 수 있는 저장소, 로그인한 기기(다른 기기 로그아웃)를 보고 로그아웃한다. 코드는 `deploy/pages/`(Functions·관리 화면·D1 마이그레이션)이고 설계는 [로그인·열람 제한 설계](superpowers/specs/2026-11-07-static-viewer-login-admin-design.md)다. 저장소 추가는 아직 `static-export.yaml`을 고치는 PR로 한다.
 
 | 역할 | 정하는 곳 | 할 수 있는 일 |
 |------|-----------|---------------|
