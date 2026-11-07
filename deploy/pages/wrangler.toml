@@ -1,0 +1,17 @@
+# 정적 Viewer 로그인 모드(docs/install.md 「로그인 모드」). 산출물(dist/)은 배포 직전에 site/로 복사한다.
+name = "synctx"
+pages_build_output_dir = "site"
+compatibility_date = "2026-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "synctx-pages"
+# 사용자가 `npx wrangler d1 create synctx-pages`로 만든 뒤 받은 id를 넣는다(비밀 값이 아니다).
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# 일반 환경변수. 이 파일이 있으면 Pages 대시보드의 같은 항목은 읽기 전용이 되므로 여기서 관리한다.
+# 시크릿(OWNER_ACCOUNTS·FIREBASE_PROJECT_ID·KAKAO_*·NAVER_*)은 `npx wrangler pages secret put <이름> --project-name <프로젝트>`로 넣고 여기 두지 않는다.
+[vars]
+# Firebase 웹 앱 설정(비밀이 아니다). Firebase 프로젝트를 정한 뒤 값을 넣는다. 비어 있으면 로그인 화면은 503이다.
+FIREBASE_WEB_CONFIG = ""

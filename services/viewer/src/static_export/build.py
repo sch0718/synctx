@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import shutil
 import time
 from collections.abc import Sequence
@@ -143,7 +144,9 @@ def build_site(site: SiteConfig, out_dir: Path, cache_dir: Path, *, config_path:
     for url in sorted(result.raw_files):
         writer.write(output_file_path(url), result.raw_files[url])
     writer.write("_headers", _headers_file())
-    writer.write("_redirects", f"/ /view/{site.default_repo or ''} 302\n")
+    writer.write("_redirects", "/ /view/ 302\n")
+    writer.write("_synctx/repos.json", json.dumps(
+        [{"id": repo.id, "name": repo.name} for repo in site.repositories], ensure_ascii=False))
     writer.write("robots.txt", "User-agent: *\nDisallow: /\n")
     report.stage_seconds["write"] = round(time.perf_counter() - started, 3)
 

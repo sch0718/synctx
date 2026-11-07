@@ -118,7 +118,7 @@ Jitsi는 프리셋에 포함하지 않고(`SYNCTX_JITSI=false`) 필요할 때 �
 
 ## 정적 Viewer(Cloudflare Pages)
 
-비공개 Git 저장소의 Markdown을 Viewer 화면 그대로 정적 사이트로 내보내 Cloudflare Pages(Direct Upload)에 올리고 Cloudflare Access로 열람자를 제한한다. 폐쇄망 운영 구성이 아니라 시연·열람용이다. 누구나 보게 하려면 [공개 모드](#공개-모드access-없음)로 Access 없이 올릴 수 있다.
+비공개 Git 저장소의 Markdown을 Viewer 화면 그대로 정적 사이트로 내보내 Cloudflare Pages(Direct Upload)에 올리고 Cloudflare Access로 열람자를 제한한다. 폐쇄망 운영 구성이 아니라 시연·열람용이다. 누구나 보게 하려면 [공개 모드](#공개-모드access-없음)로 Access 없이 올릴 수 있다. 저장소마다 정해진 사람만 보게 하려면 [로그인 모드](#로그인-모드pages-functionsd1)로 Pages Functions와 D1을 함께 올린다.
 
 ### 준비물
 
@@ -145,6 +145,7 @@ GitHub Actions 저장소 Variables 2종도 등록한다. 비어 있으면 배포
 | `CLOUDFLARE_PAGES_PROJECT` | Pages(Direct Upload) 프로젝트 이름 |
 | `STATIC_EXPORT_CHECK_URLS` | 접근 점검 대상 https 주소를 공백으로 구분한 목록(운영 `*.pages.dev`·미리보기·커스텀 도메인의 `/view/`). 공개 모드면 두지 않아도 된다 |
 | `STATIC_EXPORT_PUBLIC` | 선택. `true`일 때만(대소문자 무관) 공개 모드(Access 점검 생략). 없거나 다른 값이면 Access 점검을 한다 |
+| `STATIC_EXPORT_LOGIN` | 선택. `true`일 때만 [로그인 모드](#로그인-모드pages-functionsd1). `STATIC_EXPORT_PUBLIC`과 함께 켜면 빌드가 실패한다 |
 
 토큰은 URL·로그·산출물에 남기지 않는다. 설정 파일에는 환경변수 이름만 둔다.
 
@@ -164,6 +165,49 @@ GitHub Actions 저장소 Variables 2종도 등록한다. 비어 있으면 배포
 - 켜기 전에 `static-export.yaml`의 `include`·`exclude`로 공개해도 되는 경로만 남았는지 확인한다. 비공개 저장소라도 내보낸 문서는 공개된다.
 - 첫 배포는 `first_deploy` 없이 워크플로를 실행한다. 배포 뒤 문서가 열리는지 직접 확인한다.
 - Access로 돌아가려면 Access 앱을 먼저 만들고 `STATIC_EXPORT_CHECK_URLS`를 채운 뒤 `STATIC_EXPORT_PUBLIC`을 지운다.
+
+### 로그인 모드(Pages Functions·D1)
+
+로그인한 사람만, 저장소마다 정해진 사람만 보게 한다. Google·카카오·네이버로 로그인하고(`@sch0718/firebase-session`), 세션은 `__Host-synctx_session` 쿠키, 역할은 D1 `synctx-pages`에 둔다. 열람자·담당자·관리자는 사이트의 `/admin` 화면에서 관리한다. 코드는 `deploy/pages/`(Functions·관리 화면·D1 마이그레이션)이고 설계는 [로그인·열람 제한 설계](superpowers/specs/2026-11-07-static-viewer-login-admin-design.md)다. 저장소 추가는 아직 `static-export.yaml`을 고치는 PR로 한다.
+
+| 역할 | 정하는 곳 | 할 수 있는 일 |
+|------|-----------|---------------|
+| 전체 관리자 | Pages 시크릿 `OWNER_ACCOUNTS`(콤마 구분) | 모든 저장소 열람·편집, 관리자 지정, 관리자 초대, 변경 기록 |
+| 관리자 | D1 `site_roles` | 지금은 표시만 한다(저장소 추가는 다음 단계) |
+| 저장소 담당자 | D1 `repo_members(role=manager)` | 그 저장소 열람, 열람자·담당자 편집, 초대 링크 |
+| 열람자 | D1 `repo_members(role=viewer)` | 그 저장소 열람 |
+
+identity는 Google이면 소문자 이메일, 카카오·네이버면 `kakao:<값>`·`naver:<값>`이다. 공급자마다 다른 사람이다. 권한이 없는 사람의 403 화면에 자기 identity가 나오므로 그 값을 받아 직접 넣거나 초대 링크(1회용, 7일)를 보낸다. 저장소의 마지막 담당자는 지우거나 열람자로 바꿀 수 없다(전체 관리자는 예외).
+
+#### 준비물
+
+- D1: `cd deploy/pages && npx wrangler d1 create synctx-pages`로 만들고 받은 `database_id`를 `deploy/pages/wrangler.toml`에 넣는다(비밀 값이 아니다). 원격 마이그레이션은 워크플로에서 하지 않는다. 사용자가 로컬에서 `cd deploy/pages && npx wrangler d1 migrations apply synctx-pages --remote`를 실행한다(스키마가 바뀔 때마다).
+- Firebase 프로젝트(Google 로그인)와 카카오·네이버 앱. 세 곳 모두 리다이렉트 주소로 `https://synctx.sch0718.dev/auth/callback`을 등록한다(Firebase는 승인된 도메인에 `synctx.sch0718.dev`).
+- Pages 시크릿: `OWNER_ACCOUNTS`, `FIREBASE_PROJECT_ID`, `KAKAO_CLIENT_ID`·`KAKAO_CLIENT_SECRET`(카카오 앱에서 시크릿을 켰을 때), `NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET`. `cd deploy/pages && npx wrangler pages secret put <이름> --project-name <프로젝트>`로 넣는다. 값은 채팅·저장소에 두지 않는다.
+- Firebase 웹 앱 설정(`apiKey`·`authDomain`·`projectId`·`appId`)은 비밀이 아니다. `deploy/pages/wrangler.toml`의 `[vars] FIREBASE_WEB_CONFIG`에 JSON으로 넣는다. 이 파일이 있으면 Pages 대시보드의 같은 항목은 읽기 전용이 된다. 비어 있거나 형식이 틀리면 `/login`이 503이다.
+- GitHub Packages 읽기: toolkit의 `@sch0718/firebase-session` 패키지 설정 → Manage Actions access에 synctx 저장소를 Read로 등록한다. 워크플로는 설치 단계에만 `GITHUB_TOKEN`(`packages: read`)을 넣는다. 로컬에서 `npm ci`를 하려면 읽기 토큰을 셸 환경변수 `NODE_AUTH_TOKEN`으로 준다.
+- **Pages 설정 `Fail closed`(필수)**: Cloudflare 대시보드 Workers & Pages → 해당 Pages 프로젝트 → Settings → Runtime → Fail open / closed에서 `Fail closed`를 선택·저장하고 다시 열어 확인한다. `Fail open`이면 Functions 무료 요청 한도를 넘었을 때 인증을 건너뛰고 정적 문서를 내준다. 확인하지 못하면 로그인 배포를 하지 않는다.
+
+#### 첫 배포 순서
+
+1. 위 준비물을 모두 마치고 `Fail closed`를 다시 확인한다.
+2. 저장소 변수 `STATIC_EXPORT_LOGIN=true`를 넣고 `STATIC_EXPORT_PUBLIC`을 지운다. `STATIC_EXPORT_CHECK_URLS`에 `https://synctx.sch0718.dev/view/study-notes/`처럼 문서 주소를 둔다. 배포 직전에 바꾼다(그 전까지 사이트는 이전 모드 그대로다).
+3. 워크플로를 `first_deploy` 없이 실행한다. 로그인 모드에서는 자리표시 사전 점검(preflight)이 돌지 않는다. 배포 job이 `deploy/pages`에서 산출물·Functions·로그인/관리 JS·`_routes.json`을 함께 올리고, `check-access.sh --mode login`이 세션 없는 문서 요청이 같은 출처 `/login?next=…`로 302되는지 확인한다.
+4. 손으로 확인한다: 세션 없이 `/view/study-notes/`, `/raw/study-notes/…`, `/view/api/repos/study-notes/tree.json`, `/_synctx/repos.json`이 302 또는 403인지, 본인 계정으로 열리는지, 다른 계정은 초대 전 403이고 첫 화면에 저장소 이름이 없는지, 초대 수락 뒤 열리는지.
+5. **이전 공개 배포를 지운다.** 새 배포에만 Functions가 붙고, 이전 배포의 고유 주소(`<hash>.<프로젝트>.pages.dev`)는 공개 산출물을 계속 내준다. 지우기 전에 이전 고유 주소 하나를 적어 두고, Pages 배포 목록에서 로그인 배포보다 앞선 배포를 모두 지운 뒤 그 주소의 `/view/study-notes/`가 문서를 내주지 않는지 확인한다.
+
+#### 복구와 되돌리기
+
+- D1·인증서 조회가 실패하면 503이고 문서를 열어 주지 않는다. 세션이 만료·철회되면 다시 로그인한다. 빌드가 실패하면 이전 배포가 그대로 남는다.
+- Functions 무료 한도를 넘으면 `Fail closed` 설정대로 오류 페이지가 나간다. 복구를 위해 `Fail open`으로 바꾸지 않는다. 한도가 회복되면 4번의 접근 확인을 다시 하고, 대시보드에서 `Fail closed`인지 다시 본다(정상 상태의 302 점검이나 로컬 시험으로는 이 설정을 검증하지 못한다).
+- 전체 관리자가 마지막 담당자를 지워 담당자가 없는 저장소는 전체 관리자가 다시 지정한다.
+- **공개 모드로 되돌리기**: `static-export.yaml`의 include/exclude가 공개해도 되는 범위인지 확인 → `STATIC_EXPORT_LOGIN`을 지우고 `STATIC_EXPORT_PUBLIC=true` → 워크플로를 다시 실행해 Functions 없는 공개 산출물을 새로 빌드·배포 → 세션 없는 브라우저에서 문서가 로그인 리다이렉트 없이 열리는지 확인. 변수만 바꿔서는 기존 배포가 바뀌지 않는다. 5번에서 이전 공개 배포를 지웠으므로 옛 배포로 롤백하지 않고 새로 빌드한다.
+
+#### 로그인 모드 미확인
+
+- 실제 Google·카카오·네이버 로그인(팝업·리다이렉트, 카카오 PKCE 강제, 네이버 OIDC 설정)은 로컬 시험에서 돌리지 못했다. 첫 배포 때 손으로 확인한다.
+- Firebase `authDomain`이 `*.firebaseapp.com`이면 서드파티 저장소를 막는 브라우저(iOS Safari 등)에서 리다이렉트 로그인이 안 될 수 있다. 팝업 로그인을 기본으로 쓴다.
+- Pages 플랫폼의 `Fail closed` 실제 계정 설정.
 
 ### 내보내기 범위
 

@@ -764,7 +764,7 @@ def view_index():
             label = ui.STATUS_LABELS.get(get_repo_manager(r.id).status, "")
             status = f'<span class="repo-card-meta">{label}</span>' if label else ""
             cards.append(
-                f'<li><a class="repo-card" href="{ui.esc(_view_url(quote(r.id, safe="")))}">'
+                f'<li data-repo-id="{ui.esc(r.id)}"><a class="repo-card" href="{ui.esc(_view_url(quote(r.id, safe="")))}">'
                 f'<span class="repo-card-name">{ui.esc(r.name)}</span>'
                 f'<span class="repo-card-meta">기본 브랜치 {ui.esc(r.default_ref)}</span>{status}</a></li>'
             )

@@ -27,9 +27,10 @@ concurrency:
 
 jobs:
   preflight:
-    # 첫 배포 전에만 돈다. 문서 산출물·읽기 토큰은 쓰지 않는다.
-    # 공개 모드(저장소 변수 STATIC_EXPORT_PUBLIC=true)에서는 막을 Access가 없으므로 돌지 않는다.
-    if: ${{ inputs.first_deploy && vars.STATIC_EXPORT_PUBLIC != 'true' }}
+    # 첫 배포 전에만 돈다. 문서 산출물·읽기 토큰은 쓰지 않는다. Access 모드 전용이다.
+    # 공개 모드(STATIC_EXPORT_PUBLIC=true)에는 막을 Access가 없고, 로그인 모드(STATIC_EXPORT_LOGIN=true)에서 돌면
+    # Functions 없는 자리표시 페이지가 운영 배포를 덮으므로 둘 다 돌지 않는다.
+    if: ${{ inputs.first_deploy && vars.STATIC_EXPORT_PUBLIC != 'true' && vars.STATIC_EXPORT_LOGIN != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -61,6 +62,13 @@ jobs:
     permissions:
       contents: read
     steps:
+      # 배포 모드는 저장소 변수 둘로 고른다: 공개(STATIC_EXPORT_PUBLIC), 로그인(STATIC_EXPORT_LOGIN), 둘 다 아니면 Access.
+      # 변수는 다음 배포에 올릴 구성만 고르고, 이미 배포된 사이트를 바꾸지 않는다.
+      - name: 배포 모드 확인
+        if: ${{ vars.STATIC_EXPORT_PUBLIC == 'true' && vars.STATIC_EXPORT_LOGIN == 'true' }}
+        run: |
+          echo "STATIC_EXPORT_PUBLIC과 STATIC_EXPORT_LOGIN을 함께 켤 수 없다" >&2
+          exit 1
       - uses: actions/checkout@v4.2.2
         with:
           persist-credentials: false
@@ -87,6 +95,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      packages: read   # 로그인 모드의 @sch0718/firebase-session 설치(GitHub Packages)
     steps:
       - uses: actions/checkout@v4.2.2
         with:
@@ -95,9 +104,12 @@ jobs:
         with:
           name: static-export-dist
           path: dist
+      # 공개·Access 모드: 산출물만 올린다(Functions 없음).
       # 항상 운영 브랜치로만 올린다. 프로젝트의 production branch 설정과 같아야 한다.
       # 브랜치 별칭(<branch>.<project>.pages.dev)의 Access 보호 여부는 미확인이다.
-      - uses: cloudflare/wrangler-action@v3.14.1
+      - name: 배포(공개·Access 모드)
+        if: ${{ vars.STATIC_EXPORT_LOGIN != 'true' }}
+        uses: cloudflare/wrangler-action@v3.14.1
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -106,7 +118,45 @@ jobs:
       # (Pages 배포 삭제가 Pages: Edit 토큰 권한으로 되는지 미확인). 실패하면 사람이 사이트를 먼저 내리고 Access를 고친 뒤 다시 점검한다.
       # 공개 모드는 저장소 변수 STATIC_EXPORT_PUBLIC을 'true'로 둘 때만 켜진다(Actions 문자열 비교라 대소문자는 무시한다). 변수가 없거나 다른 값이면 점검한다.
       - name: 배포 후 Access 점검
-        if: ${{ vars.STATIC_EXPORT_PUBLIC != 'true' }}
+        if: ${{ vars.STATIC_EXPORT_PUBLIC != 'true' && vars.STATIC_EXPORT_LOGIN != 'true' }}
         env:
           CHECK_URLS: ${{ vars.STATIC_EXPORT_CHECK_URLS }}
         run: scripts/static-export/check-access.sh $CHECK_URLS
+      # 로그인 모드: deploy/pages의 Functions(로그인·열람 판정·사람 관리)와 산출물을 함께 올린다(docs/install.md 「로그인 모드」).
+      # D1 마이그레이션은 여기서 하지 않는다(Cloudflare 토큰은 Pages 권한뿐). 사용자가 로컬에서 원격 적용한다.
+      - uses: actions/setup-node@v4.4.0
+        if: ${{ vars.STATIC_EXPORT_LOGIN == 'true' }}
+        with:
+          node-version: "24"
+      - name: Functions 의존성 설치(로그인 모드)
+        if: ${{ vars.STATIC_EXPORT_LOGIN == 'true' }}
+        working-directory: deploy/pages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci
+      - name: 사이트 준비(로그인 모드)
+        if: ${{ vars.STATIC_EXPORT_LOGIN == 'true' }}
+        working-directory: deploy/pages
+        run: |
+          rm -rf site
+          mkdir -p site
+          cp -R ../../dist/. site/
+          test -f site/_synctx/repos.json
+          cp _routes.json site/_routes.json
+          npx esbuild client/login.ts --bundle --format=esm --outfile=site/view/static/synctx-auth/login.js
+          npx esbuild client/admin.ts --bundle --format=esm --outfile=site/view/static/synctx-auth/admin.js
+      - name: 배포(로그인 모드)
+        if: ${{ vars.STATIC_EXPORT_LOGIN == 'true' }}
+        uses: cloudflare/wrangler-action@v3.14.1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: deploy/pages
+          command: pages deploy site --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT }} --branch=main
+      # 필수 단계다. 세션 없는 문서 요청이 같은 출처 /login?next=…로 302되어야 통과한다.
+      # 무료 요청 한도 초과 때의 동작은 이 점검으로 확인할 수 없다(Pages 설정 Fail closed를 사람이 확인한다).
+      - name: 배포 후 로그인 점검
+        if: ${{ vars.STATIC_EXPORT_LOGIN == 'true' }}
+        env:
+          CHECK_URLS: ${{ vars.STATIC_EXPORT_CHECK_URLS }}
+        run: scripts/static-export/check-access.sh --mode login $CHECK_URLS

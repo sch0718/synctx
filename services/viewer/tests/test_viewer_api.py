@@ -682,6 +682,7 @@ class TestShellPages:
         assert 'class="skip-link" href="#main"' in text
         assert '<h1 class="page-title">저장소</h1>' in text
         assert "기본 브랜치 main" in text
+        assert '<li data-repo-id="test-repo"><a class="repo-card"' in text
         assert "https://git.test/repo.git" not in text
         assert "Select Repository" not in text and "Repositories" not in text
         assert '<script src="/view/static/viewer.js"></script>' in text

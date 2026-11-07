@@ -2,6 +2,7 @@
 
 import hashlib
 import importlib
+import json
 import os
 import re
 from pathlib import Path
@@ -82,12 +83,14 @@ def test_build_writes_all_expected_files(tmp_path):
     assert (out / "robots.txt").read_text(encoding="utf-8").split() == ["User-agent:", "*", "Disallow:", "/"]
 
 
-def test_default_repo_redirects_root_to_that_repository(tmp_path):
+def test_root_redirects_to_index_even_with_default_repo(tmp_path):
+    """로그인 모드에서는 볼 수 있는 저장소가 사람마다 달라 `/`는 첫 화면으로만 보낸다."""
     source = make_source(tmp_path, BASE_FILES)
     site = make_site(source).model_copy(update={"default_repo": "repo-a"})
     out = tmp_path / "dist"
     _build().build_site(site, out, tmp_path / "cache")
-    assert (out / "_redirects").read_text(encoding="utf-8").split() == ["/", "/view/repo-a", "302"]
+    assert (out / "_redirects").read_text(encoding="utf-8").split() == ["/", "/view/", "302"]
+    assert json.loads((out / "_synctx/repos.json").read_text(encoding="utf-8")) == [{"id": "repo-a", "name": site.repositories[0].name}]
     assert (out / "view/repo-a/index.html").is_file()
 
 

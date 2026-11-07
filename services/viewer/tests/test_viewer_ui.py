@@ -65,8 +65,17 @@ def test_theme_options_korean_labels_and_selection():
 def test_repo_options_escape_and_placeholder():
     html = ui.repo_options(REPOS, "r1")
     assert '<option value="">저장소 선택</option>' in html
-    assert '<option value="r1" selected>회의 자료</option>' in html
+    assert '<option value="r1" data-repo-id="r1" selected>회의 자료</option>' in html
     assert "a&quot;&lt;b&gt;" in html and '<b>' not in html
+    assert 'data-repo-id="a&quot;&lt;b&gt;"' not in html and 'data-repo-id="r2"' in html
+
+
+def test_search_repo_options_and_branch_options_mark_repo_ids():
+    branch = ui.branch_options(["main"], None, "main")
+    assert "data-repo-id" not in branch
+    form = ui._search_form(view_prefix="/view", raw_query="", repos=[SimpleNamespace(id='r"<x>', name="X")],
+                           active_repo=None, ref=None)
+    assert '<option value="r&quot;&lt;x&gt;" data-repo-id="r&quot;&lt;x&gt;">X</option>' in form
 
 
 def test_branch_options_marks_default():

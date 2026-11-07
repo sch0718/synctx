@@ -1,0 +1,23 @@
+{
+  "name": "synctx-pages",
+  "private": true,
+  "type": "module",
+  "description": "정적 Viewer 로그인 모드: Cloudflare Pages Functions(로그인·열람 판정·사람 관리)",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p client",
+    "build:client": "esbuild client/login.ts --bundle --format=esm --outfile=site/view/static/synctx-auth/login.js && esbuild client/admin.ts --bundle --format=esm --outfile=site/view/static/synctx-auth/admin.js"
+  },
+  "dependencies": {
+    "@sch0718/firebase-session": "0.4.0",
+    "firebase": "12.19.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.6.0",
+    "@cloudflare/workers-types": "5.20261107.1",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3",
+    "vitest": "5.1.0",
+    "wrangler": "4.158.0"
+  }
+}

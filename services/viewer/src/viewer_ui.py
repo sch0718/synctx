@@ -89,7 +89,7 @@ def repo_options(repos, active_id: str | None) -> str:
     items = [f'<option value=""{"" if active_id else " selected"}>저장소 선택</option>']
     for r in repos:
         sel = " selected" if r.id == active_id else ""
-        items.append(f'<option value="{esc(r.id)}"{sel}>{esc(r.name)}</option>')
+        items.append(f'<option value="{esc(r.id)}" data-repo-id="{esc(r.id)}"{sel}>{esc(r.name)}</option>')
     return "".join(items)
 
 
@@ -276,7 +276,7 @@ def _search_form(*, view_prefix, raw_query, repos, active_repo, ref) -> str:
     options = [f'<option value=""{"" if active_repo else " selected"}>모든 저장소</option>']
     for r in repos:
         sel = " selected" if r.id == active_repo else ""
-        options.append(f'<option value="{esc(r.id)}"{sel}>{esc(r.name)}</option>')
+        options.append(f'<option value="{esc(r.id)}" data-repo-id="{esc(r.id)}"{sel}>{esc(r.name)}</option>')
     hidden = ""
     if ref and active_repo:
         hidden = (f'<input type="hidden" name="ref" value="{esc(ref)}">'

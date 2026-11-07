@@ -79,13 +79,19 @@ def build_allowlist(paths: Iterable[str], repo: SiteRepo) -> frozenset[str]:
 
 @asynccontextmanager
 async def _restrict_evidence_reads(viewer, repos: dict[str, SiteRepo]):
-    """HTML에 발췌가 들어가기 전에 대상 저장소의 제한을 검사한다. 일반 Viewer의 읽기는 유지한다."""
+    """HTML에 발췌가 들어가기 전에 대상 저장소의 제한을 검사한다. 일반 Viewer의 읽기는 유지한다.
+
+    페이지와 다른 저장소의 발췌는 읽지 않는다. 로그인 모드에서 열람자는 저장소마다 다르고, 발췌는 페이지 HTML과
+    JSON 두 곳에 들어가 edge에서 지울 수 없기 때문이다.
+    """
     original = viewer._evidence_reader
 
-    def restricted_reader(*args, **kwargs):
-        read = original(*args, **kwargs)
+    def restricted_reader(page_repo_id: str, *args, **kwargs):
+        read = original(page_repo_id, *args, **kwargs)
 
         def restricted_read(repo_id: str, path: str) -> str:
+            if repo_id != page_repo_id:
+                raise ValueError("다른 저장소의 근거는 내보내지 않습니다")
             repo = repos.get(repo_id)
             if repo is None or not build_allowlist([path], repo):
                 raise ValueError("내보내기 대상에서 제외된 근거 파일입니다")

@@ -30,6 +30,37 @@ def test_judge_access_response(status, location, body, expected):
     assert judge_access_response(status, location, body) is expected
 
 
+SITE = "https://docs.example.dev/view/study-notes/"
+
+
+@pytest.mark.parametrize("status,location,body,expected", [
+    (302, "/login?next=%2Fview%2Fstudy-notes%2F", "", True),
+    (302, "https://docs.example.dev/login?next=%2Fview%2F", "", True),
+    (302, "https://evil.example/login?next=%2F", "", False),
+    (302, "http://docs.example.dev/login?next=%2F", "", False),
+    (302, "https://docs.example.dev:8443/login?next=%2F", "", False),
+    (302, "/other?next=%2F", "", False),
+    (302, "/login", "", False),
+    (302, "//evil.example/login?next=%2F", "", False),
+    (303, "/login?next=%2F", "", False),
+    (302, "/login?next=%2F", '<div class="markdown-body">본문</div>', False),
+    (200, None, '<body class="page-static">', False),
+    (403, None, "", False),
+    (503, None, "", False),
+    (302, ACCESS_LOGIN, "", False),
+])
+def test_judge_login_mode(status, location, body, expected):
+    assert judge_access_response(status, location, body, mode="login", url=SITE) is expected
+
+
+def test_main_passes_mode_to_judge(monkeypatch):
+    monkeypatch.setattr(access_check, "fetch_head", lambda url, timeout=20: (302, "/login?next=%2F", ""))
+    assert access_check.main(["--mode", "login", SITE]) == 0
+    assert access_check.main([SITE]) == 1
+    assert access_check.main(["--mode", "other", SITE]) == 2
+    assert access_check.main(["--mode", "login"]) == 2
+
+
 def test_judge_does_not_trust_lookalike_host():
     assert judge_access_response(302, "https://evilcloudflareaccess.com.example.net/x", "") is False
 

@@ -35,6 +35,19 @@ async def test_evidence_reads_respect_target_repo_allowlist(tmp_path, monkeypatc
         repos = [{"id": "repo-a", "name": "A", "url": str(source), **rules}]
     site = _config().SiteConfig(title="Test", repositories=repos)
     viewer = _runtime().load_viewer(_runtime().write_runtime_config(site, tmp_path / "cache"))
+    evidence_reads = []
+    base_reader = viewer._evidence_reader
+
+    def tracking_reader(*args, **kwargs):
+        read = base_reader(*args, **kwargs)
+
+        def tracked(repo_id, path):
+            evidence_reads.append((repo_id, path))
+            return read(repo_id, path)
+
+        return tracked
+
+    viewer._evidence_reader = tracking_reader
     original_reader = viewer._evidence_reader
     manager_class = importlib.import_module("synctx_common.git_manager").GitRepoManager
     original_read = manager_class.read_resolved
@@ -47,7 +60,13 @@ async def test_evidence_reads_respect_target_repo_allowlist(tmp_path, monkeypatc
     monkeypatch.setattr(manager_class, "read_resolved", track_read)
     result = await _crawl().crawl(viewer, site)
     page = result.pages["/view/repo-a/public/meeting.md"]
-    assert "VISIBLE-EVIDENCE-123" in page
     assert SECRET not in everything(result)
     assert (target_id, f"{private_dir}/secret.md") not in reads
+    if cross_repo:
+        # 열람자가 저장소마다 달라 다른 저장소 발췌는 HTML(evidence-body)·JSON(data-synctx-evidence) 어디에도 넣지 않는다.
+        assert "VISIBLE-EVIDENCE-123" not in page
+        assert not [read for read in evidence_reads if read[0] == target_id]
+    else:
+        assert "VISIBLE-EVIDENCE-123" in page
+        assert ("repo-a", "public/open.md") in evidence_reads
     assert viewer._evidence_reader is original_reader

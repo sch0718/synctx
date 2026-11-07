@@ -1346,10 +1346,35 @@ scripts/docker/deploy.sh [--env-file 경로] [--secrets-file 경로] [--check]
 | `CLOUDFLARE_PAGES_PROJECT` | Pages(Direct Upload) 프로젝트 이름. `wrangler pages deploy --project-name`에 쓴다 |
 | `STATIC_EXPORT_CHECK_URLS` | 접근 점검 대상 https 주소를 공백으로 구분한 목록(운영 `*.pages.dev`·미리보기·커스텀 도메인의 `/view/`). 비어 있으면 `check-access.sh`가 사용법을 출력하고 종료 코드 2로 끝난다 |
 | `STATIC_EXPORT_PUBLIC` | 선택. `true`면(대소문자 무관) 공개 모드로 사전 점검 job과 배포 후 Access 점검을 건너뛴다(이때 `STATIC_EXPORT_CHECK_URLS`는 쓰지 않는다). 없거나 다른 값이면 점검한다 |
+| `STATIC_EXPORT_LOGIN` | 선택. `true`면 로그인 모드로 `deploy/pages`의 Functions와 함께 배포하고 `check-access.sh --mode login`으로 점검한다. 사전 점검 job은 돌지 않는다. `STATIC_EXPORT_PUBLIC`과 함께 켜면 build job이 실패한다 |
 
 - 토큰은 환경변수로만 받고 URL·로그·산출물에 남기지 않는다. 예외는 종류(`type(exc).__name__`)만 기록하고, 산출물 검사는 토큰 값·`ghp_`·`github_pat_`·`Authorization` 패턴·`.git`을 찾는다. 워크플로는 `pull_request`로 실행하지 않는다.
 - 배포 순서는 Access 앱 → 사전 점검 → 배포 → 배포 후 점검 → 주소 공유다. `scripts/static-export/check-access.sh`는 세션 없이 요청해 Access 로그인(302 등)이나 401·403이면 통과로 본다. 실패하면 워크플로가 실패하지만 올라간 배포를 자동으로 지우지는 않으며, 사람이 사이트를 먼저 내리고 Access를 고친다. 공개 모드는 Access 앱 없이 배포하며 검색 노출은 `robots.txt`·`noindex` 헤더로만 막는다(설치 문서 「공개 모드」).
 - 점검 판정(`access_check.judge_access_response`)만 가짜 응답으로 시험한다. 실제 Cloudflare 계정의 Access 정책 상태, Pages 배포 삭제 권한은 확인하지 못했다.
+
+#### 로그인 모드(Pages Functions·D1)
+
+저장소마다 열람자를 정하는 로그인 모드의 비밀 값·역할·운영이다. 서버 Viewer의 3.4 Secret 표·Roles 표·`.synctx.yaml`·`authz`는 바뀌지 않는다(정적 사이트에만 적용). 설치 순서는 [설치 방식 선택](install.md)의 「로그인 모드」를 따른다.
+
+| 값 | 저장 위치 | 용도 |
+|----|-----------|------|
+| `OWNER_ACCOUNTS` | Cloudflare Pages 시크릿 | 전체 관리자 identity(콤마 구분) |
+| `FIREBASE_PROJECT_ID` | Cloudflare Pages 시크릿 | Google ID 토큰의 aud·iss 검사 |
+| `KAKAO_CLIENT_ID`·`KAKAO_CLIENT_SECRET` | Cloudflare Pages 시크릿 | 카카오 OIDC 코드 교환(시크릿은 카카오 앱에서 켰을 때) |
+| `NAVER_CLIENT_ID`·`NAVER_CLIENT_SECRET` | Cloudflare Pages 시크릿 | 네이버 OIDC 코드 교환 |
+| `FIREBASE_WEB_CONFIG` | Pages 일반 환경변수(`deploy/pages/wrangler.toml`의 `[vars]`) | Firebase 웹 앱 설정 JSON. 비밀이 아니며 로그인 화면이 브라우저에 넘긴다 |
+| `NODE_AUTH_TOKEN` | 등록하지 않음 | 배포 job의 설치 단계에만 워크플로가 `secrets.GITHUB_TOKEN`(`packages: read`)을 넣는다 |
+
+| 역할 | 정하는 곳 | 할 수 있는 일 |
+|------|-----------|---------------|
+| 전체 관리자 | `OWNER_ACCOUNTS` | 모든 저장소 열람·편집, 관리자 지정·해제, 관리자 초대, 변경 기록 |
+| 관리자 | D1 `site_roles` | 저장소 추가(다음 단계에서 화면 제공) |
+| 저장소 담당자 | D1 `repo_members(role=manager)` | 그 저장소 열람, 열람자·담당자 편집, 초대 |
+| 열람자 | D1 `repo_members(role=viewer)` | 그 저장소 열람 |
+
+- identity는 Google 소문자 이메일, 카카오·네이버 `kakao:<sub>`·`naver:<sub>`다. 공급자 사이 계정을 연결하지 않는다.
+- 저장소의 마지막 담당자는 지우거나 열람자로 바꿀 수 없다(전체 관리자는 예외). 권한 확인과 이 규칙은 변경 SQL 안에서 다시 확인하고, 변경과 `audit_log` 기록은 한 D1 batch(트랜잭션)에 넣는다. 초대는 1회용·7일이며 D1에는 토큰의 SHA-256만 둔다.
+- 운영: D1 원격 마이그레이션(`npx wrangler d1 migrations apply synctx-pages --remote`)은 사용자가 직접 실행한다(워크플로의 Cloudflare 토큰은 Pages 권한뿐). D1·인증서 조회 실패는 503(문서를 열지 않음), 세션 만료·철회는 재로그인, 빌드 실패는 이전 배포 유지다. 전체 관리자가 마지막 담당자를 지워 담당자가 없는 저장소는 전체 관리자가 다시 지정한다. Functions 무료 한도 초과는 Pages 설정 `Fail closed`로 막고, 복구를 위해 `Fail open`으로 바꾸지 않는다.
 
 ## 9. 관측성과 운영
 

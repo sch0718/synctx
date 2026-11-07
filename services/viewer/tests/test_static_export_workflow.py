@@ -31,8 +31,9 @@ def test_dispatch_inputs_include_repos():
 
 def test_permissions_are_minimal():
     assert WF["permissions"] == {"contents": "read"}
-    for job in WF["jobs"].values():
-        assert set(job.get("permissions", {})) <= {"contents"}
+    for name, job in WF["jobs"].items():
+        allowed = {"contents": "read", "packages": "read"} if name == "deploy" else {"contents": "read"}
+        assert job.get("permissions", {}).items() <= allowed.items(), name
 
 
 def test_concurrency_does_not_cancel_running_deploy():
@@ -107,12 +108,70 @@ def test_deploy_runs_check_access_as_required_step():
     assert check_index > deploy_index
 
 
-def test_access_check_is_skipped_only_for_explicit_public_mode():
-    # 변수가 없거나 'true'가 아니면 점검이 돈다. 공개 모드는 명시적으로만 켠다.
-    public_off = "vars.STATIC_EXPORT_PUBLIC != 'true'"
-    check = [s for s in _steps("deploy") if "check-access.sh" in s.get("run", "")]
-    assert all(s.get("if") == "${{ " + public_off + " }}" for s in check)
-    assert public_off in WF["jobs"]["preflight"]["if"]
+PUBLIC_OFF = "vars.STATIC_EXPORT_PUBLIC != 'true'"
+LOGIN_ON = "vars.STATIC_EXPORT_LOGIN == 'true'"
+LOGIN_OFF = "vars.STATIC_EXPORT_LOGIN != 'true'"
+
+
+def _deploy_steps_using(fragment: str) -> list[dict]:
+    return [s for s in _steps("deploy") if fragment in yaml.safe_dump(s)]
+
+
+def test_access_check_is_skipped_only_for_explicit_public_or_login_mode():
+    # 변수가 없거나 'true'가 아니면 Access 점검이 돈다. 공개·로그인 모드는 명시적으로만 켠다.
+    check = [s for s in _steps("deploy") if "check-access.sh" in s.get("run", "") and "--mode login" not in s["run"]]
+    assert [s.get("if") for s in check] == ["${{ " + PUBLIC_OFF + " && " + LOGIN_OFF + " }}"]
+    assert PUBLIC_OFF in WF["jobs"]["preflight"]["if"]
+
+
+def test_preflight_is_access_mode_only():
+    assert LOGIN_OFF in WF["jobs"]["preflight"]["if"]
+
+
+def test_build_fails_when_public_and_login_are_both_on():
+    first = _steps("build")[0]
+    assert first["if"] == "${{ vars.STATIC_EXPORT_PUBLIC == 'true' && " + LOGIN_ON + " }}"
+    assert "exit 1" in first["run"]
+
+
+def test_login_and_dist_deploys_are_exclusive():
+    deploys = [s for s in _steps("deploy") if "wrangler-action" in s.get("uses", "")]
+    by_target = {("site" if "pages deploy site" in s["with"]["command"] else "dist"): s for s in deploys}
+    assert set(by_target) == {"site", "dist"} and len(deploys) == 2
+    assert by_target["dist"]["if"] == "${{ " + LOGIN_OFF + " }}"
+    assert "workingDirectory" not in by_target["dist"]["with"]
+    assert by_target["site"]["if"] == "${{ " + LOGIN_ON + " }}"
+    assert by_target["site"]["with"]["workingDirectory"] == "deploy/pages"
+    for step in deploys:
+        assert "--branch=main" in step["with"]["command"]
+
+
+def test_login_mode_steps_run_only_in_login_mode():
+    steps = _steps("deploy")
+    start = next(i for i, s in enumerate(steps) if "setup-node" in s.get("uses", ""))
+    for step in steps[start:]:
+        assert step.get("if") == "${{ " + LOGIN_ON + " }}", step.get("name")
+    names = [s.get("name", s.get("uses", "")) for s in steps[start:]]
+    assert names[-1] == "배포 후 로그인 점검"
+    assert "--mode login" in steps[-1]["run"]
+    assert not steps[-1].get("continue-on-error")
+
+
+def test_node_auth_token_only_in_login_install_step():
+    holders = [s for job in WF["jobs"] for s in _steps(job) if "NODE_AUTH_TOKEN" in yaml.safe_dump(s)]
+    assert len(holders) == 1
+    step = holders[0]
+    assert step["env"]["NODE_AUTH_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
+    assert step["run"] == "npm ci" and step["working-directory"] == "deploy/pages"
+    assert step in _steps("deploy")
+
+
+def test_login_site_gets_functions_assets_and_routes():
+    prep = next(s for s in _steps("deploy") if s.get("name") == "사이트 준비(로그인 모드)")
+    assert prep["working-directory"] == "deploy/pages"
+    for fragment in ("cp -R ../../dist/. site/", "test -f site/_synctx/repos.json", "cp _routes.json site/_routes.json",
+                     "client/login.ts", "client/admin.ts"):
+        assert fragment in prep["run"], fragment
 
 
 def test_preflight_deploys_placeholder_without_documents():
@@ -129,6 +188,16 @@ def test_deploy_waits_for_preflight_when_requested():
     assert "preflight" in deploy["needs"]
     assert "needs.build.result == 'success'" in deploy["if"]
     assert "needs.preflight.result" in deploy["if"]
+
+
+def test_functions_csp_matches_static_headers():
+    """Functions가 붙이는 CSP는 _headers(빌드)와 같은 값이어야 한다."""
+    import importlib
+
+    source = (WORKFLOW.parents[2] / "deploy" / "pages" / "src" / "http.ts").read_text(encoding="utf-8")
+    joined = re.sub(r'"\s*\+\s*"', "", source)
+    assert f'"{importlib.import_module("static_export.build").CSP}"' in joined
+    assert f'"{importlib.import_module("app").RAW_SVG_CSP}"' in joined
 
 
 def test_unverified_cloudflare_behaviors_are_marked():
