@@ -192,6 +192,7 @@ def page(*, view_prefix, title, theme, header, body, repo_id="", ref="", page_cl
 <title>{esc(title)} - synctx</title>
 {boot}
 <style>{THEME_VARS_CSS}</style>
+<link rel="icon" type="image/svg+xml" href="{vp}/static/favicon.svg">
 {head_extra}
 <link rel="stylesheet" href="{vp}/static/viewer.css">
 </head>

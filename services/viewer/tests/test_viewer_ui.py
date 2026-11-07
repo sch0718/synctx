@@ -110,6 +110,7 @@ def test_page_wraps_assets_and_encodes_script_values():
                    body='<main id="main"></main>', repo_id="r1", ref="';alert(1)//</script>")
     assert "<title>제목 &lt;x&gt; - synctx</title>" in html
     assert '<link rel="stylesheet" href="/view/static/viewer.css">' in html
+    assert '<link rel="icon" type="image/svg+xml" href="/view/static/favicon.svg">' in html
     assert html.index('src="/view/static/viewer-core.js"') < html.index('src="/view/static/viewer.js"')
     assert 'var ACTIVE_REPO = "r1";' in html
     assert 'var ACTIVE_REF = "\';alert(1)//\\u003c/script\\u003e";' in html
