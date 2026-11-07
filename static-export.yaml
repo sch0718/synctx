@@ -1,0 +1,19 @@
+# 정적 Viewer 내보내기 설정. 워크플로(.github/workflows/static-export.yml)가 읽는다.
+# 공개 모드(STATIC_EXPORT_PUBLIC=true)로 올리므로 누구나 볼 수 있는 경로만 include에 둔다.
+# 01.업무/(회의록·업무일지·사내 시스템 문서)와 99.기타/(위 그림 하나 제외)는 내보내지 않는다.
+title: 학습 노트
+theme: github-light   # 공개 사이트라 참고 양식(corporate) 테마는 쓰지 않는다
+default_repo: study-notes
+
+repositories:
+  - id: study-notes   # 주소(/view/<id>/)에 쓰인다. 회사 이름을 넣지 않는다
+    name: 학습 노트
+    url: https://github.com/sch0718/work-docs.git
+    default_ref: main
+    auth:
+      credential_env: GIT_READ_TOKEN
+    include:
+      - 02.학습/
+      - 99.기타/화면캡처/gitflow.png   # 02.학습/GitFlow.md가 참조하는 일반 그림
+    exclude:
+      - 02.학습/Figma+MCP.md   # 제목은 학습이지만 사내 시스템(사내 룰 시스템) 화면 설계 문서
