@@ -7,11 +7,11 @@ compatibility_date = "2026-11-01"
 binding = "DB"
 database_name = "synctx-pages"
 # 사용자가 `npx wrangler d1 create synctx-pages`로 만든 뒤 받은 id를 넣는다(비밀 값이 아니다).
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "f66cd431-6b10-4c7d-8768-e72dc0176310"
 migrations_dir = "migrations"
 
 # 일반 환경변수. 이 파일이 있으면 Pages 대시보드의 같은 항목은 읽기 전용이 되므로 여기서 관리한다.
 # 시크릿(OWNER_ACCOUNTS·FIREBASE_PROJECT_ID·KAKAO_*·NAVER_*)은 `npx wrangler pages secret put <이름> --project-name <프로젝트>`로 넣고 여기 두지 않는다.
 [vars]
 # Firebase 웹 앱 설정(비밀이 아니다). Firebase 프로젝트를 정한 뒤 값을 넣는다. 비어 있으면 로그인 화면은 503이다.
-FIREBASE_WEB_CONFIG = ""
+FIREBASE_WEB_CONFIG = '{"apiKey":"AIzaSyDu62l_vcQ_GDGwrAUQXEZlDs8FW3az3pc","authDomain":"synctx-23865.firebaseapp.com","projectId":"synctx-23865","appId":"1:635633703362:web:de2d2f870840058fa11e5b"}'
