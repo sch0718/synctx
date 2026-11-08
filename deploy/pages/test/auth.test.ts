@@ -58,8 +58,8 @@ describe('POST /auth/session', () => {
   it('소셜 콜백의 redirectUri가 사이트 콜백과 다르면 거절한다', async () => {
     const body = { provider: 'kakao', code: 'c', codeVerifier: 'v'.repeat(43), redirectUri: 'https://evil.test/auth/callback' };
     const res = await handleAuth(post('/auth/session/social', body), makeEnv());
-    expect(res.status).toBeGreaterThanOrEqual(400);
-    expect(res.status).toBeLessThan(500);
+    // 소셜 설정이 빠지면 404가 나므로 400으로 좁혀 카카오 켜짐 조건도 함께 지킨다
+    expect(res.status).toBe(400);
     expect(res.headers.get('Set-Cookie')).toBeNull();
   });
 });

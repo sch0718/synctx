@@ -3,6 +3,7 @@ import {
   googleCerts,
   HttpError,
   socialKeys,
+  socialLoginOptions,
   type AuthContext,
   type CertSource,
   type D1Database as PackageD1,
@@ -44,31 +45,17 @@ let defaultCerts: CertSource | undefined;
 let defaultKeys: SocialLoginOptions['keys'] | undefined;
 
 export function sessionAuthFor(env: Env, req: Request, deps: SessionDeps = {}): SessionAuth {
-  const redirectUris = [`${new URL(req.url).origin}/auth/callback`];
-  // 카카오 클라이언트 시크릿은 앱 설정에서 켰을 때만 필요하다. 네이버는 늘 필요하다.
-  const kakao = env.KAKAO_CLIENT_ID
-    ? {
-        kakao: {
-          clientId: env.KAKAO_CLIENT_ID,
-          redirectUris,
-          ...(env.KAKAO_CLIENT_SECRET ? { clientSecret: env.KAKAO_CLIENT_SECRET } : {}),
-        },
-      }
-    : {};
-  const naver =
-    env.NAVER_CLIENT_ID && env.NAVER_CLIENT_SECRET
-      ? { naver: { clientId: env.NAVER_CLIENT_ID, clientSecret: env.NAVER_CLIENT_SECRET, redirectUris } }
-      : {};
-  const social: SocialLoginOptions | undefined =
-    kakao.kakao || naver.naver
-      ? {
+  const social =
+    env.KAKAO_CLIENT_ID || (env.NAVER_CLIENT_ID && env.NAVER_CLIENT_SECRET)
+      ? socialLoginOptions({
           // 로그인 자체는 열어 둔다. 무엇을 볼 수 있는지는 D1 역할로 정한다.
           allowedAccounts: '',
+          kakao: { clientId: env.KAKAO_CLIENT_ID, clientSecret: env.KAKAO_CLIENT_SECRET },
+          naver: { clientId: env.NAVER_CLIENT_ID, clientSecret: env.NAVER_CLIENT_SECRET },
+          redirectUris: `${new URL(req.url).origin}/auth/callback`,
           keys: deps.social?.keys ?? (defaultKeys ??= socialKeys()),
-          ...(deps.social?.fetch ? { fetch: deps.social.fetch } : {}),
-          ...kakao,
-          ...naver,
-        }
+          fetch: deps.social?.fetch,
+        })
       : undefined;
   return createSessionAuth({
     db: env.DB as unknown as PackageD1,

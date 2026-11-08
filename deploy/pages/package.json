@@ -9,7 +9,7 @@
     "build:client": "esbuild client/login.ts --bundle --format=esm --outfile=site/view/static/synctx-auth/login.js && esbuild client/admin.ts --bundle --format=esm --outfile=site/view/static/synctx-auth/admin.js"
   },
   "dependencies": {
-    "@sch0718/firebase-session": "0.4.0",
+    "@sch0718/firebase-session": "0.5.0",
     "firebase": "12.19.0"
   },
   "devDependencies": {
