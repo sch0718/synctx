@@ -31,7 +31,7 @@ export async function handleAdminPage(req: Request, env: Env, deps: SessionDeps 
         '<div id="admin-root"><p>불러오는 중입니다.</p></div>' +
         '<p><a href="/view/">문서 첫 화면으로</a> · <a href="/settings">설정</a></p>' +
         logoutForm(),
-      { scripts: ['/view/static/synctx-auth/admin.js'] },
+      { scripts: ['/view/static/synctx-auth/admin.js'], account: true, wide: true },
     ),
   );
 }

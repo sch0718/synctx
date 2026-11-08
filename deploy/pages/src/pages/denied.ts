@@ -9,7 +9,8 @@ export function deniedPage(identity: string): string {
       '<p>이 주소를 볼 권한이 없습니다. 볼 수 있어야 한다면 관리자에게 이 값을 알려 주세요.</p>' +
       `<p><code class="identity">${escapeHtml(identity)}</code></p>` +
       '<p><a href="/view/">첫 화면으로</a></p>' +
-      logoutForm(),
+      `<div class="auth-actions">${logoutForm()}</div>`,
+    { account: true },
   );
 }
 

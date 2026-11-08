@@ -2,6 +2,7 @@ import { canView, classifyPath, isFunctionPath, visibleRepos } from './authz';
 import type { Env } from './env';
 import { DEFAULT_CSP, htmlResponse, loginRedirect, RAW_SVG_CSP, redirect, withSecurityHeaders } from './http';
 import { deniedPage, errorPage, forbiddenPage } from './pages/denied';
+import { ACCOUNT_LINK } from './pages/layout';
 import { loginCsp, parseFirebaseWebConfig } from './pages/login';
 import { readSession, type SessionDeps } from './session';
 
@@ -17,14 +18,6 @@ type Routed = { res: Response; csp: string };
 function isHtml(res: Response): boolean {
   return (res.headers.get('Content-Type') ?? '').toLowerCase().startsWith('text/html');
 }
-
-const PERSON_ICON =
-  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
-  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/>' +
-  '<path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>';
-
-/** Viewer 머리글 끝에 붙이는 설정 버튼(로그아웃·기기 관리는 설정 화면에 있다). */
-export const ACCOUNT_LINK = `<a class="icon-btn shell-account" href="/settings" aria-label="설정·로그아웃" title="설정·로그아웃">${PERSON_ICON}</a>`;
 
 /**
  * 로그인한 사람에게 주는 Viewer HTML을 고친다.

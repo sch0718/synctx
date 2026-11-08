@@ -68,7 +68,7 @@ export function loginPage(input: LoginPageInput): string {
       button('google', 'Google로 로그인', true) +
       button('kakao', '카카오로 로그인', !!input.kakaoClientId) +
       button('naver', '네이버로 로그인', !!input.naverClientId) +
-      '</div><p id="login-status" role="status" aria-live="polite"></p>' +
+      '</div><p id="login-status" class="auth-muted" role="status" aria-live="polite"></p>' +
       inlineJson('synctx-login-config', config),
     { scripts: [LOGIN_SCRIPT] },
   );
@@ -81,7 +81,7 @@ export function callbackPage(): string {
     '<h1 class="page-title">로그인 중</h1><p id="login-status" role="status" aria-live="polite">잠시 기다려 주세요.</p>' +
       '<p><a href="/login">로그인 화면으로</a></p>' +
       inlineJson('synctx-login-config', { mode: 'callback' }),
-    { head: '<meta name="referrer" content="no-referrer">', scripts: [LOGIN_SCRIPT] },
+    { head: '<meta name="referrer" content="no-referrer">', scripts: [LOGIN_SCRIPT], themeSelect: false },
   );
 }
 

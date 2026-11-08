@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from renderer import THEME_VARS_CSS
 from static_export import crawl, pages, runtime, themes
 from static_export.config import SiteConfig
 
@@ -135,6 +136,8 @@ def build_site(site: SiteConfig, out_dir: Path, cache_dir: Path, *, config_path:
     started = time.perf_counter()
     writer = _Writer(out)
     _copy_static(writer)
+    writer.write("view/static/theme-vars.css", THEME_VARS_CSS)
+    writer.write("view/static/theme-boot.js", pages.boot_js(site.theme))
     writer.write("view/static/static-mode.js", STATIC_MODE_SOURCE.read_bytes())
     writer.written.update(themes.export_theme_assets(out).values())
     for url in sorted(result.pages):

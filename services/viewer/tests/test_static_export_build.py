@@ -68,6 +68,7 @@ def test_build_writes_all_expected_files(tmp_path):
         "view/repo-a/docs/한글 문서.md/index.html", "view/repo-a/docs/a#b.md/index.html",
         "view/repo-a/docs/what?.md/index.html", "view/repo-a/docs/mermaid.md/index.html",
         "view/api/repos/repo-a/files.json", "view/api/repos/repo-a/tree.json", "view/api/repos/repo-a/tree/docs.json",
+        "view/static/theme-vars.css", "view/static/theme-boot.js",
         "view/static/static-mode.js", "view/static/viewer.js", "view/static/vendor/mermaid.min.js",
         "view/static/vendor/hljs/github.min.css", "view/static/themes/corporate.css", "view/static/themes/github-dark.css",
         "raw/repo-a/docs/img/a.png", "_headers", "_redirects", "robots.txt",
@@ -81,6 +82,22 @@ def test_build_writes_all_expected_files(tmp_path):
     assert {"crawl", "write"} <= set(report.stage_seconds)
     assert (out / "_redirects").read_text(encoding="utf-8").split() == ["/", "/view/", "302"]
     assert (out / "robots.txt").read_text(encoding="utf-8").split() == ["User-agent:", "*", "Disallow:", "/"]
+
+
+@pytest.mark.parametrize("theme", ["github-light", "corporate"])
+def test_build_writes_shared_theme_assets_matching_inline_boot(tmp_path, theme):
+    source = make_source(tmp_path, BASE_FILES)
+    site = make_site(source).model_copy(update={"theme": theme})
+    out = tmp_path / "dist"
+    _build().build_site(site, out, tmp_path / "cache")
+    renderer = importlib.import_module("renderer")
+    pages = importlib.import_module("static_export.pages")
+
+    assert (out / "view/static/theme-vars.css").read_text(encoding="utf-8") == renderer.THEME_VARS_CSS
+    boot = (out / "view/static/theme-boot.js").read_text(encoding="utf-8")
+    assert boot == pages.boot_js(site.theme)
+    html = (out / "view/repo-a/README.md/index.html").read_text(encoding="utf-8")
+    assert f"<script>{boot}</script>" in html
 
 
 def test_root_redirects_to_index_even_with_default_repo(tmp_path):

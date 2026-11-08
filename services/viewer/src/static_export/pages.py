@@ -119,14 +119,18 @@ def _hljs_link(default_theme: str) -> str:
     return f'<link id="hljs-css" rel="stylesheet" href="{themes.hljs_url(default_theme)}">'
 
 
-def _boot_script(default_theme: str) -> str:
+def boot_js(default_theme: str) -> str:
     config = json.dumps({"defaultTheme": default_theme, "table": themes.browser_table()}, ensure_ascii=True).replace("<", "\\u003c")
-    return (f"<script>(function(){{var C={config};var s=null;try{{s=localStorage.getItem('synctx-theme');}}catch(e){{}}"
+    return (f"(function(){{var C={config};var s=null;try{{s=localStorage.getItem('synctx-theme');}}catch(e){{}}"
             "var n=(typeof s==='string'&&Object.prototype.hasOwnProperty.call(C.table,s))?s:C.defaultTheme;var t=C.table[n];"
             "document.documentElement.setAttribute('data-theme',n);"
             "var c=document.getElementById('theme-css');if(c)c.setAttribute('href',t.css);"
             "var h=document.getElementById('hljs-css');if(h)h.setAttribute('href',t.hljs);"
-            "window.SYNCTX_STATIC={theme:n,defaultTheme:C.defaultTheme,css:t.css,hljs:t.hljs,mermaid:t.mermaid,table:C.table};})();</script>")
+            "window.SYNCTX_STATIC={theme:n,defaultTheme:C.defaultTheme,css:t.css,hljs:t.hljs,mermaid:t.mermaid,table:C.table};})();")
+
+
+def _boot_script(default_theme: str) -> str:
+    return f"<script>{boot_js(default_theme)}</script>"
 
 
 def _with_static_class(tag_text: str) -> str:

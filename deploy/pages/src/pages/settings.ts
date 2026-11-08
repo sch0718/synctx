@@ -10,12 +10,6 @@ export interface SettingsInput {
   sessions: DeviceSessionRow[];
 }
 
-const STYLE =
-  '<style>.settings section{margin:24px 0}.settings h2{font-size:16px;margin:0 0 8px}' +
-  '.settings-devices{list-style:none;padding:0;margin:0 0 8px}' +
-  '.settings-devices li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border-color)}' +
-  '.settings-devices form{margin:0}.settings .muted{color:var(--text-secondary);font-size:13px}</style>';
-
 const when = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Seoul' });
 
 export function providerLabel(identity: string): string {
@@ -30,39 +24,44 @@ function revokeForm(fields: string, label: string): string {
 
 function device(s: DeviceSessionRow): string {
   const action = s.current
-    ? '<strong>이 기기</strong>'
+    ? '<span class="device-current">이 기기</span>'
     : revokeForm(`<input type="hidden" name="id" value="${escapeHtml(s.id)}">`, '로그아웃시키기');
   return (
-    `<li><span>${escapeHtml(s.label)}</span>` +
-    `<span class="muted">마지막 사용 ${escapeHtml(when.format(s.lastUsedAt))}</span>${action}</li>`
+    `<li><span class="device-name">${escapeHtml(s.label)}</span>` +
+    `<span class="device-meta">마지막 사용 ${escapeHtml(when.format(s.lastUsedAt))}</span>` +
+    `<div class="device-action">${action}</div></li>`
   );
 }
 
 /** GET /settings. 계정·볼 수 있는 저장소·로그인한 기기·로그아웃. */
 export function settingsPage(input: SettingsInput): string {
   const repos = input.repos.length
-    ? '<ul>' +
+    ? '<ul class="auth-list">' +
       input.repos.map((r) => `<li><a href="/view/${encodeURIComponent(r.id)}/">${escapeHtml(r.name)}</a></li>`).join('') +
       '</ul>'
     : '<p>아직 볼 수 있는 저장소가 없습니다. 관리자에게 위 계정 값을 알려 주세요.</p>';
   const others = input.sessions.filter((s) => !s.current).length;
   return page(
     '설정',
-    '<div class="settings"><h1 class="page-title">설정</h1>' +
-      '<section aria-labelledby="settings-account"><h2 id="settings-account">계정</h2>' +
+    '<h1 class="page-title">설정</h1>' +
+      '<section class="auth-section" aria-labelledby="settings-account"><h2 id="settings-account">계정</h2>' +
       `<p>${providerLabel(input.identity)}로 로그인했습니다.</p>` +
       `<p><code class="identity">${escapeHtml(input.identity)}</code></p>` +
-      '<p class="muted">권한을 받을 때 관리자에게 이 값을 알려 주세요.</p></section>' +
-      `<section aria-labelledby="settings-repos"><h2 id="settings-repos">볼 수 있는 저장소</h2>${repos}</section>` +
+      '<p class="auth-muted">권한을 받을 때 관리자에게 이 값을 알려 주세요.</p></section>' +
+      `<section class="auth-section" aria-labelledby="settings-repos"><h2 id="settings-repos">볼 수 있는 저장소</h2>${repos}</section>` +
       (input.admin
-        ? '<section aria-labelledby="settings-admin"><h2 id="settings-admin">관리</h2><p><a href="/admin">관리 화면 열기</a></p></section>'
+        ? '<section class="auth-section" aria-labelledby="settings-admin"><h2 id="settings-admin">관리</h2>' +
+          '<p class="auth-muted">저장소와 열람자를 관리합니다.</p><p><a class="btn" href="/admin">관리 화면 열기</a></p></section>'
         : '') +
-      '<section aria-labelledby="settings-devices"><h2 id="settings-devices">로그인한 기기</h2>' +
-      `<ul class="settings-devices">${input.sessions.map(device).join('')}</ul>` +
-      (others > 1 ? revokeForm('<input type="hidden" name="target" value="others">', '다른 기기 모두 로그아웃') : '') +
+      '<section class="auth-section" aria-labelledby="settings-devices"><h2 id="settings-devices">로그인한 기기</h2>' +
+      `<ul class="auth-list settings-devices">${input.sessions.map(device).join('')}</ul>` +
+      (others > 1
+        ? `<div class="auth-actions">${revokeForm('<input type="hidden" name="target" value="others">', '다른 기기 모두 로그아웃')}</div>`
+        : '') +
       '</section>' +
-      `<section aria-labelledby="settings-logout"><h2 id="settings-logout">로그아웃</h2>${logoutForm()}</section>` +
-      '<p><a href="/view/">문서 첫 화면으로</a></p></div>',
-    { head: STYLE },
+      '<section class="auth-section" aria-labelledby="settings-logout"><h2 id="settings-logout">로그아웃</h2>' +
+      `<p class="auth-muted">이 기기에서 로그아웃합니다.</p><div class="auth-actions">${logoutForm()}</div></section>` +
+      '<p><a href="/view/">문서 첫 화면으로</a></p>',
+    { account: true },
   );
 }
