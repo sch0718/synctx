@@ -1,5 +1,5 @@
 import { env as testEnv } from 'cloudflare:test';
-import type { CertSource } from '@sch0718/firebase-session/worker';
+import { createTestTokens } from '@sch0718/firebase-session/testing';
 import type { Env } from '../src/env';
 import { SESSION_COOKIE } from '../src/session';
 
@@ -85,36 +85,11 @@ export async function addMember(repoId: string, identity: string, role: 'manager
     .run();
 }
 
-function b64url(bytes: Uint8Array | string): string {
-  const raw = typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes;
-  return btoa(String.fromCharCode(...raw)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 /** 시험용 Google 인증서와 ID 토큰 서명기. */
 export async function fakeGoogle() {
-  const pair = (await crypto.subtle.generateKey(
-    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
-    true,
-    ['sign', 'verify'],
-  )) as CryptoKeyPair;
-  const certs: CertSource = { key: async (kid) => (kid === 'k1' ? (pair.publicKey as never) : null) };
-  async function idToken(email: string): Promise<string> {
-    const now = Math.floor(Date.now() / 1000);
-    const head = b64url(JSON.stringify({ alg: 'RS256', kid: 'k1', typ: 'JWT' }));
-    const body = b64url(
-      JSON.stringify({
-        iss: 'https://securetoken.google.com/synctx-test',
-        aud: 'synctx-test',
-        sub: `google-${email}`,
-        iat: now,
-        exp: now + 3600,
-        auth_time: now,
-        email,
-        email_verified: true,
-      }),
-    );
-    const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, new TextEncoder().encode(`${head}.${body}`));
-    return `${head}.${body}.${b64url(new Uint8Array(sig))}`;
-  }
-  return { certs, idToken };
+  const tokens = await createTestTokens({ projectId: 'synctx-test' });
+  return {
+    certs: tokens.certs,
+    idToken: (email: string) => tokens.token({ email, sub: `google-${email}` }),
+  };
 }
