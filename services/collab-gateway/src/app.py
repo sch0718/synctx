@@ -20,7 +20,7 @@ from synctx_common.logging import configure_logging
 from synctx_common.observability import collab_commands_total, register_observability_routes
 from viewer_client import COMMAND_TIMEOUT_SECONDS, ViewerClient, ViewerError
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 configure_logging(service_name="collab-gateway")
 logger = logging.getLogger(__name__)
 

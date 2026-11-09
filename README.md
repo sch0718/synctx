@@ -8,7 +8,7 @@
 </p>
 
 <p align="center"><b>sync + context — 외부에서 AI와 쓴 문서를 폐쇄망 안에서 읽고, 회의하고, 동기화합니다</b><br>
-현재 버전 <b>0.7.0</b> · <a href="https://github.com/sch0718/synctx/releases">릴리스</a> · 외부 CDN·인터넷 없이 사내 브라우저에서</p>
+현재 버전 <b>0.8.0</b> · <a href="https://github.com/sch0718/synctx/releases">릴리스</a> · 외부 CDN·인터넷 없이 사내 브라우저에서</p>
 
 금융권 폐쇄망의 현업 팀은 외부망에 접근할 수 없어서, 외부에서 AI 도구(Claude Code·Codex·Cursor)로 만든 요건 문서·회의 자료·이슈를 바로 쓰기 어렵습니다. synctx는 이미 자동화된 **외부 → 내부 Git 동기화** 경로를 그대로 써서, Git에 올린 Markdown을 폐쇄망 안에서 웹으로 읽고, 회의와 발표에 쓰고, 팀이 쓰는 XWiki·OpenProject에 맞춰 넣습니다. Git이 원본이고 내부 도구의 내용은 거기서 만든 파생 데이터입니다.
 
@@ -17,9 +17,11 @@
 | | |
 | --- | --- |
 | 📖 **문서 열람** | Git 저장소의 Markdown을 파일 트리·목차와 함께 웹에서 읽습니다. Mermaid 그림, 코드 강조, 7가지 테마가 오프라인에서도 그대로 보입니다. |
+| 🌐 **정적 열람 사이트** | 비공개 저장소의 Markdown을 Viewer 화면 그대로 정적 사이트로 내보내 Cloudflare Pages에 올립니다. Cloudflare Access로 제한하거나, 공개 모드로 누구나 보게 하거나, 로그인 모드(Google·카카오·네이버)로 저장소마다 볼 사람을 정할 수 있습니다. 읽기 전용이며 검색·회의·발표 같은 서버 기능은 빠집니다. 폐쇄망 운영 구성이 아니라 시연·열람용입니다. |
 | 🔎 **찾기** | `⌘K`로 파일 이름과 여러 저장소의 본문을 한 번에 찾습니다. |
 | 🗒️ **회의** | 회의 문서에 메모·형광펜을 달고, 결정·액션 아이템을 모아 `.md`나 메모 포함 HTML로 내보냅니다. |
 | 📹 **화상 회의** | 회의 화면에서 화상 회의에 참여하고 발표자의 문서 이동을 따라갑니다. |
+| 💬 **채팅 알림·명령** | 선택 배포인 Collab Gateway가 회의 안내·변경·취소·요약을 Mattermost 채널로 전하고, `/synctx` 명령으로 회의·문서 검색·근거를 조회합니다. |
 | 🎤 **발표** | 회의 문서를 제목마다 한 장씩 넘기는 발표 화면으로 바로 띄웁니다. |
 | 📎 **근거 확인** | 회의 문서가 인용한 규정·설계 문서의 조문을 말풍선과 문서 끝 근거 모음에서 확인합니다. |
 | 🧩 **인터랙티브 HTML** | 운영자가 허용한 저장소의 HTML 묶음(모션 그래픽 등)을 문서 안에서 재생하고 `크게 보기`로 키웁니다. `.html` 파일은 `렌더링`으로 실행해 보고, 문서 안 링크도 같은 커밋으로 엽니다. |
@@ -34,6 +36,17 @@
 2. **쓰기** — 외부망에서 문서를 Markdown으로 쓰고 GitHub에 올립니다. 내부 GitLab 미러로 반입되면 Viewer에 나타납니다. 회의 문서는 Front Matter에 `synctx.type: meeting`과 `synctx.meeting`(id·title·starts_at·channel)을 적습니다.
 3. **혼자 써 보기** — 이 저장소를 받아 `./run.sh --repo <Git 주소>`를 실행하면 문서·회의 Viewer만 http://127.0.0.1:18000/view/ 에 뜹니다(`uv`·Git 필요). `./run.sh --docker --build --repo <Git 주소>`는 Viewer 컨테이너 하나로 띄웁니다. Marp 미리보기까지 보려면 `scripts/local/run-viewer.sh`를 씁니다. 자세한 내용은 [개발 문서](docs/development.md)의 「Markdown·회의 Viewer 빠른 시작」과 [로컬 개발 환경](docs/local-development.md)에 있습니다.
 4. **설치 방식 고르기** — 전체·서비스별·정적 열람 중 무엇을 어디에 설치할지는 [설치 방식 선택](docs/install.md)에서 고릅니다. 정적 열람은 운영 구성이 아니라 별도 시연·열람용입니다.
+
+정적 열람 사이트를 만드는 흐름입니다.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/usage-dark.svg">
+    <img src="docs/readme/usage-light.svg" width="960" alt="저장소와 내보낼 범위를 정하고, 열람 방식별 준비를 마친 뒤 워크플로로 빌드·검사·배포하고, 방식에 맞게 점검·확인한 뒤 읽기 전용 사이트를 열람하는 흐름">
+  </picture>
+</p>
+
+자세한 절차는 [설치 방식 선택](docs/install.md)의 「정적 Viewer(Cloudflare Pages)」에 있습니다.
 
 ## 간단한 사용법
 
@@ -65,6 +78,7 @@
 - **원본은 Git입니다.** 문서는 외부 GitHub에서 쓰고 내부 GitLab 미러로 들어옵니다. Viewer는 그 저장소를 읽기만 하고, XWiki·OpenProject의 내용은 Git에서 만든 파생 데이터입니다. 내부 도구에서 고친 내용은 Git에 반영되지 않습니다(아래 Outbound Feedback의 외부 PR만 예외).
 - **회의 메모·형광펜은 지금 쓰는 브라우저에만**(localStorage) 저장되고 서버나 다른 사람에게 가지 않습니다. 함께 보려면 `.md로 내보내기`로 받은 파일을 전합니다. 테마와 최근 본 문서도 브라우저에 남습니다.
 - **밖으로 나가는 것은 선택 기능 하나뿐입니다.** Outbound Feedback을 켠 환경에서만, OpenProject 상태 같은 허용된 메타데이터를 민감 정보를 지우고 서명한 메일 이벤트로 승인된 메일 게이트웨이를 거쳐 보내고, 외부에서 그 이벤트로 PR을 만듭니다. 문서 본문은 보내지 않습니다.
+- 정적 열람 사이트를 쓰면 내보낸 문서가 Cloudflare Pages에 올라갑니다. 외부 GitHub 저장소를 읽어 만든 시연·열람용 사본이며, 폐쇄망 안의 데이터가 나가는 경로가 아닙니다. 올리기 전에 `include`·`exclude`로 공개해도 되는 경로만 남겼는지 확인해 주세요.
 - 슬라이드 `출판…`은 설정된 팀 슬라이드 저장소(내부 Git)에 커밋합니다.
 
 ## 릴리스
@@ -73,6 +87,7 @@
 
 | 버전 | 날짜 | 주요 변경 |
 |------|------|-----------|
+| [0.8.0](https://github.com/sch0718/synctx/releases/tag/v0.8.0) | 2026-11-09 | **정적 Viewer 내보내기와 로그인·열람 제한.** Viewer를 정적 사이트로 내보내 Cloudflare Pages에 배포(Access·공개 모드), 로그인 모드의 저장소별 열람 제한·`/admin`·`/settings`, 브라우저 탭 아이콘, 회의 대시보드·Collab Gateway의 Mattermost 알림과 `/synctx` 명령·Jitsi 내장(Phase 8), Phase 9 Chromium 시험, 알림·Alert·Jitsi 프록시·로컬 배포 수정 |
 | [0.7.0](https://github.com/sch0718/synctx/releases/tag/v0.7.0) | 2026-10-28 | **경량 Viewer와 HTML 렌더 보기.** `./run.sh` 한 줄 실행과 단일 컨테이너(`--docker`)로 문서·회의용 Viewer 띄우기, 신뢰 저장소의 HTML을 `mode=render`로 실행해 보고 문서 안 링크를 같은 커밋으로 여는 렌더 보기(`/render` 서명 토큰), 화면 맞춤·전체 화면·`synctx-html` 블록 크게 보기, README를 서비스 소개로 바꾸고 메뉴별 도움말 추가, Feedback이 OpenProject 변경을 실제로 반출하도록 수정, Marp 출판에 출판 전용 토큰 사용 |
 | [0.6.0](https://github.com/sch0718/synctx/releases/tag/v0.6.0) | 2026-10-22 | **Phase 8.1b 회의 근거와 CronJob 메트릭.** 회의 문서의 근거 링크에 원문 발췌 말풍선과 근거 모음(`synctx.meeting.references`), Sync·Feedback CronJob 메트릭을 Pushgateway로 수집해 Alert를 실제로 평가, Helm 의존성 규칙 D8(메트릭을 켰는데 sync-state PVC가 없으면 렌더 실패), Markdown 인라인 렌더 선형화, 문서 전체를 코드와 맞춤 |
 | [0.5.0](https://github.com/sch0718/synctx/releases/tag/v0.5.0) | 2026-10-22 | **Viewer UX 개편.** 상단 바·서랍·3단 문서 화면의 공통 틀, 파일 찾기·최근 문서, 저장소 본문 검색(`git grep`), `run-viewer.sh`로 Docker 없이 Viewer 실행, 회의 정보 카드·발표 화면·첫 사용 안내, Git 토큰이 오류 응답에 새지 않게 수정 |

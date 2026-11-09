@@ -33,7 +33,7 @@ viewer:
     previous: ""
   image:
     repository: synctx/viewer
-    tag: "0.7.0"
+    tag: "0.8.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
@@ -48,7 +48,7 @@ cdn:
   enabled: true
   image:
     repository: synctx/cdn
-    tag: "0.7.0"
+    tag: "0.8.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   persistence:
@@ -68,7 +68,7 @@ sync:
   enabled: true
   image:
     repository: synctx/sync
-    tag: "0.7.0"
+    tag: "0.8.0"
     pullPolicy: IfNotPresent
   schedule: "*/5 * * * *"
   persistence:
@@ -88,7 +88,7 @@ feedback:
   enabled: false
   image:
     repository: synctx/feedback
-    tag: "0.7.0"
+    tag: "0.8.0"
     pullPolicy: IfNotPresent
   schedule: "*/5 * * * *"
   resources:
@@ -170,7 +170,7 @@ collabGateway:
   enabled: false
   image:
     repository: synctx/collab-gateway
-    tag: "0.7.0"
+    tag: "0.8.0"
     pullPolicy: IfNotPresent
   # 알림 중복 방지 상태 파일(PVC). 꺼 두면 렌더가 실패한다. 복제본은 1개로 고정한다(replicaCount를 두지 않는다).
   persistence:
@@ -228,7 +228,7 @@ marp:
   enabled: true
   image:
     repository: synctx/marp
-    tag: "0.7.0"
+    tag: "0.8.0"
     pullPolicy: IfNotPresent
   replicaCount: 1
   resources:
