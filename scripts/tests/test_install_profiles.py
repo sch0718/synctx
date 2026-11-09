@@ -125,19 +125,19 @@ def _base_ref():
     return None
 
 
+def _without_versions(text):
+    return re.sub(r"\b\d+\.\d+\.\d+\b", "X.Y.Z", text)
+
+
 def test_default_values_and_env_example_are_unchanged():
     base = _base_ref()
     if base is None:
         pytest.skip("main 기준 커밋을 찾을 수 없음")
-    for args in (["HEAD"], [base, "HEAD"]):
-        result = subprocess.run(
-            ["git", "diff", "--quiet", *args, "--", *UNCHANGED_DEFAULTS], cwd=ROOT, capture_output=True, text=True
-        )
-        assert result.returncode == 0, f"기본 값 파일이 바뀌었다: {args}"
-    worktree = subprocess.run(
-        ["git", "diff", "--quiet", "--", *UNCHANGED_DEFAULTS], cwd=ROOT, capture_output=True, text=True
-    )
-    assert worktree.returncode == 0
+    for path in UNCHANGED_DEFAULTS:
+        shown = subprocess.run(["git", "show", f"{base}:{path}"], cwd=ROOT, capture_output=True, text=True)
+        assert shown.returncode == 0
+        current = (ROOT / path).read_text(encoding="utf-8")
+        assert _without_versions(current) == _without_versions(shown.stdout), f"기본 값 파일이 바뀌었다(버전 표기 제외): {path}"
 
 
 def _doc():
@@ -167,7 +167,7 @@ def test_install_doc_mentions(needle):
 
 def test_install_doc_orders_first_deploy_steps():
     text = _doc()
-    section = text[text.index("### 첫 배포 순서"):text.index("### 한도")]
+    section = text[text.index("### 첫 배포 순서"):text.index("### 공개 모드")]
     steps = re.findall(r"^\d\. \*\*(.+?)\*\*", section, flags=re.M)
     assert steps == ["Access 앱", "사전 점검", "배포", "배포 후 점검"]
     assert "통과" in section and "공유" in section

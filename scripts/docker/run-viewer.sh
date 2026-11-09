@@ -11,7 +11,7 @@ Usage: ./run.sh --docker (--repo URL_OR_PATH [--repo ...] | --config FILE) [opti
 
   --image IMAGE       Prebuilt viewer image with a SemVer-git-sha tag (no latest)
   --build             Build the local Viewer through scripts/local/steps/build.sh
-                      Default image: ${DOCKER_REGISTRY:-synctx}/viewer:0.7.0-<git-sha>
+                      Default image: ${DOCKER_REGISTRY:-synctx}/viewer:0.8.0-<git-sha>
                       (without DOCKER_REGISTRY it must already exist locally; never pulled)
   --bind ADDRESS      Host IP to publish on (default 127.0.0.1)
   --port PORT         Host port (default 18000; container uses 8000)
@@ -213,14 +213,14 @@ LOCAL_ONLY=false
 if [[ -z "$IMAGE" ]]; then
     [[ -n "${DOCKER_REGISTRY:-}" ]] || LOCAL_ONLY=true
     SHA="$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null)" || fail "default image needs a Git checkout; use --image for a prebuilt image"
-    TAG="0.7.0-${SHA}"
+    TAG="0.8.0-${SHA}"
     IMAGE="${REGISTRY}/viewer:${TAG}"
 fi
 # Require an explicit SemVer-SHA tag, including for prebuilt images. Keep the
 # reference a single Docker argument and reject implicit latest and digests.
 IMAGE_REPOSITORY="${IMAGE%:*}"
 IMAGE_TAG="${IMAGE##*:}"
-[[ "$IMAGE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{7,40}$ ]] || fail "image tag must use SemVer-git-sha, e.g. 0.7.0-abcdef0 (no latest)"
+[[ "$IMAGE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{7,40}$ ]] || fail "image tag must use SemVer-git-sha, e.g. 0.8.0-abcdef0 (no latest)"
 [[ "$IMAGE_REPOSITORY" =~ ^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)*$ ]] || fail "invalid image repository"
 command -v docker >/dev/null 2>&1 || fail "docker is required"
 
