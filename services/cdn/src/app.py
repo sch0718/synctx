@@ -404,6 +404,7 @@ def cdn_admin():
 <html lang="ko" data-theme="github-light">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>synctx CDN Admin</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Cstyle%3Eg%7Bstroke:%230969da%7D%40media%20(prefers-color-scheme:dark)%7Bg%7Bstroke:%2358a6ff%7D%7D%3C/style%3E%3Cg%20fill=%22none%22%20stroke-width=%223%22%20stroke-linecap=%22round%22%3E%3Ccircle%20cx=%2216%22%20cy=%2216%22%20r=%226.5%22/%3E%3Cpath%20d=%22M16%202.5v5.5m0%2016v5.5M2.5%2016h5.5m16%200h5.5%22/%3E%3C/g%3E%3C/svg%3E">
 <script>
 (function() {{
     var saved = localStorage.getItem('synctx-theme');
@@ -544,7 +545,7 @@ tbody tr:hover {{ background: var(--bg-neutral); }}
 <body>
 <header class="header">
     <div class="header-logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4m-3.5-6.5L17 7m-10 10-1.5 1.5M20.5 17.5 19 17M5 7 3.5 5.5"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg>
         synctx <span>CDN Admin</span>
     </div>
     <div class="header-actions">
