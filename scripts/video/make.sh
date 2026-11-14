@@ -1,45 +1,64 @@
 #!/usr/bin/env bash
-# 시연 저장소와 설정을 만들고 실제 Viewer의 메뉴별 영상을 녹화한다.
+# 음성 생성, 실제 Viewer 녹화, 내레이션 영상 합성을 단계별로 실행한다.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WORK="${TMPDIR:-/tmp}/synctx-video"
 OUT="${SCRIPT_DIR}/out"
-MENUS=()
-SERVER_PID=""
+STAGE="all"
+STAGE_SET=0
+PROVIDER="gemini"
+ONLY=""
 
 usage() {
     cat <<'HELP'
-사용법: scripts/video/make.sh [--work 폴더] [--out 폴더] [--menu 메뉴 ...]
-메뉴: browse search document meeting present evidence slides
---menu를 여러 번 주면 지정한 메뉴만, 생략하면 일곱 메뉴를 녹화합니다.
-임시 저장소와 설정은 프로젝트 밖 --work 폴더에, 결과는 --out 폴더에 둡니다.
+사용법: scripts/video/make.sh [voice|record|compose|all] [옵션]
+단계를 생략하면 voice → record → compose 순서로 실행합니다.
+  --work 폴더             녹화용 임시 저장소·설정 위치(프로젝트 밖)
+  --out 폴더              전체 결과 위치(기본: scripts/video/out)
+  --provider gemini|edge   음성 공급자(기본: gemini, voice 단계만)
+  --only 0|1|2|3          다시 생성할 음성 묶음 번호(0부터, voice 단계만)
 준비물 설치 절차는 scripts/video/README.md를 확인하세요.
 HELP
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --work|--out|--menu)
-            if [[ $# -lt 2 || -z "$2" ]]; then
+        voice|record|compose|all)
+            if [[ "$STAGE_SET" -eq 1 ]]; then
+                echo "오류: 단계는 하나만 지정하세요" >&2
+                exit 1
+            fi
+            STAGE="$1"
+            STAGE_SET=1
+            shift
+            ;;
+        --work|--out|--provider|--only)
+            if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
                 echo "오류: $1 뒤에 값을 지정하세요" >&2
                 exit 1
             fi
             case "$1" in
                 --work) WORK="$2" ;;
                 --out) OUT="$2" ;;
-                --menu)
+                --provider)
                     case "$2" in
-                        browse|search|document|meeting|present|evidence|slides) MENUS+=(--menu "$2") ;;
-                        *) echo "오류: 알 수 없는 메뉴: $2" >&2; exit 1 ;;
+                        gemini|edge) PROVIDER="$2" ;;
+                        *) echo "오류: 음성 공급자는 gemini 또는 edge여야 합니다" >&2; exit 1 ;;
+                    esac
+                    ;;
+                --only)
+                    case "$2" in
+                        0|1|2|3) ONLY="$2" ;;
+                        *) echo "오류: 음성 묶음 번호는 0~3이어야 합니다" >&2; exit 1 ;;
                     esac
                     ;;
             esac
             shift 2
             ;;
         -h|--help) usage; exit 0 ;;
-        *) echo "오류: 알 수 없는 옵션: $1" >&2; usage >&2; exit 1 ;;
+        *) echo "오류: 알 수 없는 인자: $1" >&2; usage >&2; exit 1 ;;
     esac
 done
 
@@ -48,6 +67,27 @@ abspath() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s\n' "$PWD/$1" ;;
 WORK="$(abspath "$WORK")"
 OUT="$(abspath "$OUT")"
 cd "$PROJECT_ROOT"
+
+voice() {
+    if ! command -v node >/dev/null 2>&1; then
+        echo "오류: PATH에서 node를 찾지 못했습니다. Node.js 22를 설치하세요" >&2
+        exit 1
+    fi
+    echo "내레이션 음성을 생성합니다: ${PROVIDER}"
+    if [[ -n "$ONLY" ]]; then
+        node "${SCRIPT_DIR}/voice.mjs" --provider "$PROVIDER" --only "$ONLY" --out "${OUT}/voice"
+    else
+        node "${SCRIPT_DIR}/voice.mjs" --provider "$PROVIDER" --out "${OUT}/voice"
+    fi
+}
+
+# 서버 정리 trap과 오프라인 환경은 녹화 서브셸 안에서만 적용한다.
+record() (
+    SERVER_PID=""
+    if [[ ! -f "${OUT}/voice/lines.json" ]]; then
+        echo "오류: ${OUT}/voice/lines.json이 없습니다. 먼저 voice 단계를 실행하세요" >&2
+        exit 1
+    fi
 if ! command -v uv >/dev/null 2>&1; then
     echo "오류: uv를 설치하고 scripts/video/README.md의 준비 절차를 먼저 실행하세요" >&2
     exit 1
@@ -57,7 +97,7 @@ export UV_OFFLINE=1
 PYTHON=(uv run --frozen --no-sync --all-packages --group browser python)
 
 echo "녹화 준비물을 확인합니다"
-# Chrome·Playwright 녹화용 FFmpeg가 없으면 녹화 시작에서 바로 오류가 나므로 따로 검사하지 않는다.
+# 시스템 Chrome이 없으면 녹화 시작에서 오류가 나므로 따로 검사하지 않는다.
 # marp·mmdc는 없으면 Viewer가 Marp를 조용히 끄고 slides가 늦게 실패하므로 미리 본다.
 for tool in git ffmpeg ffprobe marp mmdc; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -202,6 +242,23 @@ for document in sorted(source.rglob("*.md")):
     print(f"시연 문서 확인: {path}")
 PY
 
-# macOS 기본 Bash에서도 빈 배열을 안전하게 확장한다.
-"${PYTHON[@]}" "${SCRIPT_DIR}/record.py" --base-url http://127.0.0.1:18090 --out "$OUT" ${MENUS[@]+"${MENUS[@]}"}
-echo "영상 생성 완료: ${OUT}"
+"${PYTHON[@]}" "${SCRIPT_DIR}/record.py" --base-url http://127.0.0.1:18090 --out "$OUT"
+echo "녹화 완료: ${OUT}"
+)
+
+compose() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "오류: PATH에서 python3를 찾지 못했습니다" >&2
+        exit 1
+    fi
+    echo "내레이션 영상을 합성합니다"
+    python3 "${SCRIPT_DIR}/compose.py" --out "$OUT"
+    echo "영상 합성 완료: ${OUT}/synctx-demo.mp4"
+}
+
+case "$STAGE" in
+    voice) voice ;;
+    record) record ;;
+    compose) compose ;;
+    all) voice; record; compose ;;
+esac

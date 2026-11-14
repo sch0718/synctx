@@ -1,91 +1,79 @@
-# 메뉴별 사용 영상 만들기
+# 내레이션 사용 데모 만들기
 
-실제 Viewer에서 일곱 메뉴를 조작해 1920×1080 영상을 만듭니다. 가상의 도서 대여 서비스 문서만 사용하며, 음성 없이 커서·클릭 표시와 한국어 자막을 넣습니다. 루트 README와 도움말 문서는 바꾸지 않습니다.
+가상의 도서 대여 서비스 문서로 실제 Viewer를 조작해, 한국어 설명이 있는 약 4분짜리 영상 하나를 만듭니다. 장면과 대사는 `scenes.json`, 화면 동작과 대사 표는 `script.md`에서 관리합니다.
 
-## 준비물 설치
+## 준비
 
-프로젝트 루트에서 다음 준비를 한 번 수행하세요.
+Node.js 22, Python 3, 시스템 Google Chrome, `uv`를 설치하고 프로젝트 루트에서 준비합니다.
 
 ```bash
 uv sync --all-packages --group browser
-uv run --group browser playwright install ffmpeg
-```
-
-시스템 Google Chrome을 설치하세요. 녹화는 `chromium.launch(channel="chrome", headless=True)`를 사용하므로 Playwright 브라우저 설치는 필요 없습니다. 위 명령은 녹화용 Playwright 관리 FFmpeg만 설치합니다.
-
-변환용 시스템 FFmpeg와 ffprobe도 별도로 필요합니다. macOS에서는 다음처럼 설치합니다. 다른 운영체제에서는 해당 패키지 관리자를 사용하세요.
-
-```bash
-brew install ffmpeg
 npm install -g @marp-team/marp-cli @mermaid-js/mermaid-cli
+# macOS에서 시스템 FFmpeg·ffprobe 설치
+brew install ffmpeg
 ```
 
-`git`, `uv`, `ffmpeg`, `ffprobe`, `marp`, `mmdc`가 PATH에 있어야 하며, 실행기가 처음에 이것만 확인합니다. 시스템 FFmpeg는 `libx264` 인코더를 지원해야 합니다(Homebrew 판은 기본 포함). Chrome이나 Playwright 녹화용 FFmpeg가 없으면 녹화를 시작할 때 오류가 납니다.
+`node`, `python3`, `git`, `ffmpeg`, `ffprobe`, `marp`, `mmdc`가 PATH에 있어야 합니다. FFmpeg는 `libx264`와 `loudnorm`을 지원해야 합니다. 녹화는 시스템 Chrome의 CDP 스크린캐스트를 쓰므로 Playwright 브라우저·녹화용 FFmpeg 설치는 필요 없습니다.
 
-실행기는 `UV_OFFLINE=1`로 동작합니다. 녹화 도중에는 의존성·브라우저·FFmpeg를 내려받지 않으므로 필요한 패키지를 먼저 설치하세요. 의존성 설치 명령 자체가 실패하면 로그를 확인한 뒤 위 준비 절차를 다시 수행하세요.
+다음 공용 스크립트도 준비해야 합니다.
 
-## 다시 만들기
+- `~/.claude/skills/narrated-video/scripts/tts.mjs`: 음성 생성
+- `~/.claude/skills/narrated-video/scripts/finish.sh`: 최종 영상 합성
+
+Gemini 키는 `~/.config/belorn/voice.env`에 설정합니다. 키 값이나 파일 내용을 로그·공유 자료에 출력하지 마세요. 기본은 Gemini `Sulafat`로 4묶음을 생성하며, Gemini 한도로 거절되면 `--provider edge`로 전체 음성을 다시 만듭니다. Edge는 `ko-KR-SunHiNeural`을 사용합니다. 음성 생성은 네트워크에 접근하며 공용 TTS 스크립트의 추가 실행 도구(Edge의 `uvx` 등)도 필요할 수 있습니다. `UV_OFFLINE=1`은 녹화 단계에만 적용합니다.
+
+## 실행
 
 ```bash
-# 모든 메뉴
-scripts/video/make.sh
+# 단계별 실행
+scripts/video/make.sh voice
+scripts/video/make.sh record
+scripts/video/make.sh compose
 
-# 지정한 메뉴만 다시 녹화
-scripts/video/make.sh --menu meeting --menu slides
+# 전체 실행(인자를 생략해도 동일)
+scripts/video/make.sh all
 
-# 작업 폴더와 결과 폴더 지정
-scripts/video/make.sh --work /tmp/도서-시연 --out scripts/video/out
+# Edge로 전체 음성 다시 생성
+scripts/video/make.sh voice --provider edge
+
+# 음성 묶음 하나만 다시 생성: 0부터 시작하는 번호 0~3
+scripts/video/make.sh voice --only 0
+
+# 결과 위치와 녹화용 작업 폴더 지정
+scripts/video/make.sh all --out /tmp/synctx-demo --work /tmp/synctx-video-work
 ```
 
-| 메뉴 값 | 내용 |
-|---|---|
-| browse | 저장소·파일 트리·목차 |
-| search | 파일 이름과 본문 검색 |
-| document | 테마·내려받기·브랜치·단축키 |
-| meeting | 일반 메모·선택 영역의 결정·담당자와 기한이 있는 액션·내보내기 |
-| present | 안건별 발표·메모 패널·발표 끝내기 |
-| evidence | 근거 말풍선·근거 모음·인용한 곳·원문 |
-| slides | PDF 만들기·새 탭 미리보기·장 넘기기 |
+음성 원본은 대본·목소리 설정이 같으면 `voice/raw/`의 캐시를 다시 씁니다. 같은 대본으로 새로 받으려면 그 묶음의 `voice/raw/g<번호>-*.wav`를 지운 뒤 실행하세요.
 
-`--work` 기본값은 `${TMPDIR:-/tmp}/synctx-video`입니다. 프로젝트 밖의 별도 경로만 사용할 수 있습니다. 그 아래에 `demo/`, `synctx.yaml`, `repos/`, `cache/`, `marp/`, `viewer.log`를 둡니다. 작업 폴더는 없거나 비어 있거나 이 도구가 남긴 표식(`.synctx-video-work`)이 있을 때만 씁니다. 실행할 때마다 `demo/`·`repos/`·`cache/`·`marp/`를 지우고 새로 만듭니다(시연 저장소 이력이 매번 새로 생겨 이전 캐시와 맞지 않기 때문). 같은 작업 폴더로 동시에 실행하지 마세요.
+`--out`은 전체 출력 폴더이며 기본값은 `scripts/video/out`입니다. 음성은 그 아래 `voice/`에 저장합니다. `--provider`와 `--only`는 음성 단계에만 적용합니다. `record`는 `voice/lines.json`이 없으면 멈춥니다. 음성을 바꾸면 녹화와 합성도 다시 실행하세요.
 
-시연 저장소는 기본 `main` 브랜치와 문단 하나를 바꾼 `draft` 브랜치를 갖습니다. 커밋은 임시 시연 저장소에만 만듭니다. 회의 시작 시각은 생성 시각의 10분 전, 회의 길이는 120분으로 채웁니다. 오래 지난 서버를 재사용할 때는 저장소와 서버부터 다시 만들어야 진행 중 상태가 나옵니다.
+`record`만 시연 저장소·설정·캐시와 Viewer 서버를 만듭니다. `--work` 기본값은 `${TMPDIR:-/tmp}/synctx-video`이며 프로젝트 밖의 별도 폴더여야 합니다. 없거나 비었거나 이 도구의 `.synctx-video-work` 표식이 있는 폴더만 사용합니다. 매번 시연 저장소와 캐시를 새로 만들므로 같은 작업 폴더로 동시에 실행하지 마세요.
 
-실행기는 18090 포트 사용 여부와 준비물을 검사한 뒤 `scripts/local/run-viewer.sh`로 서버를 시작합니다. 최대 60초 동안 `/view/readyz`의 HTTP 200을 기다리고, 시연 문서 여섯 개도 모두 HTTP 200인지 확인합니다. 준비 중 서버가 끝나거나 문서가 열리지 않으면 녹화하지 않습니다. 종료·오류·중단 시 서버를 정리하며, 실패하면 `viewer.log` 끝부분을 출력합니다.
+서버는 `scripts/local/run-viewer.sh`로 18090 포트에 띄웁니다. 사용 중인 포트는 거절하며, 최대 60초 동안 `/view/readyz`의 HTTP 200과 시연 문서 응답을 확인한 뒤 녹화합니다. 종료·오류·중단 때 서버를 정리하며 실패하면 작업 폴더의 `viewer.log` 끝부분을 출력합니다. 음성 생성과 합성은 서버를 띄우지 않습니다.
 
-이미 준비된 시연 서버가 있다면 녹화만 실행할 수도 있습니다.
+## 확인과 업로드
+
+녹화 후 동기화를 확인하고 합성합니다. 다른 출력 폴더를 썼다면 아래 경로도 맞추세요.
 
 ```bash
-uv run --frozen --no-sync --all-packages --group browser python scripts/video/record.py \
-  --base-url http://127.0.0.1:18090 --menu browse --out scripts/video/out
+python3 scripts/video/check_sync.py --out scripts/video/out
+scripts/video/make.sh compose
+ffmpeg -ss 12 -i scripts/video/out/synctx-demo.mp4 -frames:v 1 /tmp/synctx-demo-12초.png
+ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,sample_rate:format=duration \
+  -of json scripts/video/out/synctx-demo.mp4
 ```
 
-직접 녹화할 때는 준비물 검사와 서버 준비 확인을 직접 마쳐야 합니다. 저장소 식별자는 `demo`, 표시 이름은 `예시 문서`여야 합니다.
+결과는 `synctx-demo.mp4`, 별도 한국어 자막 `synctx-demo.srt`, 챕터 시각 `build/chapters.json`입니다. 음성은 `voice/`, 녹화 시각은 `marks.json`, 원본 화면은 `frames/`, 내려받은 파일은 `downloads/`에 남습니다. 출력 폴더는 커밋하지 않습니다.
 
-## 결과와 검수
+`check_sync.py` 문제 0건, 1920×1080·30fps·H.264·AAC 48kHz, 길이 3~5분을 확인하세요. 장면마다 프레임을 추출해 커서·글자·빈 화면·불필요한 정보 노출을 확인하고 완성 영상을 재생해 음성을 들어 보세요. 듣지 않았다면 검수 기록에도 그렇게 적습니다.
 
-기본 결과는 `scripts/video/out/<메뉴>.mp4`입니다. 이 폴더는 Git에서 제외합니다. H.264·CRF 18·30fps·yuv420p로 변환하고 빠른 재생 시작 정보를 넣습니다. 원본은 `out/raw/<메뉴>/`, 시연 중 내려받은 파일은 `out/downloads/<메뉴>/`에 남깁니다. 슬라이드 탭의 편집 시각은 원본 폴더의 `timing.json`에 기록합니다.
+유튜브는 일부 공개, 카테고리 28로 올리고 SRT를 Studio에서 수동 업로드합니다. `youtube.md` 설명에는 챕터와 녹화 환경, `voice/lines.json`에 기록된 실제 `provider`·`voice`를 적습니다. Edge로 대체했으면 Edge로 표시하세요. 이 실행기는 업로드를 수행하지 않습니다.
 
-메뉴마다 새 컨텍스트를 사용해 메모와 표시 설정을 분리합니다. 자막은 보통 한 줄에 3초 이상 유지하며 조작 시간을 포함해 30~60초를 목표로 합니다. 실제 문서 로딩과 PDF 변환 속도에 따라 길이는 달라질 수 있습니다. 변환 뒤 ffprobe로 해상도를 확인하고 길이가 범위를 벗어나면 경고합니다.
-
-슬라이드는 실제 새 탭을 녹화합니다. 새 탭을 닫고 원래 탭으로 돌아오면 헤드리스 Chrome의 녹화 크기가 바뀌어 화면 아래가 회색으로 잘리므로, `PDF 만들기`를 먼저 하고 미리보기 탭에서 영상을 끝냅니다. 원래 탭은 미리보기를 누르기 전까지, 새 탭은 슬라이드가 준비된 뒤부터 끝까지 이어 붙입니다. 시작의 0.5초 자르기는 원래 탭에만 한 번 적용합니다.
-
-업로드 전에는 각 영상을 직접 재생하고, 앞·중간·끝에서 프레임을 3~4장씩 확인하세요. 예를 들어 다음 명령으로 한 장을 꺼낼 수 있습니다.
+정적 검사는 실행·시청 검수를 대신하지 않습니다.
 
 ```bash
-ffmpeg -ss 12 -i scripts/video/out/browse.mp4 -frames:v 1 /tmp/문서-탐색-12초.png
-ffprobe -v error -show_entries stream=width,height,r_frame_rate:format=duration \
-  -of json scripts/video/out/browse.mp4
-```
-
-자막 가림, 글자 넘침, 빈 화면, 불필요한 정보 노출과 30~60초 길이를 확인하세요. 수정할 때는 `record.py`의 해당 메뉴와 자막 유지 시간을 고치고 그 메뉴만 다시 녹화합니다. 서버·Chrome·녹화·변환·프레임 검수는 실제 실행 환경에서 확인해야 합니다. 이 도구는 업로드나 루트 README의 링크 추가를 수행하지 않습니다.
-
-## 정적 검사
-
-```bash
-python -m py_compile scripts/video/demo_repo.py scripts/video/record.py
+python3 -m py_compile scripts/video/record.py scripts/video/compose.py scripts/video/check_sync.py
 bash -n scripts/video/make.sh
+node --check scripts/video/voice.mjs
 uvx ruff check scripts/video
 ```
-
-ruff가 설치되어 있지 않다면 별도로 준비하세요. 정적 검사는 실제 화면 조작과 영상 검수를 대신하지 않습니다.

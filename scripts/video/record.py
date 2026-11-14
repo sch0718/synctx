@@ -1,31 +1,27 @@
-"""실제 Viewer를 조작해 메뉴별 영상을 녹화하고 배포용 MP4로 변환한다."""
+#!/usr/bin/env python3
+"""실제 Viewer에서 내레이션에 맞춰 여덟 장면을 한 흐름으로 녹화한다."""
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import math
+import random
 import shutil
-import subprocess
+import sys
 import time
-from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
-from playwright.sync_api import Browser, BrowserContext, Locator, Page, sync_playwright
+from playwright.sync_api import BrowserContext, Error, Locator, sync_playwright
 
-# README 「메뉴별 도움말」 표의 메뉴 이름과 같게 둔다(영상 제목에도 쓴다).
-MENUS = {
-    "browse": "저장소·문서 찾아가기", "search": "문서 검색", "document": "문서 보기·내려받기",
-    "meeting": "회의 모드", "present": "발표 화면", "evidence": "근거 미리보기·근거 모음",
-    "slides": "슬라이드(Marp)",
-}
-SYSTEM = "설계/시스템-구성.md"
-MEETING = "회의/2026-11-주간-회의.md"
-SLIDES = "발표/서비스-소개.md"
-SIZE = {"width": 1920, "height": 1080}
+HERE = Path(__file__).resolve().parent
+SIZE = {"width": 1280, "height": 720}
+GAP = 0.35
+TAIL = 0.7
 
-# 모달을 연 뒤에도 자막과 커서를 다시 최상위 층으로 올린다.
+# 대화 상자 위에도 커서와 클릭 표시를 올린다. 자막은 별도 SRT로 만든다.
 OVERLAY = r"""(() => {
   function install() {
     if (document.getElementById('video-overlay')) return;
@@ -40,43 +36,37 @@ OVERLAY = r"""(() => {
     shadow.innerHTML = `<style>
       :host, * {pointer-events:none!important;box-sizing:border-box;}
       :host::backdrop {pointer-events:none;background:transparent;}
-      #caption {position:absolute;bottom:52px;left:50%;transform:translateX(-50%);
-        padding:15px 28px;border-radius:12px;background:rgba(0,0,0,.82);color:white;
-        font:500 36px/1.4 'Noto Sans KR','Apple SD Gothic Neo',sans-serif;
-        white-space:nowrap;max-width:calc(100vw - 80px);text-align:center;}
-      #caption:empty {display:none;}
-      #cursor {position:absolute;left:0;top:0;width:30px;height:38px;
-        filter:drop-shadow(1px 2px 2px #333);transform:translate(960px,540px);}
-      #ring {position:absolute;left:0;top:0;width:48px;height:48px;border:3px solid #ffba37;
-        border-radius:50%;opacity:0;}
-    </style><div id="caption"></div>
-    <svg id="cursor" viewBox="0 0 30 38"><path d="M2 2L2 29L9 23L15 35L21 32L15 21L26 21Z"
+      #cursor {position:absolute;left:0;top:0;width:25px;height:32px;
+        filter:drop-shadow(1px 2px 2px #333);}
+      #ring {position:absolute;left:0;top:0;width:36px;height:36px;
+        border:3px solid #ffba37;border-radius:50%;opacity:0;}
+    </style><svg id="cursor" viewBox="0 0 30 38">
+      <path d="M2 2L2 29L9 23L15 35L21 32L15 21L26 21Z"
       fill="white" stroke="#18212d" stroke-width="2"/></svg><div id="ring"></div>`;
     document.body.appendChild(layer);
-    const label = shadow.getElementById('caption');
     const cursor = shadow.getElementById('cursor');
     const ring = shadow.getElementById('ring');
     const raise = () => {
-      // 문서가 바뀌는 중이면 popover 호출이 실패할 수 있다. 다음 자막에서 다시 올린다.
       try {
         if (layer.matches(':popover-open')) layer.hidePopover();
         layer.showPopover();
-      } catch (_) {}
+      } catch (_) {} // 문서 이동 중이면 다음 조작 때 다시 올린다.
     };
-    window.videoOverlay = {caption(text) {
-      label.textContent = text;
-      try { sessionStorage.setItem('video-caption', text); } catch (_) {}
-      raise();
-    }};
-    try { label.textContent = sessionStorage.getItem('video-caption') || ''; } catch (_) {}
-    document.addEventListener('mousemove', e => {
-      cursor.style.transform = `translate(${e.clientX}px,${e.clientY}px)`;
-    }, true);
+    const move = (x, y) => {
+      cursor.style.transform = `translate(${x - 2}px,${y - 2}px)`;
+      try { sessionStorage.setItem('video-cursor', JSON.stringify([x,y])); } catch (_) {}
+    };
+    let xy = [640,360];
+    try { xy = JSON.parse(sessionStorage.getItem('video-cursor')) || xy; } catch (_) {}
+    move(...xy);
+    window.videoOverlay = {raise};
+    document.addEventListener('mousemove', e => move(e.clientX, e.clientY), true);
     document.addEventListener('mousedown', e => {
-      ring.style.left = `${e.clientX - 24}px`; ring.style.top = `${e.clientY - 24}px`;
+      ring.style.left = `${e.clientX - 18}px`; ring.style.top = `${e.clientY - 18}px`;
       ring.animate([{opacity:1,transform:'scale(.3)'},{opacity:0,transform:'scale(1.8)'}],
         {duration:550});
     }, true);
+    document.addEventListener('click', () => queueMicrotask(raise), true);
     raise();
   }
   if (document.readyState === 'loading') {
@@ -85,38 +75,131 @@ OVERLAY = r"""(() => {
 })()"""
 
 
+def load_voice(out: Path, scenes: list[dict]) -> dict[tuple[str, int], dict]:
+    """대본과 음성의 대응을 녹화 전에 확인한다. 길이를 추정하지 않는다."""
+    manifest = out / "voice" / "lines.json"
+    if not manifest.is_file():
+        raise ValueError("out/voice/lines.json이 없습니다. 먼저 make.sh voice를 실행하세요")
+    voice = json.loads(manifest.read_text(encoding="utf-8"))
+    expected = [(s["key"], i, text) for s in scenes for i, text in enumerate(s["lines"])]
+    if [(v["scene"], v["i"], v["t"]) for v in voice] != expected:
+        raise ValueError("음성 목록의 개수·순서·원문이 scenes.json과 다릅니다. 음성을 다시 만드세요")
+    result = {}
+    for item in voice:
+        length = item["dur"]
+        if isinstance(length, bool) or not isinstance(length, (int, float)) or not math.isfinite(length) or length <= 0:
+            raise ValueError("음성 목록에 올바르지 않은 문장 길이가 있습니다")
+        path = Path(item["file"])
+        if not path.is_absolute():
+            path = manifest.parent / path
+        if not path.is_file() or path.suffix.lower() != ".wav":
+            raise ValueError(f"문장 음성이 없습니다: {path}")
+        result[item["scene"], item["i"]] = item
+    return result
+
+
 class Recorder:
-    def __init__(self, context: BrowserContext, base_url: str, out: Path, menu: str):
+    def __init__(self, context: BrowserContext, base_url: str, out: Path, voice: dict):
         self.context = context
         self.base_url = base_url.rstrip("/")
         self.out = out
-        self.menu = menu
-        self.born: dict[Page, float] = {}
-        context.on("page", lambda page: self.born.setdefault(page, time.monotonic()))
+        self.voice = voice
+        self.rng = random.Random(20261114)
+        self.cursor = (640.0, 360.0)
         context.add_init_script(OVERLAY)
         self.page = context.new_page()
-        self.origin = self.page
-        self.popup: Page | None = None
-        self.splice: dict[str, float] = {}
-        self.page.set_default_timeout(15000)
+        self.page.set_default_timeout(20000)
+        self.cdp = None
+        self.cast_handler = None
+        self.t0: float | None = None
+        self.voice_free = -GAP
+        self.scene = ""
+        self.scene_marks: list[dict] = []
+        self.lines: list[dict] = []
+        self.frames: list[dict] = []
+        self.frame_error: str | None = None
+        self.switch_after: float | None = None
 
-    def show(self, text: str) -> None:
+    def now(self) -> float:
+        if self.frame_error:
+            raise RuntimeError(self.frame_error)
+        if self.t0 is None:
+            raise RuntimeError("녹화 시작 시각이 없습니다")
+        return time.time() - self.t0
+
+    def wait(self, seconds: float) -> None:
+        # Playwright의 대기를 써야 CDP 프레임·이벤트도 계속 처리된다.
+        self.page.wait_for_timeout(max(0, seconds) * 1000)
+
+    def raise_overlay(self) -> None:
         self.page.wait_for_function("Boolean(window.videoOverlay)")
-        self.page.evaluate("text => window.videoOverlay.caption(text)", text)
+        self.page.evaluate("() => window.videoOverlay.raise()")
 
-    def caption(self, text: str, hold_ms: int = 3000) -> None:
-        self.show(text)
-        self.page.wait_for_timeout(hold_ms)
+    def start_cast(self) -> None:
+        session = self.context.new_cdp_session(self.page)
+        self.cdp = session
 
-    def step(self, text: str, action: Callable[[], object] | None = None, hold_ms: int = 3000) -> None:
-        """조작 시간을 포함해 각 자막을 지정한 시간 이상 보여 준다."""
+        def frame(event: dict) -> None:
+            try:
+                if self.t0 is not None:
+                    stamp = event["metadata"]["timestamp"] - self.t0
+                    if stamp >= 0:
+                        if self.switch_after is not None:
+                            if stamp <= self.switch_after:
+                                # 새 탭이 처음에 보내는 이전 시각의 프레임은 버리고 다음 프레임을 기다린다.
+                                return
+                            self.switch_after = None
+                        if not self.frames or stamp > self.frames[-1]["t"]:
+                            file = self.out / "frames" / f"{len(self.frames):06d}.jpg"
+                            file.write_bytes(base64.b64decode(event["data"]))
+                            self.frames.append({"file": str(file), "t": stamp})
+            except (OSError, KeyError, TypeError, ValueError):
+                self.frame_error = "스크린캐스트 프레임을 저장하지 못했습니다"
+            finally:
+                session.send("Page.screencastFrameAck", {"sessionId": event["sessionId"]})
+
+        self.cast_handler = frame
+        session.on("Page.screencastFrame", frame)
+        session.send("Page.startScreencast", {
+            "format": "jpeg", "quality": 88, "maxWidth": 1920, "maxHeight": 1080, "everyNthFrame": 1,
+        })
+        if self.t0 is None:
+            self.t0 = time.time()
+
+    def stop_cast(self) -> None:
+        if self.cdp is not None:
+            self.cdp.send("Page.stopScreencast")
+            self.cdp.remove_listener("Page.screencastFrame", self.cast_handler)
+            self.cdp.detach()
+            self.cdp = None
+
+    def move(self, x: float, y: float, seconds: float | None = None) -> None:
+        x, y = min(1260, max(8, x)), min(700, max(8, y))
+        ax, ay = self.cursor
+        dx, dy = x - ax, y - ay
+        distance = math.hypot(dx, dy)
+        if distance < 1:
+            return
+        seconds = seconds if seconds is not None else min(1.1, max(0.28, 0.26 + distance * 0.00075))
+        steps = max(8, round(seconds / 0.016))
+        bend = self.rng.uniform(-0.5, 0.5) * min(80, distance * 0.18)
         started = time.monotonic()
-        self.show(text)
-        if action:
-            action()
-        # 문서 이동으로 겹침 층이 바뀌어도 같은 자막을 이어서 보여 준다.
-        self.show(text)
-        self.page.wait_for_timeout(max(0, hold_ms - (time.monotonic() - started) * 1000))
+        for i in range(1, steps + 1):
+            t = i / steps
+            ease = 4 * t ** 3 if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
+            arc = math.sin(math.pi * t) * bend
+            self.page.mouse.move(ax + dx * ease - dy / distance * arc, ay + dy * ease + dx / distance * arc)
+            self.wait(started + seconds * t - time.monotonic())
+        self.cursor = (x, y)
+
+    def wander_until(self, until: float) -> None:
+        center = self.cursor
+        while until - self.now() > 0.25:
+            remaining = until - self.now()
+            self.move(center[0] + self.rng.uniform(-9, 9), center[1] + self.rng.uniform(-6, 6),
+                      min(self.rng.uniform(0.3, 0.6), remaining))
+            self.wait(min(self.rng.uniform(0.2, 0.45), max(0, until - self.now())))
+        self.wait(until - self.now())
 
     def move_to(self, locator: Locator) -> None:
         locator.wait_for(state="visible")
@@ -124,40 +207,32 @@ class Recorder:
         box = locator.bounding_box()
         if box is None:
             raise RuntimeError("조작할 요소의 화면 위치를 찾지 못했습니다")
-        self.page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=25)
+        self.move(box["x"] + box["width"] / 2, box["y"] + min(box["height"] / 2, 45))
 
     def click(self, locator: Locator) -> None:
         self.move_to(locator)
-        locator.click()
+        self.wait(self.rng.uniform(0.12, 0.22))
+        locator.click(delay=self.rng.uniform(70, 110))
+        self.wait(self.rng.uniform(0.15, 0.25))
+        self.raise_overlay()
 
     def type_slow(self, text: str) -> None:
-        self.page.keyboard.type(text, delay=80)
+        for character in text:
+            self.page.keyboard.type(character)
+            self.wait(self.rng.uniform(0.08, 0.17))
 
-    def press(self, key: str, text: str, hold_ms: int = 3000, navigation: bool = False) -> None:
-        label = {"Meta+k": "⌘K", "ArrowDown": "↓", "ArrowRight": "→",
-                 "Space": "스페이스", "Escape": "Esc", "Enter": "Enter"}.get(key, key)
-        def perform() -> None:
-            if navigation:
-                with self.page.expect_navigation(wait_until="load"):
-                    self.page.keyboard.press(key)
-            else:
-                self.page.keyboard.press(key)
+    def say(self, i: int) -> None:
+        self.wander_until(self.voice_free + GAP)
+        self.raise_overlay()
+        stamp = self.now()
+        length = self.voice[self.scene, i]["dur"]
+        self.lines.append({"scene": self.scene, "i": i, "t": stamp, "dur": length})
+        self.voice_free = stamp + length
 
-        self.step(f"{text}  [{label}]", perform, hold_ms)
-
-    def open(self, path: str = "") -> None:
-        suffix = f"demo/{quote(path, safe='/')}" if path else ""
-        response = self.page.goto(f"{self.base_url}/view/{suffix}", wait_until="load")
-        if response is None or response.status != 200:
-            raise RuntimeError(f"시연 화면을 열지 못했습니다: {path or '저장소 목록'}")
-        self.page.wait_for_timeout(500)
-
-    def intro(self, path: str = "") -> None:
-        self.open(path)
-        self.caption(f"synctx 사용법 — {MENUS[self.menu]}")
-
-    def finish(self) -> None:
-        self.caption(f"도움말: docs/help/{self.menu}.md")
+    def ready(self) -> None:
+        self.page.evaluate("() => document.fonts.ready")
+        self.raise_overlay()
+        self.scene_marks[-1]["ready"] = self.now()
 
     def button(self, name: str) -> Locator:
         return self.page.get_by_role("button", name=name, exact=True)
@@ -167,327 +242,389 @@ class Recorder:
 
     def section(self, name: str) -> None:
         self.page.get_by_role("heading", name=name, exact=True).evaluate(
-            "element => element.scrollIntoView({block:'start', behavior:'instant'})")
+            "element => element.scrollIntoView({block:'start', behavior:'smooth'})")
+        self.wait(0.75)
 
     def select(self, label: str, value: str) -> None:
-        # 넓은 화면에서 보이는 상단 컨트롤만 사용한다.
+        # 1280px는 767px 모바일 구간 밖이므로 상단 컨트롤이 보인다.
         control = self.page.locator(".shell-header").get_by_role("combobox", name=label, exact=True)
+        if label == "브랜치":
+            # 브랜치 목록은 viewer.js가 비동기로 채운다. 숨겨진 option은 visible을 기다리지 않는다.
+            control.locator(f'option[value="{value}"]').wait_for(state="attached")
         self.move_to(control)
-        with self.page.expect_navigation(wait_until="load"):
+        self.wait(self.rng.uniform(0.2, 0.35))
+        # 문서의 테마는 쿼리 방식이라 선택만 해도 다시 열린다.
+        # select_option만 사용하고 선택 목록은 절대로 펼치지 않는다.
+        navigates = label == "브랜치" or self.page.locator("body").get_attribute("data-theme-mode") == "query"
+        if navigates:
+            with self.page.expect_navigation(wait_until="load"):
+                control.select_option(value)
+        else:
             control.select_option(value)
+        self.raise_overlay()
 
-    def draft_document(self) -> None:
-        # 브랜치 선택은 저장소 첫 화면으로 이동하므로 같은 문서를 트리에서 다시 연다.
-        self.select("브랜치", "draft")
-        self.click(self.button("설계/"))
-        self.click(self.page.locator("#file-tree").get_by_role("link", name="시스템-구성.md", exact=True))
+    def tree_document(self, folder: str, name: str) -> None:
+        tree = self.page.locator("#file-tree")
+        target = tree.get_by_role("link", name=name, exact=True)
+        tree.get_by_role("button", name=folder + "/", exact=True).wait_for(state="visible")
+        if not target.is_visible():
+            self.click(tree.get_by_role("button", name=folder + "/", exact=True))
+        self.click(target)
 
     def download(self, locator: Locator, filename: str) -> None:
         with self.page.expect_download(timeout=120000) as pending:
             self.click(locator)
         downloaded = pending.value
-        failure = downloaded.failure()
-        if failure:
-            raise RuntimeError(f"내려받지 못했습니다: {failure}")
-        target = self.out / "downloads" / self.menu / filename
+        if downloaded.failure():
+            raise RuntimeError("파일을 내려받지 못했습니다")
+        target = self.out / "downloads" / self.scene / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         downloaded.save_as(target)
 
     def browse(self) -> None:
-        self.intro()
-        self.caption("저장소 목록에서 읽을 문서를 고릅니다")
-        self.step("예시 문서 저장소를 엽니다", lambda: self.click(
-            self.page.get_by_role("link").filter(has=self.page.get_by_text("예시 문서", exact=True))))
-        self.step("파일 트리에서 설계 폴더를 펼칩니다", lambda: self.click(self.button("설계/")))
-        self.step("시스템 구성 문서를 엽니다", lambda: self.click(
-            self.page.locator("#file-tree").get_by_role("link", name="시스템-구성.md", exact=True)))
-        self.step("표로 구성 요소와 역할을 확인합니다", lambda: self.section("구성 요소"))
-        self.step("처리 흐름은 문서 안의 그림으로 확인합니다", lambda: self.section("처리 흐름"))
+        card = self.page.get_by_role("link").filter(has=self.page.get_by_text("예시 문서", exact=True))
+        card.wait_for(state="visible")
+        self.ready()
+        self.say(0)
+        self.move_to(self.page.get_by_role("heading", level=1))
+        self.say(1)
+        self.move_to(card)
+        self.say(2)
+        self.say(3)
+        self.click(card)
+        self.move_to(self.page.locator("#file-tree"))
+        self.say(4)
+        self.tree_document("설계", "시스템-구성.md")
+        self.page.get_by_role("heading", name="도서 대여 시스템 구성", exact=True).wait_for()
+        self.say(5)
+        self.section("구성 요소")
+        self.wait(0.7)
+        self.section("처리 흐름")
         self.page.locator(".mermaid svg").wait_for(state="visible")
-        self.step("코드도 강조된 글자로 읽을 수 있습니다", lambda: self.section("대여 처리 예시"))
-        self.step("설정 예시를 아래로 이어서 읽습니다", lambda: self.section("설정 예시"))
+        self.wait(0.7)
+        self.section("대여 처리 예시")
+        self.say(6)
         toc = self.page.get_by_role("complementary", name="이 문서의 목차")
-        self.step("오른쪽 이 문서 목차에서 절로 이동합니다", lambda: self.click(
-            toc.get_by_role("link", name="서비스 개요", exact=True)))
-        self.press("t", "목차 첫 항목으로 초점을 옮깁니다")
-        self.finish()
+        self.click(toc.get_by_role("link", name="서비스 개요", exact=True))
 
     def search(self) -> None:
-        self.intro(SYSTEM)
-        self.press("Meta+k", "어느 문서에서든 검색을 엽니다")
-        self.step("찾을 단어를 입력합니다", lambda: self.type_slow("대여"))
-        results = self.page.get_by_role("listbox", name="검색 결과")
-        results.get_by_role("group", name="파일", exact=True).wait_for()
-        self.caption("파일 이름이 맞는 문서를 먼저 보여 줍니다")
-        results.get_by_role("group", name="본문", exact=True).wait_for()
-        self.caption("본문에 같은 단어가 있는 위치도 보여 줍니다")
-        self.press("ArrowDown", "아래 화살표로 결과를 고릅니다")
-        self.press("ArrowDown", "다음 결과로 이동합니다")
-        self.press("Enter", "선택한 문서를 엽니다", navigation=True)
-        self.press("/", "슬래시로 검색을 다시 엽니다")
-
-        def overdue() -> None:
-            self.page.get_by_role("combobox", name="문서 검색").fill("")
-            self.type_slow("연체")
-            results.get_by_role("group", name="본문", exact=True).wait_for()
-
-        self.step("이번에는 연체가 나오는 곳을 찾습니다", overdue)
-        self.step("전체 결과 보기로 검색 화면을 엽니다", lambda: self.click(
-            results.get_by_role("option", name="‘연체’ 전체 결과 보기", exact=True)))
+        self.page.keyboard.press("Meta+k")
+        search = self.page.get_by_role("combobox", name="문서 검색", exact=True)
+        search.wait_for(state="visible")
+        self.page.wait_for_function("document.activeElement.id === 'finder-input'")
+        self.ready()
+        self.say(0)
+        self.say(1)
+        self.type_slow("대여")
+        results = self.page.get_by_role("listbox", name="검색 결과", exact=True)
+        files = results.get_by_role("group", name="파일", exact=True)
+        body = results.get_by_role("group", name="본문", exact=True)
+        files.wait_for(state="visible")
+        body.wait_for(state="visible")
+        self.say(2)
+        self.move_to(files.locator(".finder-group"))
+        self.wait(0.6)
+        self.move_to(body.locator(".finder-group"))
+        self.say(3)
+        self.page.keyboard.press("ArrowDown")
+        self.wait(0.4)
+        self.page.keyboard.press("ArrowDown")
+        self.wait(0.4)
+        with self.page.expect_navigation(wait_until="load"):
+            self.page.keyboard.press("Enter")
+        self.say(4)
+        self.page.keyboard.press("/")
+        self.page.get_by_role("combobox", name="문서 검색", exact=True).fill("")
+        self.type_slow("연체")
+        option = self.page.get_by_role("option", name="‘연체’ 전체 결과 보기", exact=True)
+        self.click(option)
+        self.say(5)
         scope = self.page.get_by_role("search").get_by_role("combobox", name="저장소", exact=True)
-        self.step("모든 저장소를 선택하면 검색 범위를 넓힙니다", lambda: scope.select_option(""))
-        self.step("검색 결과에서 문서와 해당 줄을 확인합니다", lambda: self.click(self.button("검색")))
-        self.finish()
+        self.move_to(scope)
+        scope.select_option("")
+        self.click(self.button("검색"))
+        self.page.get_by_role("search").wait_for(state="visible")
 
     def document(self) -> None:
-        self.intro(SYSTEM)
-        self.caption("상단에서 문서 표시와 내려받기를 바꿉니다")
-        self.step("테마를 어두운 화면으로 바꿉니다", lambda: self.select("테마", "github-dark"))
-        self.step("간결한 테마로도 읽을 수 있습니다", lambda: self.select("테마", "minimal"))
-        # 선택 목록을 펼치지 않아 시연에 필요 없는 다른 테마 이름은 화면에 담지 않는다.
-        self.step("내려받기 메뉴를 엽니다", lambda: self.click(self.page.get_by_text("내려받기", exact=True)))
-        self.caption("원본·HTML·PDF 중 필요한 형식을 고릅니다")
-        self.step("HTML 파일로 저장합니다", lambda: self.download(self.link("HTML"), "시스템-구성.html"))
-        self.press("Escape", "내려받기 메뉴를 닫습니다")
-        self.step("draft로 바꾼 뒤 같은 문서를 다시 엽니다", self.draft_document)
-        self.page.get_by_text("검토 중인 변경안:", exact=False).wait_for()
-        self.caption("대여 기간과 한도 변경안을 비교할 수 있습니다")
-        self.press("?", "물음표를 누르면 단축키 안내가 열립니다")
-        self.page.get_by_role("dialog", name="단축키", exact=True).wait_for()
-        self.press("Escape", "안내를 닫고 문서로 돌아옵니다")
-        self.finish()
-
-    def memo_text(self, text: str) -> None:
-        # 새 메모를 만들면 실제 회의 코드가 내용 입력칸으로 초점을 옮긴다.
-        active = self.page.locator("textarea:focus")
-        active.wait_for(state="visible")
-        self.type_slow(text)
-        active.blur()
+        # 장면 전환도 검색 결과에서 문서를 눌러 이어 간다.
+        hit = self.page.get_by_role("link", name="설계/시스템-구성.md", exact=True).first
+        self.click(hit)
+        self.page.get_by_role("heading", name="도서 대여 시스템 구성", exact=True).wait_for()
+        self.ready()
+        self.say(0)
+        self.move_to(self.page.locator(".shell-header").get_by_role("combobox", name="테마", exact=True))
+        self.say(1)
+        self.select("테마", "github-dark")
+        self.say(2)
+        self.select("테마", "minimal")
+        self.say(3)
+        self.click(self.page.get_by_text("내려받기", exact=True))
+        self.say(4)
+        self.download(self.link("HTML"), "시스템-구성.html")
+        self.say(5)
+        self.page.keyboard.press("Escape")
+        self.select("테마", "github-light")
+        self.select("브랜치", "draft")
+        self.tree_document("설계", "시스템-구성.md")
+        self.say(6)
+        change = self.page.get_by_text("검토 중인 변경안:", exact=False)
+        change.wait_for(state="visible")
+        self.move_to(change)
+        self.say(7)
+        self.page.keyboard.press("?")
+        self.page.get_by_role("dialog", name="단축키", exact=True).wait_for(state="visible")
+        self.raise_overlay()
+        self.wander_until(self.voice_free)
+        self.page.keyboard.press("Escape")
 
     def active_card(self) -> Locator:
         memo_id = self.page.locator("textarea:focus").evaluate(
             "element => element.closest('.meeting-card').dataset.memoId")
         return self.page.locator(f'.meeting-card[data-memo-id="{memo_id}"]')
 
-    def edit_memo(self, card: Locator, text: str) -> None:
-        self.click(card.get_by_role("textbox", name="메모 내용", exact=True))
+    def memo_text(self, card: Locator, text: str) -> None:
+        area = card.get_by_role("textbox", name="메모 내용", exact=True)
+        self.click(area)
         self.type_slow(text)
-        card.get_by_role("textbox", name="메모 내용", exact=True).blur()
-
-    def meeting(self) -> None:
-        self.intro(MEETING)
-        self.page.get_by_text("진행 중", exact=False).first.wait_for()
-        self.caption("머리 카드에서 시간과 진행 중 상태를 확인합니다")
-        self.step("회의 모드로 들어갑니다", lambda: self.click(self.link("회의 모드로 열기")))
-        guide = self.page.get_by_role("region", name="회의 모드 안내", exact=True)
-        guide.wait_for(state="visible")
-        self.step("메모 저장 안내를 읽고 닫습니다", lambda: self.click(
-            guide.get_by_role("button", name="닫기", exact=True)))
-        self.step("문단 옆 더하기로 일반 메모를 만듭니다", lambda: self.click(
-            self.page.get_by_role("button", name="이 부분에 메모 추가", exact=True).first))
-        self.step("확인할 내용을 짧게 적습니다", lambda: self.memo_text("반납 안내 문구를 확인합니다."))
-        self.step("본문을 드래그해 결정할 내용을 고릅니다", self.select_passage)
-        self.step("선택 영역에 연결된 메모를 만듭니다", lambda: self.click(self.button("+ 선택 영역에 메모")))
-        focused_card = self.active_card()
-        self.step("메모 종류를 결정으로 바꿉니다", lambda: focused_card.get_by_role(
-            "combobox", name="메모 종류", exact=True).select_option("decision"))
-        self.step("결정한 내용을 남깁니다", lambda: self.edit_memo(focused_card, "대여 기간은 현행대로 유지합니다."))
-        self.step("다음 작업은 전체 메모로 추가합니다", lambda: self.click(self.button("+ 전체 메모")))
-        action_card = self.active_card()
-        self.step("액션으로 바꾸고 할 일을 적습니다", lambda: self.write_action(action_card))
-        panel = self.page.get_by_role("complementary", name="회의 메모", exact=True)
-        self.step("담당자와 기한을 지정합니다", lambda: self.action_fields(panel))
-        self.step("회의 정리에 결정과 액션을 모아 봅니다", lambda: self.click(
-            panel.get_by_role("tab", name="회의 정리", exact=True)))
-        self.step("마크다운으로 내보내 함께 확인합니다", lambda: self.download(
-            panel.get_by_role("button", name=".md로 내보내기", exact=True), "주간-회의.md"))
-        self.finish()
+        area.blur()
+        self.wait(0.25)
 
     def select_passage(self) -> None:
         text = self.page.get_by_text("대여 기간을 유지하고 반납 안내를 보강합니다.", exact=True)
         text.scroll_into_view_if_needed()
-        # 실제 드래그로 선택하고 mouseup을 보내 제품의 선택 영역 단추를 연다.
-        box = text.bounding_box()
-        if box is None:
-            raise RuntimeError("선택할 문장의 위치를 찾지 못했습니다")
-        y = box["y"] + box["height"] / 2
-        self.page.mouse.move(box["x"] + 2, y, steps=25)
+        # 실제 글자 Range의 시작·끝 좌표를 써서 줄바꿈이 생겨도 끝까지 드래그한다.
+        points = text.evaluate("""element => {
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+          const nodes = []; while (walker.nextNode()) if (walker.currentNode.length) nodes.push(walker.currentNode);
+          const a = document.createRange(), b = document.createRange();
+          a.setStart(nodes[0], 0); a.setEnd(nodes[0], 1);
+          const last = nodes[nodes.length - 1];
+          b.setStart(last, last.length - 1); b.setEnd(last, last.length);
+          const p = a.getBoundingClientRect(), q = b.getBoundingClientRect();
+          return [p.left + 1, p.top + p.height / 2, q.right - 1, q.top + q.height / 2];
+        }""")
+        self.move(points[0], points[1])
         self.page.mouse.down()
-        self.page.mouse.move(box["x"] + box["width"] - 2, y, steps=25)
+        self.move(points[2], points[3], 1.1)
         self.page.mouse.up()
         self.button("+ 선택 영역에 메모").wait_for(state="visible")
 
-    def write_action(self, card: Locator) -> None:
-        card.get_by_role("combobox", name="메모 종류", exact=True).select_option("action")
-        self.click(card.get_by_role("textbox", name="메모 내용", exact=True))
-        self.type_slow("알림 발송 결과를 점검합니다.")
-
-    def action_fields(self, panel: Locator) -> None:
-        card = panel.locator(".meeting-card--action")
-        self.click(card.get_by_role("textbox", name="담당자", exact=True))
+    def meeting(self) -> None:
+        self.select("브랜치", "main")
+        self.tree_document("회의", "2026-11-주간-회의.md")
+        self.page.get_by_text("진행 중", exact=False).first.wait_for()
+        self.link("회의 모드로 열기").wait_for(state="visible")
+        self.ready()
+        self.say(0)
+        self.move_to(self.page.locator(".meeting-info"))
+        self.say(1)
+        self.click(self.link("회의 모드로 열기"))
+        guide = self.page.get_by_role("region", name="회의 모드 안내", exact=True)
+        guide.wait_for(state="visible")
+        self.say(2)
+        self.move_to(guide)
+        self.wander_until(self.voice_free)
+        self.click(guide.get_by_role("button", name="닫기", exact=True))
+        self.say(3)
+        self.click(self.page.get_by_role("button", name="이 부분에 메모 추가", exact=True).first)
+        self.memo_text(self.active_card(), "반납 안내 문구를 확인합니다.")
+        # 다음 문장 드래그가 패널에 가려지지 않도록 닫는다.
+        self.click(self.button("패널 닫기"))
+        self.say(4)
+        self.select_passage()
+        self.click(self.button("+ 선택 영역에 메모"))
+        decision = self.active_card()
+        self.say(5)
+        decision.get_by_role("combobox", name="메모 종류", exact=True).select_option("decision")
+        self.memo_text(decision, "대여 기간은 현행대로 유지합니다.")
+        self.say(6)
+        self.click(self.button("+ 전체 메모"))
+        action = self.active_card()
+        action.get_by_role("combobox", name="메모 종류", exact=True).select_option("action")
+        self.memo_text(action, "알림 발송 결과를 점검합니다.")
+        owner = action.get_by_role("textbox", name="담당자", exact=True)
+        self.click(owner)
         self.type_slow("운영 담당")
-        due = card.get_by_label("기한", exact=True)
+        due = action.get_by_label("기한", exact=True)
+        self.move_to(due)
         due.fill((date.today() + timedelta(days=7)).isoformat())
         due.blur()
+        panel = self.page.get_by_role("complementary", name="회의 메모", exact=True)
+        self.say(7)
+        self.click(panel.get_by_role("tab", name="회의 정리", exact=True))
+        self.say(8)
+        self.download(panel.get_by_role("button", name=".md로 내보내기", exact=True), "주간-회의.md")
 
     def present(self) -> None:
-        self.intro(MEETING)
-        self.caption("회의 문서는 안건별로 발표할 수 있습니다")
-        self.step("발표하기를 눌러 발표 화면을 엽니다", lambda: self.click(self.link("발표하기")))
+        self.click(self.link("회의 모드 나가기"))
+        self.click(self.link("발표하기"))
         self.page.locator("body.page-present").wait_for()
-        self.caption("문서의 큰 제목마다 장이 나뉩니다")
-        self.press("ArrowRight", "오른쪽 화살표로 다음 안건을 엽니다")
-        self.press("ArrowRight", "다음 장에서 논의를 이어 갑니다")
-        self.press("Space", "스페이스로도 장을 넘길 수 있습니다")
-        self.step("메모 보기로 내 메모 패널을 곁에 엽니다", lambda: self.click(self.button("메모 보기(N)")))
-        self.caption("회의 모드에서 적은 메모를 여기서 봅니다")
-        self.press("Escape", "첫 번째 Esc로 메모 패널을 닫습니다")
-        self.press("Escape", "다시 Esc를 눌러 발표를 끝냅니다", navigation=True)
+        self.button("메모 보기(N)").wait_for(state="visible")
+        self.ready()
+        self.say(0)
+        self.say(1)
+        self.move_to(self.page.locator(".present-nav"))
+        self.say(2)
+        for key in ("ArrowRight", "ArrowRight", "Space"):
+            self.page.keyboard.press(key)
+            self.wait(0.65)
+        self.say(3)
+        self.click(self.button("메모 보기(N)"))
+        panel = self.page.get_by_role("complementary", name="회의 메모", exact=True)
+        panel.wait_for(state="visible")
+        self.move_to(panel)
+        self.say(4)
+        self.page.keyboard.press("Escape")
+        self.wait(0.6)
+        with self.page.expect_navigation(wait_until="load"):
+            self.page.keyboard.press("Escape")
         self.link("발표하기").wait_for(state="visible")
-        self.caption("원래 문서 화면으로 돌아왔습니다")
-        self.finish()
 
     def evidence(self) -> None:
-        self.intro(MEETING)
-        self.caption("회의 안건에서 규칙의 근거를 바로 확인합니다")
-        self.step("대여 기간 조항에 마우스를 올립니다", lambda: self.move_to(self.link("대여 기간 조항")))
+        self.section("대여 기간 검토")
+        self.link("대여 기간 조항").wait_for(state="visible")
+        self.ready()
+        self.say(0)
+        self.say(1)
+        self.move_to(self.link("대여 기간 조항"))
         self.page.get_by_role("tooltip").wait_for(state="visible")
-        self.caption("말풍선에서 규칙의 제목과 발췌를 읽습니다")
-        self.press("Escape", "Esc로 말풍선을 닫습니다")
-        self.step("이번에는 연체 처리 조항을 누릅니다", lambda: self.click(self.link("연체 처리 조항")))
+        self.say(2)
+        self.page.keyboard.press("Escape")
+        self.click(self.link("연체 처리 조항"))
         collection = self.page.get_by_role("region", name="근거 모음", exact=True)
         entry = collection.get_by_role("article").nth(1)
-        self.caption("문서 끝의 근거 모음으로 이동합니다")
-        self.caption("인용한 곳에서 이 근거를 쓴 안건을 찾습니다")
-        self.step("인용한 곳을 누르면 해당 안건으로 돌아갑니다", lambda: self.click(
-            entry.get_by_role("link", name="연체 알림 개선", exact=True)))
-        self.step("근거 링크를 다시 눌러 모음으로 갑니다", lambda: self.click(self.link("연체 처리 조항")))
-        self.step("원문 열기로 규칙 전체를 확인합니다", lambda: self.click(
-            entry.get_by_role("link", name="원문 열기", exact=True)))
+        entry.wait_for(state="visible")
+        self.say(3)
+        cited = entry.get_by_role("link", name="연체 알림 개선", exact=True)
+        self.move_to(cited)
+        self.say(4)
+        self.click(cited)
+        self.say(5)
+        self.click(self.link("연체 처리 조항"))
+        self.click(entry.get_by_role("link", name="원문 열기", exact=True))
         self.page.get_by_role("heading", name="도서 대여 규칙", exact=True).wait_for()
-        self.finish()
 
     def preview(self) -> None:
         button = self.button("슬라이드 미리보기")
         self.move_to(button)
-        self.splice["click"] = time.monotonic() - self.born[self.origin]
         with self.context.expect_page() as pending:
-            button.click()
-        self.popup = pending.value
-        self.popup.set_default_timeout(60000)
-        self.popup.wait_for_function("""() => document.querySelector('svg[data-marpit-svg]')
+            self.click(button)
+        popup = pending.value
+        popup.set_default_timeout(60000)
+        popup.wait_for_function("""() => document.querySelector('svg[data-marpit-svg]')
           && [...document.querySelectorAll('section')].some(s => s.getBoundingClientRect().width > 0)""")
-        self.popup.evaluate("() => document.fonts.ready")
-        # document.write가 초기 겹침 층을 지우므로 렌더링 뒤 다시 넣는다.
-        self.popup.evaluate(OVERLAY)
-        self.page = self.popup
-        self.show("새 탭에서 열립니다")
-        self.splice["ready"] = time.monotonic() - self.born[self.popup]
-        self.caption("새 탭에서 열립니다")
-
-    def slide_pdf(self) -> None:
-        with self.page.expect_download(timeout=120000) as pending:
-            self.click(self.button("PDF 만들기"))
-            self.caption("PDF로 변환하는 동안 진행 상태를 보여 줍니다")
-        downloaded = pending.value
-        if downloaded.failure():
-            raise RuntimeError("슬라이드 PDF를 내려받지 못했습니다")
-        target = self.out / "downloads" / self.menu / "서비스-소개.pdf"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        downloaded.save_as(target)
+        popup.evaluate("() => document.fonts.ready")
+        # 미리보기의 document.write가 초기 겹침을 지우므로 렌더링 뒤 다시 넣는다.
+        popup.evaluate(OVERLAY)
+        self.stop_cast()
+        self.switch_after = self.frames[-1]["t"] if self.frames else None
+        self.page = popup
+        self.page.bring_to_front()
+        self.start_cast()
+        self.move(640, 360, 0.4)
+        deadline = time.monotonic() + 5
+        while self.switch_after is not None and time.monotonic() < deadline:
+            self.now()
+            self.wait(0.05)
+        if self.switch_after is not None:
+            raise RuntimeError("새 탭의 첫 프레임이 도착하지 않았습니다")
 
     def slides(self) -> None:
-        # 미리보기 탭을 닫고 원래 탭으로 돌아오면 헤드리스 녹화 크기가 바뀌어 화면 아래가 잘린다.
-        # 그래서 PDF를 먼저 만들고, 미리보기 탭에서 영상을 끝낸다.
-        self.intro(SLIDES)
-        self.caption("marp: true 문서에는 슬라이드 단추가 생깁니다")
-        self.step("PDF 만들기로 배포할 파일을 만듭니다", self.slide_pdf)
-        self.caption("내려받기가 끝나면 PDF 파일을 사용할 수 있습니다")
-        self.step("슬라이드 미리보기를 누릅니다", self.preview)
-        self.caption("첫 장에서 서비스 소개를 시작합니다")
-        self.press("ArrowRight", "오른쪽 화살표로 이용 흐름을 봅니다")
-        self.press("ArrowRight", "대여 기준도 표로 보여 줍니다")
-        self.press("Space", "스페이스로 다음 장을 넘깁니다")
-        self.finish()
+        self.tree_document("발표", "서비스-소개.md")
+        self.button("슬라이드 미리보기").wait_for(state="visible")
+        self.button("PDF 만들기").wait_for(state="visible")
+        self.ready()
+        self.say(0)
+        self.say(1)
+        self.move_to(self.button("슬라이드 미리보기"))
+        self.wait(0.5)
+        self.move_to(self.button("PDF 만들기"))
+        self.say(2)
+        # PDF를 먼저 내려받고 미리보기 새 탭에서 녹화를 끝낸다.
+        self.download(self.button("PDF 만들기"), "서비스-소개.pdf")
+        self.say(3)
+        self.preview()
+        self.say(4)
+        for key in ("ArrowRight", "ArrowRight"):
+            self.page.keyboard.press(key)
+            self.wait(0.8)
 
-def probe(path: Path) -> dict:
-    result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
-        check=True, capture_output=True, text=True,
-    )
-    return json.loads(result.stdout)
+    def outro(self) -> None:
+        self.page.wait_for_function("Boolean(document.querySelector('svg[data-marpit-svg]'))")
+        self.ready()
+        self.say(0)
+        for key in ("ArrowRight", "ArrowRight"):
+            self.page.keyboard.press(key)
+            self.wait(0.8)
+        self.say(1)
+        self.say(2)
+        self.move(640, 360, 1.2)
+        self.say(3)
 
-
-def encode(source: Path, popup: Path | None, splice: dict[str, float], target: Path) -> None:
-    command = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-y", "-i", str(source)]
-    if popup is None:
-        command += ["-vf", "trim=start=0.5,setpts=PTS-STARTPTS"]
-    else:
-        command += ["-i", str(popup), "-filter_complex", (
-            f"[0:v]trim=start=0.5:end={splice['click']:.6f},setpts=PTS-STARTPTS[a];"
-            f"[1:v]trim=start={splice['ready']:.6f},setpts=PTS-STARTPTS[b];"
-            "[a][b]concat=n=2:v=1:a=0[v]"), "-map", "[v]"]
-    command += ["-an", "-c:v", "libx264", "-crf", "18", "-preset", "slow",
-                "-pix_fmt", "yuv420p", "-r", "30", "-movflags", "+faststart", str(target)]
-    subprocess.run(command, check=True)
-    metadata = probe(target)
-    video = next(stream for stream in metadata["streams"] if stream["codec_type"] == "video")
-    if (video["width"], video["height"]) != (1920, 1080):
-        raise RuntimeError(f"영상 해상도가 예상과 다릅니다: {target}")
-    duration = float(metadata["format"]["duration"])
-    print(f"영상: {target} ({duration:.1f}초, 1920×1080)")
-    if not 30 <= duration <= 60:
-        print(f"경고: {target.name} 길이가 30~60초를 벗어났습니다. 해당 메뉴의 자막 시간을 조정하세요.")
-
-
-def record(browser: Browser, base_url: str, out: Path, menu: str) -> None:
-    raw = out / "raw" / menu
-    # 이번 녹화 저장이 실패했을 때 이전 원본을 다시 인코딩하지 않도록 지운다.
-    shutil.rmtree(raw, ignore_errors=True)
-    raw.mkdir(parents=True, exist_ok=True)
-    context = browser.new_context(
-        viewport=SIZE, record_video_size=SIZE, record_video_dir=raw,
-        accept_downloads=True, locale="ko-KR", device_scale_factor=1,
-        # Viewer CSP가 unsafe-eval을 막아 wait_for_function이 돌지 않는다. 화면 내용은 그대로다.
-        bypass_csp=True,
-    )
-    try:
-        recorder = Recorder(context, base_url, out, menu)
-        getattr(recorder, menu)()
-    finally:
-        context.close()
-    source = raw / f"{menu}.webm"
-    popup = raw / "preview.webm" if recorder.popup else None
-    for page, target in [(recorder.origin, source), (recorder.popup, popup)]:
-        if page is not None and target is not None and page.video is not None:
-            original = page.video.path()
-            page.video.save_as(target)
-            if original != target:
-                original.unlink(missing_ok=True)
-    if not source.is_file():
-        raise RuntimeError("녹화 원본을 찾지 못했습니다")
-    if popup:
-        (raw / "timing.json").write_text(json.dumps(recorder.splice, indent=2) + "\n", encoding="utf-8")
-    encode(source, popup, recorder.splice, out / f"{menu}.mp4")
+    def run(self, scenes: list[dict]) -> None:
+        response = self.page.goto(self.base_url + "/view/", wait_until="load")
+        if response is None or response.status != 200:
+            raise RuntimeError("저장소 목록을 열지 못했습니다")
+        self.raise_overlay()
+        self.start_cast()
+        self.move(620, 350, 0.35)
+        for scene in scenes:
+            self.scene = scene["key"]
+            self.scene_marks.append({"scene": self.scene, "title": scene["title"], "t": self.now()})
+            print(f"장면: {scene['title']} ({self.now():.1f}초)", flush=True)
+            getattr(self, self.scene)()
+            self.wander_until(self.voice_free + TAIL)
+        end = self.now()
+        self.stop_cast()
+        if self.frame_error:
+            raise RuntimeError(self.frame_error)
+        if not self.frames:
+            raise RuntimeError("녹화 프레임이 없습니다")
+        marks = {"end": end, "scenes": self.scene_marks, "lines": self.lines, "frames": self.frames}
+        (self.out / "marks.json").write_text(json.dumps(marks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"녹화 완료: {end:.1f}초, 프레임 {len(self.frames)}개", flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--menu", action="append", choices=MENUS, help="녹화할 메뉴, 여러 번 지정 가능")
     parser.add_argument("--base-url", default="http://127.0.0.1:18090", help="Viewer 서버의 기본 주소")
-    parser.add_argument("--out", type=Path, default=Path(__file__).resolve().parent / "out", help="결과 폴더")
+    parser.add_argument("--out", type=Path, default=HERE / "out", help="결과 폴더")
     args = parser.parse_args()
-    out = args.out.resolve()
+    out = args.out.expanduser().resolve()
+    scenes = json.loads((HERE / "scenes.json").read_text(encoding="utf-8"))["scenes"]
+    voice = load_voice(out, scenes)
     out.mkdir(parents=True, exist_ok=True)
+    # 실패한 녹화에서 이전 marks와 새 프레임이 섞이지 않도록 시작 전에 지운다.
+    (out / "marks.json").unlink(missing_ok=True)
+    shutil.rmtree(out / "frames", ignore_errors=True)
+    (out / "frames").mkdir()
     with sync_playwright() as runtime:
         browser = runtime.chromium.launch(channel="chrome", headless=True)
+        context = browser.new_context(
+            viewport=SIZE, device_scale_factor=1.5, locale="ko-KR", timezone_id="Asia/Seoul",
+            accept_downloads=True, bypass_csp=True,
+        )
+        recorder = Recorder(context, args.base_url, out, voice)
         try:
-            for menu in dict.fromkeys(args.menu or MENUS):
-                print(f"녹화 중: {MENUS[menu]}", flush=True)
-                record(browser, args.base_url, out, menu)
+            recorder.run(scenes)
+        except Exception:
+            try:
+                recorder.page.screenshot(path=out / "실패.png")
+            except (Error, OSError):
+                pass
+            raise
         finally:
+            context.close()
             browser.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Error as error:
+        detail = "\n".join(str(error).splitlines()[:6])
+        print(f"오류: Chrome 조작에 실패했습니다. 출력 폴더의 실패.png를 확인하세요.\n{detail}", file=sys.stderr)
+        sys.exit(1)
+    except (OSError, ValueError, KeyError, RuntimeError) as error:
+        print(f"오류: {error}", file=sys.stderr)
+        sys.exit(1)
