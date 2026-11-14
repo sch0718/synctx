@@ -312,6 +312,7 @@ class TestAdminUI:
         assert "lib/1.0.0/x.js" in resp.text
         assert "라이브러리" in resp.text
         assert "스캔" in resp.text
+        assert '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,' in resp.text
 
 
 class TestAuditLog:

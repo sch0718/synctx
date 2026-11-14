@@ -132,6 +132,7 @@ class TestGenerateIndex:
 
         html = self._generate(slides)
 
+        assert '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,' in html
         assert "<img src=x" not in html
         assert 'href="&lt;img%20src=x%20onerror=alert(1)&gt;.html"' in html
         assert '<div class="slide-title">&lt;img src=x onerror=alert(1)&gt;</div>' in html
