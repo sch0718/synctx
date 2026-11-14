@@ -37,8 +37,15 @@ function options() {
   return opt;
 }
 
+// 문장을 붙여 읽어 -40dB 무음이 없는 경계도 있어서, -30dB에서 0.2초 넘게 조용한 곳도 후보로 더한다.
 function detectSilence(file) {
-  const r = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-af', 'silencedetect=noise=-40dB:d=0.12', '-f', 'null', '-'], { encoding: 'utf8' });
+  const strict = silences(file, -40, 0.12);
+  const loose = silences(file, -30, 0.2).filter(p => !strict.some(q => q.s < p.e && p.s < q.e));
+  return [...strict, ...loose].sort((x, y) => x.s - y.s);
+}
+
+function silences(file, noise, min) {
+  const r = spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-af', `silencedetect=noise=${noise}dB:d=${min}`, '-f', 'null', '-'], { encoding: 'utf8' });
   if (r.error || r.status !== 0) throw new VideoError('ffmpeg 무음 검출에 실패했습니다.');
   const pauses = [];
   let start = null;
