@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import time
 from collections.abc import Callable
@@ -339,7 +340,7 @@ class Recorder:
         self.press("ArrowRight", "다음 장에서 논의를 이어 갑니다")
         self.press("Space", "스페이스로도 장을 넘길 수 있습니다")
         self.step("메모 보기로 내 메모 패널을 곁에 엽니다", lambda: self.click(self.button("메모 보기(N)")))
-        self.caption("회의 모드에서 적은 메모가 여기에 보입니다")
+        self.caption("회의 모드에서 적은 메모를 여기서 봅니다")
         self.press("Escape", "첫 번째 Esc로 메모 패널을 닫습니다")
         self.press("Escape", "다시 Esc를 눌러 발표를 끝냅니다", navigation=True)
         self.link("발표하기").wait_for(state="visible")
@@ -441,6 +442,8 @@ def encode(source: Path, popup: Path | None, splice: dict[str, float], target: P
 
 def record(browser: Browser, base_url: str, out: Path, menu: str) -> None:
     raw = out / "raw" / menu
+    # 이번 녹화 저장이 실패했을 때 이전 원본을 다시 인코딩하지 않도록 지운다.
+    shutil.rmtree(raw, ignore_errors=True)
     raw.mkdir(parents=True, exist_ok=True)
     context = browser.new_context(
         viewport=SIZE, record_video_size=SIZE, record_video_dir=raw,

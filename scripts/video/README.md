@@ -20,7 +20,7 @@ brew install ffmpeg
 npm install -g @marp-team/marp-cli @mermaid-js/mermaid-cli
 ```
 
-`git`, `uv`, `ffmpeg`, `ffprobe`, `marp`, `mmdc`가 PATH에 있어야 합니다. 시스템 FFmpeg는 `libx264` 인코더를 지원해야 합니다. Google Chrome과 Playwright 관리 FFmpeg는 설치된 Playwright의 레지스트리에서 경로를 찾아 확인합니다. 실행 파일의 권한과 버전 명령도 검사합니다.
+`git`, `uv`, `ffmpeg`, `ffprobe`, `marp`, `mmdc`가 PATH에 있어야 하며, 실행기가 처음에 이것만 확인합니다. 시스템 FFmpeg는 `libx264` 인코더를 지원해야 합니다(Homebrew 판은 기본 포함). Chrome이나 Playwright 녹화용 FFmpeg가 없으면 녹화를 시작할 때 오류가 납니다.
 
 실행기는 `UV_OFFLINE=1`로 동작합니다. 녹화 도중에는 의존성·브라우저·FFmpeg를 내려받지 않으므로 필요한 패키지를 먼저 설치하세요. 의존성 설치 명령 자체가 실패하면 로그를 확인한 뒤 위 준비 절차를 다시 수행하세요.
 
@@ -47,7 +47,7 @@ scripts/video/make.sh --work /tmp/도서-시연 --out scripts/video/out
 | evidence | 근거 말풍선·근거 모음·인용한 곳·원문 |
 | slides | PDF 만들기·새 탭 미리보기·장 넘기기 |
 
-`--work` 기본값은 `${TMPDIR:-/tmp}/synctx-video`입니다. 프로젝트 밖의 별도 경로만 사용할 수 있습니다. 그 아래에 `demo/`, `synctx.yaml`, `repos/`, `cache/`, `marp/`, `viewer.log`를 둡니다. `demo/`는 이 도구가 만든 표식이 있을 때만 삭제하고 다시 만듭니다. 다른 기존 폴더는 덮어쓰지 않습니다. 같은 작업 폴더로 동시에 실행하지 마세요.
+`--work` 기본값은 `${TMPDIR:-/tmp}/synctx-video`입니다. 프로젝트 밖의 별도 경로만 사용할 수 있습니다. 그 아래에 `demo/`, `synctx.yaml`, `repos/`, `cache/`, `marp/`, `viewer.log`를 둡니다. 작업 폴더는 없거나 비어 있거나 이 도구가 남긴 표식(`.synctx-video-work`)이 있을 때만 씁니다. 실행할 때마다 `demo/`·`repos/`·`cache/`·`marp/`를 지우고 새로 만듭니다(시연 저장소 이력이 매번 새로 생겨 이전 캐시와 맞지 않기 때문). 같은 작업 폴더로 동시에 실행하지 마세요.
 
 시연 저장소는 기본 `main` 브랜치와 문단 하나를 바꾼 `draft` 브랜치를 갖습니다. 커밋은 임시 시연 저장소에만 만듭니다. 회의 시작 시각은 생성 시각의 10분 전, 회의 길이는 120분으로 채웁니다. 오래 지난 서버를 재사용할 때는 저장소와 서버부터 다시 만들어야 진행 중 상태가 나옵니다.
 
@@ -85,7 +85,7 @@ ffprobe -v error -show_entries stream=width,height,r_frame_rate:format=duration 
 ```bash
 python -m py_compile scripts/video/demo_repo.py scripts/video/record.py
 bash -n scripts/video/make.sh
-uv run ruff check scripts/video
+uvx ruff check scripts/video
 ```
 
 ruff가 설치되어 있지 않다면 별도로 준비하세요. 정적 검사는 실제 화면 조작과 영상 검수를 대신하지 않습니다.

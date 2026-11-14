@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -17,12 +18,17 @@ DRAFT_TEXT = "검토 중인 변경안: 대여 기간을 21일로 늘리고, 한 
 MARKER = "synctx-video-demo"
 
 
+# 환경 변수의 작성자 설정이 -c user.name보다 우선하므로 직접 고정한다(화면의 「마지막 커밋」에 보인다).
+GIT_ENV = {"GIT_AUTHOR_NAME": "시연 문서", "GIT_AUTHOR_EMAIL": "demo@example.invalid",
+           "GIT_COMMITTER_NAME": "시연 문서", "GIT_COMMITTER_EMAIL": "demo@example.invalid"}
+
+
 def git(destination: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-C", str(destination), "-c", "core.hooksPath=/dev/null",
          "-c", "commit.gpgsign=false", "-c", "user.name=시연 문서",
          "-c", "user.email=demo@example.invalid", *args],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, env={**os.environ, **GIT_ENV},
     )
 
 

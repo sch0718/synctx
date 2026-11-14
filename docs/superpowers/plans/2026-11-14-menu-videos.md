@@ -87,6 +87,6 @@ README 「메뉴별 도움말」의 메뉴 7개(browse·search·document·meetin
 
 ## 검증
 
-- 단위 시험은 두지 않는다(녹화 스크립트는 사람이 결과 영상을 보고 확인하는 도구이고, 동작을 지킬 제품 코드가 아니다). 대신 `uv run ruff check scripts/video`(저장소의 린트 설정이 있으면)와 `bash -n scripts/video/make.sh`.
+- 단위 시험은 두지 않는다(녹화 스크립트는 사람이 결과 영상을 보고 확인하는 도구이고, 동작을 지킬 제품 코드가 아니다). 대신 `uvx ruff check scripts/video`와 `bash -n scripts/video/make.sh`.
 - 영상: `ffprobe`로 1920×1080·길이 30~60초 확인, 프레임 PNG 확인.
 - 저장소: `scripts/test-all.sh`(바뀐 것이 스크립트·문서뿐이라 기존 시험이 그대로 통과해야 한다).
