@@ -1,6 +1,6 @@
 [project]
 name = "synctx-collab-gateway"
-version = "0.8.0"
+version = "0.8.1"
 description = "Collab Gateway for synctx"
 requires-python = ">=3.13"
 dependencies = [

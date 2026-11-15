@@ -163,7 +163,7 @@ flowchart TB
 ```bash
 cp deploy/docker/synctx.env.example deploy/docker/synctx.env
 cp deploy/docker/secrets.env.example deploy/docker/secrets.env
-# synctx.env: SYNCTX_SERVICES, SYNCTX_IMAGE_TAG(0.8.0-<git-sha>), SYNCTX_SLIDES_REPO_URL 수정
+# synctx.env: SYNCTX_SERVICES, SYNCTX_IMAGE_TAG(0.8.1-<git-sha>), SYNCTX_SLIDES_REPO_URL 수정
 # secrets.env: GIT_READ_TOKEN, GIT_PUBLISH_TOKEN(출판 전용) 입력, 렌더 보기를 쓰면 SYNCTX_RENDER_SECRET
 # SYNCTX_CONFIG_FILE이 가리키는 .synctx.yaml 준비 (인증 프록시가 없으면 authz.enabled: false)
 
@@ -182,10 +182,10 @@ scripts/docker/down.sh             # 중지 (볼륨 유지)
 ./run.sh --repo https://git.example/team/docs.git
 ./run.sh --repo https://git.example/team/docs.git --repo https://git.example/team/meetings.git --ref main
 ./run.sh --docker --build --repo https://git.example/team/docs.git
-./run.sh --docker --image synctx/viewer:0.8.0-abcdef0 --repo https://git.example/team/docs.git
+./run.sh --docker --image synctx/viewer:0.8.1-abcdef0 --repo https://git.example/team/docs.git
 ```
 
-접속 주소는 http://127.0.0.1:18000/view/ 이다. `--docker`는 첫 번째 인자에 둔다. Docker는 Viewer 컨테이너 하나만 실행하며 `--build`일 때만 기존 빌드 스크립트를 호출한다. 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.8.0-<git-sha>`이고(`DOCKER_REGISTRY` 없이는 로컬 이미지만 쓰고 Docker Hub에서 받지 않는다), `--image`도 SemVer-SHA 태그를 요구한다(`latest` 불가). `--build`와 `--image`는 함께 쓰지 않는다.
+접속 주소는 http://127.0.0.1:18000/view/ 이다. `--docker`는 첫 번째 인자에 둔다. Docker는 Viewer 컨테이너 하나만 실행하며 `--build`일 때만 기존 빌드 스크립트를 호출한다. 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.8.1-<git-sha>`이고(`DOCKER_REGISTRY` 없이는 로컬 이미지만 쓰고 Docker Hub에서 받지 않는다), `--image`도 SemVer-SHA 태그를 요구한다(`latest` 불가). `--build`와 `--image`는 함께 쓰지 않는다.
 
 `--repo`는 반복할 수 있고, 기존 설정은 `--config ./my.synctx.yaml`로 대신 지정한다. `--repo` 프로필은 회의 모드를 켜고 로컬 열람용으로 인증을 끈다. `--config`는 명시한 인증·협업 정책을 유지한다. Git 토큰은 `GIT_READ_TOKEN` 환경변수로 주며 URL이나 YAML에 값을 넣지 않는다. Docker는 토큰을 변수 이름으로 전달하고, 사용자 정의 `credential_env`는 `--env MY_GIT_TOKEN`으로 전달한다. HTML 렌더 보기는 `--config`에서 `html_embed.enabled`·`render_files`를 켠 저장소만 쓸 수 있고(`--repo` 프로필은 켜지 않는다), `SYNCTX_RENDER_SECRET`을 주지 않으면 실행마다 무작위 키를 쓰므로 다시 시작하면 원래 화면을 새로 고쳐야 한다.
 
