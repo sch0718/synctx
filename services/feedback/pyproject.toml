@@ -1,6 +1,6 @@
 [project]
 name = "synctx-feedback"
-version = "0.8.0"
+version = "0.8.1"
 description = "Outbound Feedback Exporter for synctx"
 requires-python = ">=3.13"
 dependencies = [

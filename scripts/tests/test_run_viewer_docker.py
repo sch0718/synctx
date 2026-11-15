@@ -66,7 +66,7 @@ def test_one_container_uses_loopback_named_cache_and_standalone(docker, tmp_path
     assert values(args, "--name") == ["synctx-viewer"]
     assert values(args, "--env") == ["GIT_READ_TOKEN", "SYNCTX_SERVICE_TOKEN", "SYNCTX_RENDER_SECRET", "SYNCTX_RENDER_SECRET_PREVIOUS", "SYNCTX_VIEWER_PUBLIC_BASE_URL", "SYNCTX_ENABLED_SERVICES=viewer"]
     sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
-    assert f"synctx/viewer:0.8.0-{sha}" in args
+    assert f"synctx/viewer:0.8.1-{sha}" in args
     assert args[args.index("python") + 1] == "/app/services/viewer/src/standalone.py"
     assert app_args(call) == ["--repo", REPO_URL, "--host", "0.0.0.0", "--port", "8000", "--cache-dir", "/data/viewer"]
     assert call["public_url"] == "http://127.0.0.1:18000"
@@ -262,8 +262,8 @@ def test_build_delegates_only_viewer_no_load_and_matching_registry(docker, tmp_p
     docker["DOCKER_REGISTRY"] = "registry.example:5000/team"
     result, calls = run(docker, tmp_path, "--build", "--repo", REPO_URL, launcher=wrapper)
     assert result.returncode == 0, result.stderr
-    assert calls[0] == {"build": ["--only", "viewer", "--no-load", "--tag", f"0.8.0-{sha}"], "registry": "registry.example:5000/team"}
-    assert f"registry.example:5000/team/viewer:0.8.0-{sha}" in calls[1]["args"]
+    assert calls[0] == {"build": ["--only", "viewer", "--no-load", "--tag", f"0.8.1-{sha}"], "registry": "registry.example:5000/team"}
+    assert f"registry.example:5000/team/viewer:0.8.1-{sha}" in calls[1]["args"]
     assert len(calls) == 2
     docker["BUILD_EXIT"] = "7"
     Path(docker["CALL_LOG"]).unlink()
