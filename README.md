@@ -1,4 +1,9 @@
-# synctx
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/synctx-logo-dark.svg">
+    <img src="docs/brand/synctx-logo-light.svg" height="64" alt="synctx">
+  </picture>
+</h1>
 
 <p align="center">
   <picture>
