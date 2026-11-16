@@ -16,7 +16,7 @@
 # Docker Engine 실행 필요. Viewer 이미지만 기존 빌드 스크립트로 빌드
 ./run.sh --docker --build --repo https://git.example/team/docs.git
 # 준비된 이미지 사용: 호스트 Python·uv·Git 불필요
-./run.sh --docker --image synctx/viewer:0.8.1-abcdef0 --repo https://git.example/team/docs.git
+./run.sh --docker --image synctx/viewer:0.8.2-abcdef0 --repo https://git.example/team/docs.git
 ```
 
 접속 주소는 http://127.0.0.1:18000/view/ 이다. 루트 `run.sh`의 첫 인자가 `--docker`면 `scripts/docker/run-viewer.sh`, 그 밖에는 `scripts/local/run-lite.sh`가 같은 `services/viewer/src/standalone.py`를 실행한다. Docker는 Compose·게이트웨이 없이 컨테이너 하나를 포그라운드로 실행한다. 준비된 이미지에는 standalone 코드와 vendor 파일이 있어야 하며, 이미지와 실행 스크립트를 같은 커밋에서 준비한다. `--image` 실행은 Git 메타데이터가 없는 스크립트 묶음에서도 가능하다.
@@ -31,7 +31,7 @@
 | 소스 `--host`, `--port`, `--cache-dir` | `127.0.0.1`, `18000`, `~/.cache/synctx/lite` |
 | Docker `--bind`, `--port` | 호스트 `127.0.0.1:18000` 공개. 컨테이너는 `0.0.0.0:8000` 고정 |
 | Docker `--name`, `--volume` | `synctx-viewer`, `synctx-viewer-cache` (이름 있는 캐시 볼륨) |
-| Docker `--image IMAGE` | 사전 빌드 이미지. `0.8.1-abcdef0` 같은 SemVer-SHA 태그 필수 |
+| Docker `--image IMAGE` | 사전 빌드 이미지. `0.8.2-abcdef0` 같은 SemVer-SHA 태그 필수 |
 | Docker `--build` | 기본 이미지 빌드. `--image`와 함께 쓸 수 없음 |
 | Docker `--env NAME` | 추가 환경변수 이름만 전달. `NAME=value`와 실행 스크립트가 정하는 `SYNCTX_*`·`GIT_CONFIG_*` 이름은 거부 |
 
@@ -40,7 +40,7 @@
 - HTML 렌더 보기(`mode=render`)는 `--config`에서 저장소의 `html_embed.enabled`·`render_files`를 함께 켠 경우에만 쓴다(`--repo` 프로필은 켜지 않는다). 생성 설정의 `viewer.render_token_ttl_seconds` 기본값은 14400이다. `SYNCTX_RENDER_SECRET`이 없으면 실행할 때마다 무작위 키를 만들므로, 다시 시작하면 기존 렌더 주소는 만료되고 원래 화면을 새로 고쳐야 한다.
 - 상대 경로는 호출한 디렉터리 기준이며 공백이 있으면 따옴표로 감싼다. 로컬 `--repo` 디렉터리는 실제 경로로 정규화한 뒤 Docker 안에서도 같은 절대 경로에 읽기 전용으로 마운트한다(상위 디렉터리는 마운트하지 않음). `--config`는 `/etc/synctx/standalone.yaml`에 읽기 전용 마운트한다. Docker의 로컬 `--repo`는 `file:///path/to/repo`와 `file://localhost/path/to/repo`도 실제 디렉터리로 정규화하며 `%20` 같은 URL 이스케이프를 해석한다. 그 밖의 file URL 호스트는 거부한다. `.git`이 파일인 linked worktree·submodule은 외부 Git 관리 디렉터리를 마운트해야 하므로 지원하지 않는다. 원격 Git URL을 대신 사용한다. Docker의 설정 파일 안 저장소 URL은 컨테이너에서 접근 가능한 Git URL을 사용한다. 호스트 로컬 저장소는 명시적 `--repo`로 지정한다. bind 구문 때문에 설정 파일 경로에 콜론은 쓸 수 없다.
 - 소스 캐시와 Docker `/data/viewer`에는 생성 설정과 `repos/`가 남는다. Docker에서 Ctrl-C로 종료하면 `--rm`으로 컨테이너만 지워지고 볼륨은 재실행 때 재사용한다. 다른 캐시를 쓰려면 `--volume another-viewer-cache`를 지정한다. 메모는 이 볼륨이 아니라 브라우저 localStorage에 있어 주소·포트·브라우저가 달라지면 별도로 보관된다.
-- `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag 0.8.1-<git-sha>`만 호출한다. 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.8.1-<git-sha>`이며 `DOCKER_REGISTRY=registry.local:5000/synctx`처럼 접두사를 바꾸면 빌드와 실행에 함께 적용된다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 Docker Hub에서 받지 않도록 `--pull never`로 실행하고, 로컬에 이미지가 없으면 Docker를 실행하기 전에 `--build`나 `--image`를 쓰라고 안내한다. `DOCKER_REGISTRY`를 지정했거나 `--image`를 준 경우는 Docker 기본 pull 정책을 따른다. `latest`·태그 없는 이미지는 거부한다. 베이스 이미지는 기존 `python:3.13.16-slim-trixie` 그대로다.
+- `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag 0.8.2-<git-sha>`만 호출한다. 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.8.2-<git-sha>`이며 `DOCKER_REGISTRY=registry.local:5000/synctx`처럼 접두사를 바꾸면 빌드와 실행에 함께 적용된다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 Docker Hub에서 받지 않도록 `--pull never`로 실행하고, 로컬에 이미지가 없으면 Docker를 실행하기 전에 `--build`나 `--image`를 쓰라고 안내한다. `DOCKER_REGISTRY`를 지정했거나 `--image`를 준 경우는 Docker 기본 pull 정책을 따른다. `latest`·태그 없는 이미지는 거부한다. 베이스 이미지는 기존 `python:3.13.16-slim-trixie` 그대로다.
 - 공개 URL 우선순위는 `--public-base-url` → 설정의 명시적 `runtime.public_base_url` → `SYNCTX_VIEWER_PUBLIC_BASE_URL` → 소스 바인딩 주소다. Docker는 환경변수가 비어 있으면 호스트 공개 주소를 넣는다(`0.0.0.0`·`::`는 링크에서 loopback으로 변환). 외부 사용자는 실제 URL을 `--public-base-url https://docs.example`로 지정한다.
 - 기본 loopback 공개를 유지한다. `--bind 0.0.0.0` 등으로 외부에 열 때는 TLS·인증 프록시와 방화벽을 먼저 구성하고, 프록시만 Viewer에 접근할 수 있게 제한한다. `--repo` 프로필에는 사용자 인증이 없고 `--config`의 인증을 자동으로 끄지 않는다. 기존 authz가 켜져 있으면 신뢰할 수 있는 프록시 헤더가 없을 때 403인 것이 정상이다.
 
@@ -275,8 +275,8 @@ minikube tunnel -p "${MINIKUBE_PROFILE:-minikube}"
 # 선택적 빌드
 ./scripts/local/steps/build.sh --only viewer,cdn,marp     # 코어만
 ./scripts/local/steps/build.sh --skip feedback             # Feedback 제외
-./scripts/local/steps/build.sh --tag 0.8.1-$(git rev-parse --short HEAD)   # 태그 지정 (기본 latest)
-./scripts/local/steps/build.sh --no-load --tag 0.8.1-$(git rev-parse --short HEAD)   # minikube에 올리지 않고 호스트 Docker에만 (Docker Compose 배포 확인용)
+./scripts/local/steps/build.sh --tag 0.8.2-$(git rev-parse --short HEAD)   # 태그 지정 (기본 latest)
+./scripts/local/steps/build.sh --no-load --tag 0.8.2-$(git rev-parse --short HEAD)   # minikube에 올리지 않고 호스트 Docker에만 (Docker Compose 배포 확인용)
 ```
 
 빌드 대상은 `viewer, cdn, marp, sync, feedback`이다. Slides와 Draw.io는 3rd-party 이미지(`nginx`, `alpine/git`, `jgraph/drawio`)를 minikube에 올린다.
@@ -299,7 +299,7 @@ minikube tunnel -p "${MINIKUBE_PROFILE:-minikube}"
 
 주요 차이점 (vs 운영):
 - `<서비스>.image.pullPolicy: Never` — viewer·cdn·marp·sync·feedback은 minikube에 로드된 로컬 이미지 사용 (slides·drawio는 3rd-party 이미지라 `IfNotPresent`)
-- `<서비스>.image.tag: "latest"` — 로컬 빌드는 latest 태그 (운영은 `0.8.1-<git-sha>`)
+- `<서비스>.image.tag: "latest"` — 로컬 빌드는 latest 태그 (운영은 `0.8.2-<git-sha>`)
 - `slides.persistence.enabled: false` — emptyDir 사용
 - `feedback.secrets.create: true` — Secret 자동 생성 (운영은 existingSecret)
 - `git.secrets.create: true` — Git 토큰 Secret 자동 생성 (실제 토큰은 `values-local.secret.yaml`)

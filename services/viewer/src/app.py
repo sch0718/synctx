@@ -37,7 +37,7 @@ import meeting_index
 import search as search_mod
 import viewer_ui as ui
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 configure_logging(service_name="viewer")
 VIEW_PREFIX = "/view"
 
