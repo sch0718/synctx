@@ -16,7 +16,7 @@ from synctx_common.config import load_config
 from synctx_common.logging import configure_logging
 from synctx_common.observability import register_observability_routes
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 
 configure_logging(service_name="cdn")
 logger = logging.getLogger(__name__)

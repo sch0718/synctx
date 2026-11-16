@@ -13,7 +13,7 @@
 </p>
 
 <p align="center"><b>sync + context — 외부에서 AI와 쓴 문서를 폐쇄망 안에서 읽고, 회의하고, 동기화합니다</b><br>
-현재 버전 <b>0.8.1</b> · <a href="https://github.com/sch0718/synctx/releases">릴리스</a> · 외부 CDN·인터넷 없이 사내 브라우저에서</p>
+현재 버전 <b>0.8.2</b> · <a href="https://github.com/sch0718/synctx/releases">릴리스</a> · 외부 CDN·인터넷 없이 사내 브라우저에서</p>
 
 금융권 폐쇄망의 현업 팀은 외부망에 접근할 수 없어서, 외부에서 AI 도구(Claude Code·Codex·Cursor)로 만든 요건 문서·회의 자료·이슈를 바로 쓰기 어렵습니다. synctx는 이미 자동화된 **외부 → 내부 Git 동기화** 경로를 그대로 써서, Git에 올린 Markdown을 폐쇄망 안에서 웹으로 읽고, 회의와 발표에 쓰고, 팀이 쓰는 XWiki·OpenProject에 맞춰 넣습니다. Git이 원본이고 내부 도구의 내용은 거기서 만든 파생 데이터입니다.
 
@@ -96,6 +96,7 @@
 
 | 버전 | 날짜 | 주요 변경 |
 |------|------|-----------|
+| [0.8.2](https://github.com/sch0718/synctx/releases/tag/v0.8.2) | 2026-11-17 | **라이선스와 공개 준비.** PolyForm Noncommercial 1.0.0 라이선스(`LICENSE`)와 서드파티 고지(`THIRD_PARTY_NOTICES.md`) 추가, 패키지에 라이선스 표기, 문서·예시 설정에서 특정 사내 환경 정보를 일반 예시로 정리 |
 | [0.8.1](https://github.com/sch0718/synctx/releases/tag/v0.8.1) | 2026-11-16 | **로고와 사용 데모 영상.** 로고·마크(SVG, 밝은·어두운 판 PNG)를 `docs/brand/`에 추가하고 README 머리에 표시, CDN·Slides 목록 화면의 머리 마크를 같은 모양으로 맞추고 브라우저 탭 아이콘 추가, README에 사용 데모 영상(한국어 자막) 링크와 챕터 추가 |
 | [0.8.0](https://github.com/sch0718/synctx/releases/tag/v0.8.0) | 2026-11-09 | **정적 Viewer 내보내기와 로그인·열람 제한.** Viewer를 정적 사이트로 내보내 Cloudflare Pages에 배포(Access·공개 모드), 로그인 모드의 저장소별 열람 제한·`/admin`·`/settings`, 브라우저 탭 아이콘, 회의 대시보드·Collab Gateway의 Mattermost 알림과 `/synctx` 명령·Jitsi 내장(Phase 8), Phase 9 Chromium 시험, 알림·Alert·Jitsi 프록시·로컬 배포 수정 |
 | [0.7.0](https://github.com/sch0718/synctx/releases/tag/v0.7.0) | 2026-10-28 | **경량 Viewer와 HTML 렌더 보기.** `./run.sh` 한 줄 실행과 단일 컨테이너(`--docker`)로 문서·회의용 Viewer 띄우기, 신뢰 저장소의 HTML을 `mode=render`로 실행해 보고 문서 안 링크를 같은 커밋으로 여는 렌더 보기(`/render` 서명 토큰), 화면 맞춤·전체 화면·`synctx-html` 블록 크게 보기, README를 서비스 소개로 바꾸고 메뉴별 도움말 추가, Feedback이 OpenProject 변경을 실제로 반출하도록 수정, Marp 출판에 출판 전용 토큰 사용 |
