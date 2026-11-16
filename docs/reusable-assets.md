@@ -9,7 +9,7 @@
 | 저장소 | 경로 | 설명 |
 |--------|------|------|
 | **markdown_converter** | `~/workspace/markdown_converter` | 마크다운 프리뷰 웹 서비스 (md-preview) |
-| **example-infra** | `~/workspace/example-infra` | 사내 시스템 인프라 저장소 |
+| **example-infra** | `~/workspace/example-infra` | 인프라 저장소(비공개) |
 | └ 문서변환 | `10. 문서/문서변환/` | 독립 실행형 변환 스크립트 모음 |
 | └ docsify 브랜치 | `feature/docsify` | Docsify 기반 문서 사이트 + 내부 CDN |
 
@@ -114,7 +114,7 @@
 - **대상 서비스**: Viewer Service
 - **비고**: 테마 CSS를 별도 파일로 분리하여 CDN Service에서 관리하는 것도 고려
 
-### 1.8 사내 example-fe 디자인 시스템 자산
+### 1.8 프런트엔드 저장소(비공개)의 디자인 시스템 자산
 
 - **소스**: `~/workspace/example-fe`
 - **기능**: UI/UX 일관성을 위한 디자인 토큰 및 레이아웃 구조

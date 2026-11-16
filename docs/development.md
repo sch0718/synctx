@@ -393,8 +393,7 @@ synctx/
 │   ├── viewer-index-design.md
 │   ├── viewer-index-mockup.html
 │   ├── reusable-assets.md
-│   ├── xwiki-api-reference.md
-│   └── presentations/                 # 발표 자료(Marp)
+│   └── xwiki-api-reference.md
 │
 ├── services/                          # 마이크로서비스
 │   ├── viewer/                        # Viewer Service

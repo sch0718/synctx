@@ -14,7 +14,7 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 | `docs/help/` | Viewer 메뉴별 도움말. `scripts/build_motion.py`가 `scripts/motion/help_pages.py`로 그림·글을 생성(직접 고치지 않는다) |
 | `docs/architecture.md` | 상세 아키텍처: 설계 결정, 서비스별 설계, 모듈 구조, Helm Chart, 개발 단계 |
 | `docs/production-service-design.md` | 운영 설계: 보안, .synctx.yaml 스키마, API 스펙, 배포, 관측성, Runbook, 체크리스트 |
-| `docs/reusable-assets.md` | 기존 저장소(markdown_converter, example_system 등)에서 재사용할 자산 목록 |
+| `docs/reusable-assets.md` | 기존 저장소(markdown_converter, example-infra 등)에서 재사용할 자산 목록 |
 | `docs/xwiki-api-reference.md` | XWiki REST API 레퍼런스 (Sync Engine 구현용) |
 | `docs/html-embed-design.md` | 인터랙티브 HTML 임베드(`synctx-html` 블록, Phase 9) 설계 |
 | `docs/viewer-index-design.md` | Viewer 인덱스 페이지(저장소 목록·파일 트리) 초기 설계 기록. 현행 화면은 architecture.md 3.6 |
@@ -64,21 +64,17 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 
 ## 운영 환경 컨텍스트
 
-### 회사 / 시스템
-- **회사**: 금융사
-- **시스템**: 사내 시스템 (금융 폐쇄망)
-- **도메인 패턴**: 운영 `*.corp.example.com` `*.dev.example.com`, 로컬 `*.synctx.local`
+### 프로젝트 전제
+- 폐쇄망 금융 환경에서 쓰려고 만든 개인 프로젝트
+- **도메인 패턴**: 운영 `*.corp.example.com`(예시), 로컬 `*.synctx.local`
 
 ### 서버 환경
 - **OS**: Oracle Linux 9 (x86_64/amd64)
 - **K8s**: Kubespray 배포, CRI-O 런타임, kubeVersion >= 1.22.0
-- **클러스터 구성**:
-  - 운영: 여러 노드
-  - 개발: 여러 노드
-  - 추가 클러스터
+- **클러스터 구성**: 운영·개발 클러스터를 나누어 쓴다
 
 ### 이미지 / 레지스트리
-- **내부 레지스트리**: `registry.local:5000` (폐쇄망 전용)
+- **내부 레지스트리**: `registry.local:5000` (예시, 폐쇄망 전용)
 - **이미지 전송**: `pull-and-save-images.sh`로 외부에서 pull → tar 저장 → 폐쇄망 반입 → registry push
 - **베이스 이미지**: `python:3.13.16-slim-trixie` (Debian 13 기반, Alpine 사용 금지). 패치 버전·배포판까지 고정하고, 올릴 때는 Dockerfile 5개와 `requires-python`을 함께 바꾼다
 - **멀티 아키텍처**: Dockerfile은 플랫폼에 종속되지 않게 작성. 로컬(ARM64)과 운영(amd64)에서 동일 Dockerfile 사용. `--platform` 플래그는 빌드 스크립트에서 환경에 맞게 지정
@@ -96,9 +92,6 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 - **TLS**: cert-manager v1.13.3 + mkcert CA
 - **Monitoring**: Prometheus v2.39.1 + Grafana 9.5.20 (`monitoring` namespace)
 - **Logging (운영)**: EFK Stack — Elasticsearch 7.17.3, Fluent Bit 2.1.10, Kibana 7.17.3
-
-### 참조 프로젝트
-- `example-infra`: 동일 환경의 인프라 설정 참조 프로젝트 (로컬 시뮬레이션 패턴의 원본)
 
 ## 로컬 개발 (minikube)
 
