@@ -1,6 +1,7 @@
 {
   "name": "synctx-pages",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "description": "정적 Viewer 로그인 모드: Cloudflare Pages Functions(로그인·열람 판정·사람 관리)",
   "scripts": {

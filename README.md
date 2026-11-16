@@ -106,6 +106,14 @@
 | [0.2.0](https://github.com/sch0718/synctx/releases/tag/v0.2.0) | 2026-10-03 | **운영 준비.** 로컬 minikube 시뮬레이션, Prometheus 실계측·Alert, CDN 업로드, Viewer 인덱스·브랜치 선택, Marp Mermaid·미리보기, Slides 인덱스 |
 | [0.1.0](https://github.com/sch0718/synctx/releases/tag/v0.1.0) | 2026-06-20 | **Phase 1–7 핵심 구현.** 공통 라이브러리, Viewer·CDN·Marp·Slides·Draw.io, Sync Engine(XWiki·OpenProject), 관측성, Harness Validator, Outbound Feedback |
 
+## 라이선스
+
+소스를 공개한 비상업 라이선스 PolyForm Noncommercial 1.0.0([LICENSE](LICENSE))을 적용하며, OSI가 승인한 오픈소스 라이선스는 아닙니다.
+개인·비상업 용도로 쓰고 고칠 수 있습니다.
+상업적 이용은 별도로 문의해 주세요.
+재배포할 때는 LICENSE의 `Required Notice:` 줄을 함께 전달해야 합니다.
+함께 쓰는 서드파티 라이브러리 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 참고해 주세요.
+
 ## 개발자용
 
 - [개발 문서](docs/development.md) — 프로젝트 배경, 아키텍처 다이어그램, 서비스 구성, 배포 방식, 서비스별 기능, 동기화 흐름, 프로젝트 구조, 기술 스택
