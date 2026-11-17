@@ -5,6 +5,7 @@
   var core = window.SynctxViewerCore;
   var RECENT_KEY = 'synctx-recent';
   var THEME_KEY = 'synctx-theme';
+  var NAV_WIDTH_KEY = 'synctx-nav-width';
   var MEETING_GUIDE_KEY = 'synctx-meeting-guide';
   var SUCCESS_TOAST_MS = 8000;
 
@@ -14,6 +15,7 @@
   // 사생활 보호 모드 등에서 저장소 접근이 예외를 던져도 화면은 동작해야 한다
   function storageGet(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
   function storageSet(key, value) { try { window.localStorage.setItem(key, value); } catch (e) { return; } }
+  function storageRemove(key) { try { window.localStorage.removeItem(key); } catch (e) { return; } }
 
   function escapeHtml(text) {
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -205,6 +207,75 @@
     syncNavMode();
     DRAWER.addEventListener('change', syncNavMode);
     WIDE.addEventListener('change', syncNavMode);
+  }
+
+  function initNavResize() {
+    var handle = $('[data-action="nav-resize"]');
+    var nav = $('#shell-nav');
+    if (!handle || !nav) return;
+    var preferredWidth = core.parseNavWidth(storageGet(NAV_WIDTH_KEY));
+    var width;
+    var pointerId = null;
+    var moved = false;
+    function tocVisible() { return !!$('.shell-toc') && window.innerWidth >= 1100; }
+    function applyWidth() {
+      width = core.clampNavWidth(preferredWidth, window.innerWidth, tocVisible());
+      document.documentElement.style.setProperty('--shell-nav-w', width + 'px');
+      handle.setAttribute('aria-valuenow', String(width));
+      handle.setAttribute('aria-valuemin', String(core.NAV_WIDTH.min));
+      handle.setAttribute('aria-valuemax', String(core.navWidthMax(window.innerWidth, tocVisible())));
+    }
+    function updateWidth(value) {
+      preferredWidth = core.clampNavWidth(value, window.innerWidth, tocVisible());
+      applyWidth();
+    }
+    function finishDrag(e) {
+      if (pointerId === null || e.pointerId !== pointerId) return;
+      var id = pointerId;
+      pointerId = null;
+      handle.classList.remove('is-dragging');
+      document.body.classList.remove('nav-resizing');
+      if (handle.hasPointerCapture(id)) handle.releasePointerCapture(id);
+      if (moved) storageSet(NAV_WIDTH_KEY, String(width));
+    }
+    handle.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0 || pointerId !== null) return;
+      handle.setPointerCapture(e.pointerId);
+      pointerId = e.pointerId;
+      moved = false;
+      handle.classList.add('is-dragging');
+      document.body.classList.add('nav-resizing');
+      handle.focus();
+      e.preventDefault();
+    });
+    handle.addEventListener('pointermove', function (e) {
+      if (pointerId === null || e.pointerId !== pointerId) return;
+      moved = true;
+      updateWidth(e.clientX - nav.getBoundingClientRect().left);
+    });
+    handle.addEventListener('pointerup', finishDrag);
+    handle.addEventListener('pointercancel', finishDrag);
+    handle.addEventListener('lostpointercapture', finishDrag);
+    handle.addEventListener('keydown', function (e) {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      var step = e.shiftKey ? 64 : 16;
+      var value;
+      if (e.key === 'ArrowLeft') value = width - step;
+      else if (e.key === 'ArrowRight') value = width + step;
+      else if (e.key === 'Home') value = core.NAV_WIDTH.min;
+      else if (e.key === 'End') value = core.navWidthMax(window.innerWidth, tocVisible());
+      else return;
+      e.preventDefault();
+      updateWidth(value);
+      storageSet(NAV_WIDTH_KEY, String(width));
+    });
+    handle.addEventListener('dblclick', function () {
+      preferredWidth = core.NAV_WIDTH.default;
+      applyWidth();
+      storageRemove(NAV_WIDTH_KEY);
+    });
+    window.addEventListener('resize', applyWidth);
+    applyWidth();
   }
 
   /* ── 파일 트리 ── */
@@ -1090,6 +1161,7 @@
   initSelects();
   loadBranches();
   initNav();
+  initNavResize();
   initClicks();
   initRender();
   initEmbedExpand();

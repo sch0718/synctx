@@ -57,6 +57,15 @@ _THEME_BOOT_ATTR = (
     "<script>(function(){try{var s=localStorage.getItem('synctx-theme');"
     "if(s)document.documentElement.setAttribute('data-theme',s);}catch(e){}})();</script>"
 )
+_NAV_WIDTH_BOOT = (
+    "<script>(function(){try{var v=Number(localStorage.getItem('synctx-nav-width'));"
+    "if(isFinite(v)&&v>=200&&v<=600)document.documentElement.style.setProperty('--shell-nav-w',v+'px');"
+    "}catch(e){}})();</script>"
+)
+NAV_RESIZER = (
+    '<div class="nav-resizer" role="separator" aria-orientation="vertical" aria-label="파일 트리 너비 조절" '
+    'aria-controls="shell-nav" tabindex="0" data-action="nav-resize"></div>'
+)
 
 
 def _shortcuts_dialog(meeting_guide: bool) -> str:
@@ -191,6 +200,7 @@ def page(*, view_prefix, title, theme, header, body, repo_id="", ref="", page_cl
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{esc(title)} - synctx</title>
 {boot}
+{_NAV_WIDTH_BOOT}
 <style>{THEME_VARS_CSS}</style>
 <link rel="icon" type="image/svg+xml" href="{vp}/static/favicon.svg">
 {head_extra}

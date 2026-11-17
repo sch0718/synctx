@@ -3,6 +3,38 @@ import assert from 'node:assert/strict';
 import '../../src/static/viewer-core.js';
 
 const core = globalThis.SynctxViewerCore;
+
+test('파일 트리 최대 너비는 본문과 보이는 목차의 공간을 남긴다', () => {
+  assert.equal(core.navWidthMax(1600, true), 600);
+  assert.equal(core.navWidthMax(1100, true), 480);
+  assert.equal(core.navWidthMax(1099, false), 600);
+  assert.equal(core.navWidthMax(900, false), 500);
+  assert.equal(core.navWidthMax(768, false), 368);
+  assert.equal(core.navWidthMax(400, true), 200);
+});
+
+test('파일 트리 너비는 유한한 숫자를 화면 범위 안의 정수로 자른다', () => {
+  assert.equal(core.clampNavWidth(199, 1600, false), 200);
+  assert.equal(core.clampNavWidth(601, 1600, false), 600);
+  assert.equal(core.clampNavWidth(550, 1100, true), 480);
+  assert.equal(core.clampNavWidth(550, 1099, false), 550);
+  assert.equal(core.clampNavWidth(500, 900, false), 500);
+  assert.equal(core.clampNavWidth(280.6, 1600, false), 281);
+  for (const value of [null, undefined, '', '350', NaN, Infinity, -Infinity]) {
+    assert.equal(core.clampNavWidth(value, 1600, false), 280);
+  }
+  assert.equal(core.clampNavWidth(NaN, 500, false), 200);
+});
+
+test('저장된 파일 트리 너비는 200부터 600까지의 유한한 숫자 문자열만 받는다', () => {
+  for (const [raw, expected] of [['200', 200], ['600', 600], ['280.5', 280.5], [' 350 ', 350]]) {
+    assert.equal(core.parseNavWidth(raw), expected);
+  }
+  for (const raw of [null, undefined, 280, '', ' ', '199', '601', 'NaN', 'Infinity', '-Infinity', '280px', '{bad']) {
+    assert.equal(core.parseNavWidth(raw), null);
+  }
+});
+
 const PATHS = [
   'README.md',
   '회의/팀문서/2026-10-14_DX_팀문서_회의/DX_팀문서_회의_20261014.md',

@@ -978,6 +978,7 @@ def view_repo(repo_id: str, ref: str | None = None, path: str | None = None):
     <div class="tree" id="file-tree"{expand_attr}>{tree_html}</div>
     {RECENT_SECTION}
   </nav>
+  {ui.NAV_RESIZER}
   <div class="nav-backdrop" data-action="close-nav" hidden></div>
   <main id="main" class="viewer-content" tabindex="-1">
     <div class="breadcrumb"><a href="{VIEW_PREFIX}/">저장소</a><span aria-hidden="true">/</span><span class="current">{ui.esc(repo.name)}{ref_display}</span></div>
@@ -1358,6 +1359,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
     </div>
     <div class="nav-panel" data-nav-panel="toc" hidden></div>
   </nav>
+  {ui.NAV_RESIZER}
   <div class="nav-backdrop" data-action="close-nav" hidden></div>
   <main id="main" class="viewer-content" tabindex="-1">
     <div class="doc-head">
