@@ -1049,7 +1049,9 @@
       }
     }
     function open(e, reply) {
-      var href = core.renderDocHref(VIEW_PREFIX, ACTIVE_REPO, ACTIVE_REF, e.data.path, !!e.data.newWindow);
+      var newWindow = !!e.data.newWindow;
+      var href = (newWindow && /\.html?$/i.test(String(e.data.path)) && core.renderOpenHref(frame.src, VIEW_PREFIX, ACTIVE_REPO, e.data.path)) ||
+        core.renderDocHref(VIEW_PREFIX, ACTIVE_REPO, ACTIVE_REF, e.data.path, newWindow);
       if (!href) { reply({ type: 'synctx:open-result', error: '열 수 없는 문서 경로입니다' }); return; }
       if (!activated()) { reply({ type: 'synctx:open-result', error: '문서는 누를 때만 열 수 있습니다' }); return; }
       if (!e.data.newWindow) {
@@ -1062,12 +1064,22 @@
       win.opener = null;
       reply({ type: 'synctx:open-result', ok: true });
     }
+    function openUrl(e, reply) {
+      var href = core.externalHref(e.data.url);
+      if (!href) { reply({ type: 'synctx:open-url-result', error: '열 수 없는 주소입니다(https://github.com 만 열 수 있습니다)' }); return; }
+      if (!activated()) { reply({ type: 'synctx:open-url-result', error: '주소는 누를 때만 열 수 있습니다' }); return; }
+      var win = window.open(href, '_blank');
+      if (!win) { reply({ type: 'synctx:open-url-result', error: '브라우저가 새 창을 막았습니다. 이 사이트의 팝업을 허용해 주세요' }); return; }
+      win.opener = null;
+      reply({ type: 'synctx:open-url-result', ok: true });
+    }
     window.addEventListener('message', function (e) {
       if (e.source !== frame.contentWindow || !e.data || typeof e.data !== 'object') return;
       var source = e.source;
       function reply(message) { try { source.postMessage(message, '*'); } catch (err) { /* 프레임이 이미 바뀜 */ } }
       if (e.data.type === 'synctx:render-refresh') refresh(e, reply);
       else if (e.data.type === 'synctx:open') open(e, reply);
+      else if (e.data.type === 'synctx:open-url') openUrl(e, reply);
     });
   }
 

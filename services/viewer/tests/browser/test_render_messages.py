@@ -67,12 +67,30 @@ def test_open_request_new_window_and_rejects_bad_paths(viewer_server, page):
 
 
 
-def test_open_request_new_window_html_opens_standalone_render(viewer_server, page):
+def test_open_request_new_window_html_opens_file_itself(viewer_server, page):
     element, frame = _render(viewer_server, page)
     frame.evaluate(INSTALL_BUTTON, ["synctx:open", {"path": "/motion/index.html", "newWindow": True}])
     with page.context.expect_page() as opened:
         frame.locator("#send").click()
     popup = opened.value
     popup.wait_for_load_state()
-    assert popup.url == f"{viewer_server.base_url}/view/{viewer_server.repo_id}/motion/index.html?mode=render&layout=full"
-    assert popup.get_attribute("[data-html-render]", "data-render-full") == "true"
+    assert f"/view/open/" in popup.url and popup.url.endswith(f"/{viewer_server.repo_id}/motion/index.html")
+    assert popup.locator("[data-render-frame]").count() == 0
+    popup.get_by_role("button", name="증가").wait_for()
+    assert popup.evaluate("window.opener") is None
+
+
+def test_open_url_opens_only_github_in_new_window(viewer_server, page):
+    page.context.route("https://github.com/**", lambda r: r.fulfill(body="<title>gh</title>", content_type="text/html"))
+    element, frame = _render(viewer_server, page)
+    frame.evaluate(INSTALL_BUTTON, ["synctx:open-url", {"url": "https://github.com/o/r/pull/1"}])
+    with page.context.expect_page() as opened:
+        frame.locator("#send").click()
+    popup = opened.value
+    popup.wait_for_load_state()
+    assert popup.url == "https://github.com/o/r/pull/1"
+    frame.evaluate("document.getElementById('send').remove()")
+    frame.evaluate(INSTALL_BUTTON, ["synctx:open-url", {"url": "https://evil.example/x"}])
+    frame.locator("#send").click()
+    frame.wait_for_function("() => window.replies.some(r => r.type === 'synctx:open-url-result')")
+    assert [r for r in frame.evaluate("window.replies") if r["type"] == "synctx:open-url-result"][-1]["error"]

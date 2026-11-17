@@ -878,6 +878,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | GET | `/search?q=&repo=&ref=&ref_repo=` | viewer | 본문 검색 결과 HTML 페이지(`search`는 예약 경로) |
 | GET | `/api/repos/{repo_id}/render?ref=&path=&theme=&mode=` | viewer | Markdown HTML 렌더링 |
 | GET | `/render/{token}/{repo_id}/{path}` | viewer + 렌더 토큰 | iframe 전용 HTML 합본. 상대 링크도 같은 토큰 SHA 사용. 공개 주소는 `/view/render/…` |
+| GET | `/open/{token}/{repo_id}/{path}` | viewer + 렌더 토큰 | 실행 화면이 새 창으로 여는 저장소 파일을 합본 없이 그대로 응답(HTML·CSS·JS·그림·글꼴은 각 형식, 그 밖은 octet-stream). 헤더는 `/render`와 같은 `sandbox allow-scripts`·`no-referrer`·`nosniff`·`no-store`. 공개 주소는 `/view/open/…` |
 | GET | `/raw/{repo_id}/{path}?ref=` | viewer | 원본 파일. png·jpg·gif·webp·svg는 그 이미지 형식, 나머지는 `application/octet-stream`. SVG에는 스크립트를 막는 CSP(`default-src 'none'; style-src 'unsafe-inline'; sandbox`)와 `nosniff` |
 | GET | `/api/repos/{repo_id}/download?path=&format=raw\|html\|pdf&ref=` | viewer | 원본·변환 다운로드(기본 `raw`, `pdf`는 Marp 호출) |
 | GET | `/api/repos/{repo_id}/meeting-export?path=&theme=` | viewer | 회의 메모 포함 HTML 틀(오프라인, 메모 없음, 근거 모음·말풍선 포함). 회의 모드 조건 불충족 404 |

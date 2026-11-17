@@ -1782,3 +1782,49 @@ class TestHtmlRenderScreen:
         assert response.status_code == 200
         assert "frame-src 'none'" in response.headers["Content-Security-Policy"]
         assert response.headers["X-Frame-Options"] == "DENY"
+
+
+class TestHtmlOpenRoute:
+    def _url(self, env, path="docs/index.html"):
+        return f"/open/{env.token}/test-repo/{path}"
+
+    def test_html_is_served_as_is_with_sandbox_headers_and_no_bundle_limit(self, html_render):
+        env = html_render
+        env.manager.blob_size_resolved.return_value = 50 * 1024 * 1024
+        response = env.client.get(self._url(env), headers={"Sec-Fetch-Dest": "document"})
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        _assert_render_headers(response)
+        assert response.content == env.files["docs/index.html"]
+        env.manager.ensure_commit_available.assert_called_once_with("main", RENDER_SHA)
+        env.manager.read_resolved.assert_called_once_with("docs/index.html", RENDER_SHA)
+
+    @pytest.mark.parametrize("path,ctype", [("docs/app.js", "text/javascript"), ("docs/next.htm", "text/html")])
+    def test_relative_resources_use_their_own_types(self, html_render, path, ctype):
+        env = html_render
+        response = env.client.get(self._url(env, path), headers={"Sec-Fetch-Dest": "script"})
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(ctype)
+        _assert_render_headers(response)
+
+    def test_rejects_bad_token_disabled_repo_and_escape(self, html_render):
+        from synctx_common.render_token import issue_render_token
+
+        env = html_render
+        assert env.client.get(f"/open/bad/test-repo/docs/index.html").status_code == 403
+        expired = issue_render_token("test-repo", "main", RENDER_SHA, key=env.app.render_key, now=1, ttl_seconds=1)
+        assert env.client.get(f"/open/{expired}/test-repo/docs/index.html").status_code == 403
+        assert env.client.get(f"/open/{env.token}/other/docs/index.html").status_code == 403
+        assert env.client.get(f"/open/{env.token}/test-repo/../x/index.html").status_code in (400, 403, 404)
+        assert env.client.get(f"/open/{env.token}/test-repo/docs/%2e%2e/%2e%2e/x.html").status_code in (400, 404)
+        env.manager.read_resolved.assert_not_called()
+        env.policy.render_files = False
+        response = env.client.get(self._url(env))
+        assert response.status_code == 403
+        _assert_render_headers(response)
+
+    def test_missing_file_is_404(self, html_render):
+        env = html_render
+        response = env.client.get(self._url(env, "docs/none.css"))
+        assert response.status_code == 404
+        _assert_render_headers(response)

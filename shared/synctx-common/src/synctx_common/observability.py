@@ -182,6 +182,11 @@ def _normalize_path(path: str, route=None) -> str:
         "/view/render/{token}/{repo_id}/{path:path}",
     ):
         return "/render/{token}/{repo_id}/{path}"
+    if getattr(route, "path", None) in (
+        "/open/{token}/{repo_id}/{path:path}",
+        "/view/open/{token}/{repo_id}/{path:path}",
+    ):
+        return "/open/{token}/{repo_id}/{path}"
     parts = path.strip("/").split("/")
     normalized = []
     for i, part in enumerate(parts):

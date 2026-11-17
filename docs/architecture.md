@@ -367,7 +367,7 @@ GET /raw/{id}/{path}                원본 파일(이미지 등 본문이 참조
 POST /api/repos/{id}/webhook        Git push 알림
 ```
 
-렌더 보기: `GET /render/{token}/{repo_id}/{path}`는 렌더 화면 iframe 전용이며, `/view/{repo_id}/{path}?mode=render&layout=full`은 새 탭 화면이다. 토큰은 권한·두 플래그를 확인한 Viewer 화면 생성 함수에서 발급하며 이를 공유하는 `render_file` API 응답에도 실릴 수 있다. 토큰 전용 발급 API는 두지 않는다. 실행 화면은 iframe의 `postMessage`로 갱신 확인(`GET /api/repos/{repo_id}/head`로 SHA 비교 후 화면 새로 고침)과 같은 저장소 문서 열기를 받는다(`html-embed-design.md` 14.13).
+렌더 보기: `GET /render/{token}/{repo_id}/{path}`는 렌더 화면 iframe 전용이며, `/view/{repo_id}/{path}?mode=render&layout=full`은 새 탭 화면이다. 토큰은 권한·두 플래그를 확인한 Viewer 화면 생성 함수에서 발급하며 이를 공유하는 `render_file` API 응답에도 실릴 수 있다. 토큰 전용 발급 API는 두지 않는다. 실행 화면은 iframe의 `postMessage`로 갱신 확인(`GET /api/repos/{repo_id}/head`로 SHA 비교 후 화면 새로 고침)과 같은 저장소 문서 열기, GitHub 주소 새 창 열기를 받는다(`html-embed-design.md` 14.13). 새 창으로 여는 HTML은 같은 토큰의 `GET /open/{token}/{repo_id}/{path}`가 파일을 합치지 않고 그대로(크기 상한 없음, CSS·JS·그림은 각 형식으로) `/render`와 같은 sandbox 헤더로 내보낸다.
 
 `/raw/`는 png·jpg·gif·webp·svg를 그 이미지 형식으로, 나머지는 `application/octet-stream`으로 준다. 저장소의 SVG는 스크립트를 담을 수 있으므로 `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`와 `X-Content-Type-Options: nosniff`를 붙여 주소를 직접 열어도 실행되지 않게 한다.
 

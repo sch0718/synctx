@@ -13,7 +13,7 @@ _SECRET_PATTERN = re.compile(
     r"(token|password|secret|api_key|credential|auth)[=:]\s*\S+",
     re.IGNORECASE,
 )
-_RENDER_TOKEN_PATTERN = re.compile(r'''(/render/)[^/\s?"'<>\\]+''')
+_RENDER_TOKEN_PATTERN = re.compile(r'''(/(?:render|open)/)[^/\s?"'<>\\]+''')
 
 
 def _mask_render_tokens(value: str) -> str:

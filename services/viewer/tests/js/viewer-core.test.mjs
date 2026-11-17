@@ -474,3 +474,22 @@ test('렌더 프레임이 연 문서 주소는 같은 저장소 안의 보기 �
     assert.equal(core.renderDocHref('/view', 'r', '', value), null, String(value));
   }
 });
+
+
+test('새 탭 HTML 원본 주소는 실행 화면 토큰으로 만든 /open 주소다', () => {
+  const frame = 'http://127.0.0.1:18001/view/render/v1.9.bWFpbg.' + 'a'.repeat(40) + '.sig/work-wiki/html/work/x.html';
+  assert.equal(core.renderOpenHref(frame, '/view', 'work-wiki', '/references/html/a b.html'),
+    '/view/open/v1.9.bWFpbg.' + 'a'.repeat(40) + '.sig/work-wiki/references/html/a%20b.html');
+  assert.equal(core.renderOpenHref(frame, '/view', 'work-wiki', '/a/../b.html'), null);
+  assert.equal(core.renderOpenHref('http://h/view/other/x', '/view', 'work-wiki', '/a.html'), null);
+  assert.equal(core.renderOpenHref('', '/view', 'work-wiki', '/a.html'), null);
+});
+
+test('바깥 주소는 https GitHub 만 연다', () => {
+  assert.equal(core.externalHref('https://github.com/o/r/pull/1'), 'https://github.com/o/r/pull/1');
+  assert.equal(core.externalHref('https://github.com/o/r/pull/1/files#discussion_r9'), 'https://github.com/o/r/pull/1/files#discussion_r9');
+  for (const bad of [undefined, 3, '', 'http://github.com/o', 'https://github.com.evil.io/x', 'https://evil.io/github.com',
+    'https://u:p@github.com/x', 'javascript:alert(1)', '//github.com/x', 'https://gist.github.com/x', 'x'.repeat(5000)]) {
+    assert.equal(core.externalHref(bad), null, String(bad));
+  }
+});

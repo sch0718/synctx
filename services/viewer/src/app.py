@@ -115,7 +115,7 @@ async def csp_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception:
-        if getattr(request.scope.get("route"), "endpoint", None) is not render_html:
+        if getattr(request.scope.get("route"), "endpoint", None) not in (render_html, open_file):
             raise
         logger.exception("html_render_failed")
         response = JSONResponse(status_code=500, content={"detail": "HTML을 불러오지 못했습니다"})
@@ -123,7 +123,7 @@ async def csp_middleware(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store"
     if static:
         response.headers["Cache-Control"] = "no-cache"
-    if getattr(request.scope.get("route"), "endpoint", None) is render_html:
+    if getattr(request.scope.get("route"), "endpoint", None) in (render_html, open_file):
         response.headers.update({
             "Content-Security-Policy": "sandbox allow-scripts",
             "Referrer-Policy": "no-referrer",
@@ -720,7 +720,7 @@ async def search_documents(q: str | None = None, repo: str | None = None, ref: s
 
 # ── View Routes ──
 
-RESERVED_PATHS = {"api", "raw", "render", "static", "search", "meetings", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
+RESERVED_PATHS = {"api", "raw", "render", "open", "static", "search", "meetings", "healthz", "readyz", "version", "metrics", "docs", "openapi.json", "redoc"}
 
 
 def _repo_known(repo_id: str) -> bool:
@@ -1609,6 +1609,43 @@ def render_html(request: Request, token: str, repo_id: str, path: str) -> HTMLRe
         return _render_html_error(status, f"HTML을 불러오지 못했습니다: {exc}")
     count("ok")
     return HTMLResponse(content=result.html)
+
+
+OPEN_FILE_TYPES = {
+    ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
+    ".json": "application/json", ".txt": "text/plain; charset=utf-8", ".woff": "font/woff", ".woff2": "font/woff2",
+    ".ttf": "font/ttf", ".otf": "font/otf", ".pdf": "application/pdf", **RAW_IMAGE_TYPES,
+}
+
+
+# 렌더 토큰으로 저장소 파일을 합치지 않고 그대로 내보낸다. 실행 화면이 HTML 을 새 탭에서 열 때 쓰며,
+# 합본이 아니므로 크기 상한이 없고 HTML 이 상대 경로로 부르는 CSS·JS·그림도 이 경로로 받는다.
+@app.get("/open/{token}/{repo_id}/{path:path}")
+def open_file(request: Request, token: str, repo_id: str, path: str) -> Response:
+    verify_viewer_access(request.headers.get("X-Forwarded-Groups", ""))
+    try:
+        ref, sha = verify_render_token(token, repo_id, key=render_key, previous_key=render_previous_key)
+        if not _repo_known(repo_id):
+            raise RenderTokenError("알 수 없는 저장소입니다")
+    except RenderTokenError as exc:
+        return _render_html_error(403, "유효 시간이 지났습니다. 원래 Viewer 화면을 새로 고친 뒤 다시 여세요"
+                                  if "만료" in str(exc) else "문서 주소 또는 토큰이 유효하지 않습니다. 원래 Viewer 화면에서 다시 여세요")
+    policy = _html_embed_policy(repo_id)
+    if not policy.enabled or not policy.render_files:
+        return _render_html_error(403, "이 저장소는 HTML 렌더링이 허용되지 않습니다")
+    manager = get_repo_manager(repo_id)
+    try:
+        path = manager.validate_path(path)
+    except ValueError:
+        return _render_html_error(400, "유효하지 않은 문서 경로입니다")
+    try:
+        manager.ensure_commit_available(ref, sha)
+        content = manager.read_resolved(path, sha)
+    except (FileNotFoundError, subprocess.CalledProcessError, KeyError):
+        return _render_html_error(404, "파일을 찾을 수 없습니다")
+    media_type = OPEN_FILE_TYPES.get(PurePosixPath(path).suffix.lower(), "application/octet-stream")
+    return Response(content=content, media_type=media_type)
 
 
 # catch-all이므로 다른 모든 라우트 뒤에 등록해야 한다.

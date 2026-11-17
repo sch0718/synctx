@@ -133,6 +133,8 @@ def test_render_path_normalization_uses_route_instead_of_url():
     assert _normalize_path("/unrelated", SimpleNamespace(path="/render/{token}/{repo_id}/{path:path}")) == "/render/{token}/{repo_id}/{path}"
     assert _normalize_path("/unrelated", SimpleNamespace(path="/view/render/{token}/{repo_id}/{path:path}")) == "/render/{token}/{repo_id}/{path}"
     assert _normalize_path("/render/help", SimpleNamespace(path="/{repo_id}/{path:path}")) == "/render/help"
+    assert _normalize_path("/x", SimpleNamespace(path="/open/{token}/{repo_id}/{path:path}")) == "/open/{token}/{repo_id}/{path}"
+    assert _normalize_path("/x", SimpleNamespace(path="/view/open/{token}/{repo_id}/{path:path}")) == "/open/{token}/{repo_id}/{path}"
 
 
 def test_html_render_metric_has_only_bounded_result_and_repo_labels():

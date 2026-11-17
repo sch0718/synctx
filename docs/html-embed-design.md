@@ -596,7 +596,7 @@ Docker Compose는 `deploy/docker/compose.yaml`의 Viewer 환경변수와 `script
 
 메트릭은 `synctx_html_render_total{repo_id, result}`다. `result`는 `ok`, `denied_token`, `denied_dest`, `disabled`, `not_html`, `too_large`, `bundle_error`다. `too_large`는 합본 전 `blob_size_resolved` 사전 검사에서 거부한 413, `bundle_error`는 합본 중 오류(크기 초과 포함)다. `/render` 응답 결과를 세며 화면의 토큰 발급은 세지 않는다. 알 수 없는 `repo_id`는 고정값 `unknown`으로 묶고 토큰·SHA·문서 경로는 라벨에 넣지 않는다.
 
-접근 로그와 앱 로그의 `/render/` 다음 세그먼트를 가린다. 공개 `/view/render/`도 포함하고, 성공·실패·예외·text/JSON 출력 모두에 적용한다. `uvicorn.access`의 인자형 URL도 가리며 현재 로그 레벨을 낮춰 둔 것만으로 대체하지 않는다. 현행 `SynctxJsonFormatter`의 키=값 마스킹은 경로 토큰을 가리지 못한다. 기존 HTTP 메트릭 `_normalize_path`도 이 경로를 처리하지 않으므로 `scope["route"]`·응답 표식을 기준으로 `/render/{token}/{repo_id}/{path}` 고정 라벨로 정규화한다. 로그 식별도 같은 기준과 마운트 정보를 사용하고 접근 로그의 원문 URL도 가린다. 경로 문자열 하나만 가정하지 않으며 standalone `/view/render/…`·K8s `/render/…` 모두 토큰 유출·카디널리티 증가를 막는다.
+접근 로그와 앱 로그의 `/render/`·`/open/` 다음 세그먼트를 가린다. 공개 `/view/render/`·`/view/open/`도 포함하고, 성공·실패·예외·text/JSON 출력 모두에 적용한다. `uvicorn.access`의 인자형 URL도 가리며 현재 로그 레벨을 낮춰 둔 것만으로 대체하지 않는다. 현행 `SynctxJsonFormatter`의 키=값 마스킹은 경로 토큰을 가리지 못한다. 기존 HTTP 메트릭 `_normalize_path`도 이 경로를 처리하지 않으므로 `scope["route"]`·응답 표식을 기준으로 `/render/{token}/{repo_id}/{path}` 고정 라벨로 정규화한다. 로그 식별도 같은 기준과 마운트 정보를 사용하고 접근 로그의 원문 URL도 가린다. 경로 문자열 하나만 가정하지 않으며 standalone `/view/render/…`·K8s `/render/…` 모두 토큰 유출·카디널리티 증가를 막는다.
 
 인그레스·EFK에 남는 토큰은 위험을 알리고 수용한다. `no-referrer`는 이미 기록된 로그를 지우지 않는다. `denied_token` 증가는 만료·키 불일치 Runbook으로, `denied_dest`는 브라우저·프록시의 헤더 전달 확인으로 연결한다. 신규 Alert 임계값은 운영 확인 뒤 정하며 이 설계에서 확정하지 않는다.
 
@@ -664,7 +664,8 @@ Chromium spike는 설계 근거이며 구현 후 수용 시험은 별도로 수�
 | 메시지 | 바깥 화면의 처리 | 응답 |
 |---|---|---|
 | `{type: "synctx:render-refresh", hash}` | `GET /api/repos/{repo_id}/head?ref=`로 선택 ref의 최신 SHA를 읽어 화면의 `data-render-sha`와 비교한다. 다르면 `hash`(허용 문자·512자 이하만, `renderFrameHash`)를 `sessionStorage`에 경로와 함께 두고 바깥 화면을 새로 고친다. 새 화면은 그 해시를 iframe 주소에 붙인다. 5초 안의 반복 요청은 확인하지 않고 `changed: false`로 답한다 | `{type: "synctx:render-refresh-result", changed}` 또는 `{…, error}` |
-| `{type: "synctx:open", path, newWindow}` | `path`가 저장소 루트 기준 `/…` 경로(빈·`.`·`..` 조각, `\`·`?`·`#`·제어 문자 없음, 1024자 이하, `renderDocHref`)이고 바깥 화면에 사용자 활성화(`navigator.userActivation.isActive`)가 있을 때만 같은 저장소·ref의 Viewer 보기 주소(`.html`은 `mode=render`, `newWindow`면 탐색 틀 없는 `layout=full`도 붙여 「새 탭」 버튼과 같은 단독 화면)로 바깥 화면을 옮기거나 새 창을 연다(`opener` 끊음) | `{type: "synctx:open-result", ok}` 또는 `{…, error}` |
+| `{type: "synctx:open", path, newWindow}` | `path`가 저장소 루트 기준 `/…` 경로(빈·`.`·`..` 조각, `\`·`?`·`#`·제어 문자 없음, 1024자 이하, `renderDocHref`)이고 바깥 화면에 사용자 활성화(`navigator.userActivation.isActive`)가 있을 때만 같은 저장소·ref의 Viewer 보기 주소(`.html`은 `mode=render`)로 바깥 화면을 옮기거나 새 창을 연다(`opener` 끊음). `newWindow`인 `.html`·`.htm`은 실행 화면 iframe 주소의 토큰으로 만든 `/open/{token}/{repo_id}/{path}`(합본 없이 파일 그대로, `renderOpenHref`)를 새 창으로 열고, 토큰을 읽지 못하면 `mode=render&layout=full`로 연다 | `{type: "synctx:open-result", ok}` 또는 `{…, error}` |
+| `{type: "synctx:open-url", url}` | `url`이 `https://github.com/…`(사용자 정보·포트 없음, 2048자 이하, `externalHref`)이고 사용자 활성화가 있을 때만 새 창으로 연다(`opener` 끊음). 다른 호스트는 거부한다 | `{type: "synctx:open-url-result", ok}` 또는 `{…, error}` |
 
 - 토큰 발급은 그대로 화면 생성 함수에서만 한다. `head` API는 SHA만 돌려주고 토큰을 발급하지 않는다. 최신 커밋이 있으면 원래 화면을 새로 고쳐 새 토큰을 받는다(만료 뒤 안내와 같은 절차).
 - 문서 열기는 iframe에 `allow-top-navigation`·`allow-popups`를 주는 대신 바깥 화면이 같은 저장소 문서 보기 주소로만 대신 이동한다. 외부 주소·다른 저장소·`/raw`·`/render`로는 이동하지 않는다. iframe 안의 클릭이 바깥 화면에도 사용자 활성화를 주는 브라우저(Chromium의 User Activation v2)에서 동작하며, 다른 브라우저는 미확인이다.
