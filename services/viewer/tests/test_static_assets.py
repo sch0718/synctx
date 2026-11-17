@@ -453,3 +453,19 @@ def test_jitsi_and_memo_panels_share_space_on_desktop_and_mobile():
     memo_z = int(re.search(r'z-index: (\d+)', _rule(memo_css, '.meeting-panel')).group(1))
     assert memo_z < video_z < 1100
     assert 'outline:' in _rule(css, '.jitsi-panel :focus-visible, .jitsi-join:focus-visible')
+
+
+@pytest.mark.parametrize("name", ["viewer.js", "viewer-core.js", "viewer.css", "meeting/meeting.js"])
+def test_static_files_are_revalidated_every_load(client, name):
+    resp = client.get(f"/static/{name}")
+    assert resp.headers["cache-control"] == "no-cache"
+    again = client.get(f"/static/{name}", headers={"If-None-Match": resp.headers["etag"]})
+    assert again.status_code == 304
+
+
+def test_static_revalidation_applies_under_view_mount():
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+    import app as viewer_app
+    outer = TestClient(Starlette(routes=[Mount("/view", app=viewer_app.app)]))
+    assert outer.get("/view/static/viewer.js").headers["cache-control"] == "no-cache"
