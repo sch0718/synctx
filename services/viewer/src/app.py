@@ -111,6 +111,7 @@ register_observability_routes(app, version=__version__, service_name="viewer", r
 
 @app.middleware("http")
 async def csp_middleware(request: Request, call_next):
+    static = request.scope["path"][len(request.scope.get("root_path", "")):].startswith("/static/")
     try:
         response = await call_next(request)
     except Exception:
@@ -120,6 +121,8 @@ async def csp_middleware(request: Request, call_next):
         response = JSONResponse(status_code=500, content={"detail": "HTML을 불러오지 못했습니다"})
     if getattr(request.scope.get("route"), "endpoint", None) is meeting_jitsi:
         response.headers["Cache-Control"] = "no-store"
+    if static:
+        response.headers["Cache-Control"] = "no-cache"
     if getattr(request.scope.get("route"), "endpoint", None) is render_html:
         response.headers.update({
             "Content-Security-Policy": "sandbox allow-scripts",
