@@ -219,7 +219,7 @@ Docker 캐시는 기본 이름 `synctx-viewer-cache`인 볼륨에 남으며 Ctrl
 - **회의 대시보드** — 저장소 전체 회의를 `/view/meetings`에서 상태·저장소·채널·발표자·기간으로 보고, 같은 폴더의 `<문서명>.memo.md`를 커밋하면 결정사항·액션 아이템(담당자·기한)을 모아 본다. JSON은 `GET /api/meetings`. `GET /api/meetings/{repo_id}/{meeting_id}/evidence`는 검증된 회의의 근거 제목·경로·링크만 반환하고 발췌·메모는 포함하지 않는다. 서비스 토큰은 회의·하위 근거 목록·검색 API에만 허용하며 근거 참조 대상도 협업 저장소로 제한한다. 근거 API는 읽기 실패·설정에 없는 저장소·토큰 범위 밖 참조의 생략 건수 `omitted`와 `status=partial`을 반환한다. 일반 Viewer 화면의 근거 동작은 유지한다. 메모는 서버에 저장하지 않는다 (Phase 8.1c)
 - **근거 미리보기·근거 모음** — 회의 문서가 인용한 다른 md 문서의 조문·절을 링크 말풍선으로 미리 보고, 문서 끝 근거 모음에서 발췌·인용한 곳·원문 열기로 확인. `synctx.meeting.references` 접두어 매핑으로 다른 저장소의 문서도 가리키며, 메모 포함 HTML에서도 동작 (Phase 8.1b)
 - **인터랙티브 HTML 임베드** — Markdown의 ` ```synctx-html ` 블록이 가리키는 저장소 HTML 묶음(모션 그래픽 등)을 한 파일로 합쳐 sandbox iframe으로 재생. 운영자가 지정한 신뢰 저장소에서만 동작하며, Viewer 화면에서는 `크게 보기`로 iframe을 다시 읽지 않고 키운다 (Phase 9)
-- **HTML 렌더 보기** — `html_embed.enabled`·`render_files`가 모두 켜진 저장소의 `.html`을 `?mode=render`(새 탭은 `layout=full`)로 실행. 화면이 서명 토큰 경로(`/render/{token}/…`, ref·커밋 SHA 고정, 기본 4시간)로 sandbox iframe을 열어 문서 안 상대 링크도 같은 스냅샷으로 연다. 화면 맞춤·비율·전체 화면 지원. 복수 인스턴스는 `SYNCTX_RENDER_SECRET` 공유 필수 (Phase 9)
+- **HTML 렌더 보기** — `html_embed.enabled`·`render_files`가 모두 켜진 저장소의 `.html`을 `?mode=render`(새 탭은 `layout=full`)로 실행. 화면이 서명 토큰 경로(`/render/{token}/…`, ref·커밋 SHA 고정, 기본 4시간)로 sandbox iframe을 열어 문서 안 상대 링크도 같은 스냅샷으로 연다. 화면 맞춤·비율·전체 화면 지원. 실행 화면이 새 창으로 여는 HTML은 `/open/{token}/…`이 원본 파일 그대로(합본·크기 상한 없음) 낸다. 복수 인스턴스는 `SYNCTX_RENDER_SECRET` 공유 필수 (Phase 9)
 
 ## CDN Service (내부 CDN)
 

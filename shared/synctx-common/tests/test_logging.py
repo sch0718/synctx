@@ -108,3 +108,10 @@ def test_uvicorn_own_access_handler_masks_argument_urls(monkeypatch, log_format)
     assert "access-secret" not in output
     assert '/view/render/***/repo/a.html' in output
     assert "200 OK" in output
+
+
+def test_open_route_token_is_masked_like_render():
+    formatter = SynctxJsonFormatter(service_name="viewer")
+    record = logging.LogRecord("viewer", logging.INFO, __file__, 1, "GET %s", ("/view/open/secret-token/repo/a.html",), None)
+    output = formatter.format(record)
+    assert "secret-token" not in output and "/view/open/***/repo/a.html" in output

@@ -306,7 +306,33 @@
       (query.length ? '?' + query.join('&') : '');
   }
 
+  function renderOpenHref(frameSrc, viewPrefix, repo, path) {
+    if (typeof frameSrc !== 'string' || typeof path !== 'string' || path.length > 1024 || path.charAt(0) !== '/') return null;
+    var rel = path.slice(1);
+    if (!rel || /[\u0000-\u001f\u007f\\?#]/.test(rel)) return null;
+    var parts = rel.split('/');
+    if (parts.some(function (part) { return part === '' || part === '.' || part === '..'; })) return null;
+    var pathname = frameSrc.replace(/^[a-z]+:\/\/[^\/]+/i, '');
+    var prefix = viewPrefix + '/render/';
+    if (pathname.indexOf(prefix) !== 0) return null;
+    var token = pathname.slice(prefix.length).split('/')[0];
+    if (!/^[A-Za-z0-9._-]{1,512}$/.test(token)) return null;
+    return viewPrefix + '/open/' + token + '/' + encodeURIComponent(repo) + '/' + parts.map(encodeURIComponent).join('/');
+  }
+
+  var EXTERNAL_HOSTS = ['github.com'];
+
+  function externalHref(url) {
+    if (typeof url !== 'string' || url.length > 2048 || !/^https:\/\//.test(url)) return null;
+    var parsed;
+    try { parsed = new URL(url); } catch (err) { return null; }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) return null;
+    return EXTERNAL_HOSTS.indexOf(parsed.hostname) >= 0 ? parsed.href : null;
+  }
+
   root.SynctxViewerCore = {
+    renderOpenHref: renderOpenHref,
+    externalHref: externalHref,
     RECENT_LIMIT: RECENT_LIMIT,
     NAV_WIDTH: NAV_WIDTH,
     navWidthMax: navWidthMax,
