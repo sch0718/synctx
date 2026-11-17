@@ -110,3 +110,26 @@ Viewer, CDN, Marp, Draw.io, Sync Engine, Slides Server, Sync Webhook Receiver, O
 
 - `GITHUB_TOKEN` 환경변수에 잘못된 토큰이 있을 수 있음. push 시 `GITHUB_TOKEN= git push -u origin main`으로 keyring fallback 사용
 - 원격 저장소: `https://github.com/sch0718/synctx.git` (private)
+
+## 웹 플랫폼 가이드 (Modern Web Guidance)
+
+HTML·CSS·브라우저 JS를 만들거나 고칠 때는 Chrome·Edge·Firefox·MDN 팀이 관리하는 [Modern Web Guidance](https://github.com/GoogleChrome/modern-web-guidance) 스킬을 쓴다. `.claude/settings.json`이 플러그인 `modern-web-guidance@googlechrome`을 켠다(처음 열 때 마켓플레이스 신뢰를 묻는다). 서버·파이프라인·빌드 설정·시험 코드 작업에는 쓰지 않는다.
+
+- **대상:** Viewer 정적 파일(`services/viewer/src/static/`)과 Viewer가 내보내는 HTML·CSS. Python 서비스, Helm, 스크립트는 대상이 아니다.
+- **개발:** 화면·CSS·클라이언트 JS 작업을 시작할 때 먼저 가이드를 찾아 읽고 구현한다. 직접 만들거나 라이브러리를 더하기 전에 같은 일을 하는 웹 표준 기능(`<dialog>`, popover, anchor positioning, `light-dark()`, `field-sizing` 등)이 있는지 확인한다. 가이드는 바닐라 HTML/CSS/JS 기준이므로 바닐라 JS(Viewer)에 맞게 옮기되 최신 기능은 버리지 않는다. 검색어는 기능을 뜻하는 영어 2~5단어로 쓰고, 기능이 여럿이면 나눠 찾는다.
+
+  ```sh
+  DISABLE_TELEMETRY=1 npx -y modern-web-guidance@latest search "light dismiss dialog"
+  DISABLE_TELEMETRY=1 npx -y modern-web-guidance@latest retrieve "<id>[,<id>...]"
+  ```
+
+- **점검:** 화면을 넓게 바꾼 PR, 릴리스 전, 정기 점검 때 `legacy-scan`으로 옛 패턴을 찾는다. 결과는 후보일 뿐이므로 항목마다 규칙의 `keepWhen`/`dropWhen`으로 확인하고, 일부러 둔 대체 코드·외부(vendor) 코드·비슷해 보이기만 하는 코드는 고치지 않는다. 확인한 것만 고치고 같은 경로를 다시 스캔한다. 스캔 규칙은 전체 가이드의 약 20%에만 있으므로 0건이 곧 최신이라는 뜻은 아니다. 기능 하나를 고칠 때는 스캔하지 않고 위 「개발」 순서를 따른다.
+
+  ```sh
+  DISABLE_TELEMETRY=1 npx -y modern-web-guidance@latest legacy-scan <경로> --json
+  ```
+
+- **브라우저 지원:** Baseline Widely available 기능은 대체 코드 없이 쓴다. 그보다 새 기능은 가이드의 대체 방법을 따르되, 폴리필 패키지보다 기능 감지와 짧은 대체 코드를 먼저 고른다. Origin Trial·변동성 기능(`.mwgrc`의 `allowOriginTrials`·`allowVolatileFeatures`)은 켜지 않는다.
+- **한글 입력:** Enter로 저장·제출하는 입력은 IME 조합 중(`event.isComposing`)이면 무시한다(가이드 `ime-safe-enter-submit`). 조합 중 Enter를 처리하면 마지막 글자가 빠지거나 두 번 저장된다.
+- **텔레메트리:** 이 CLI는 기본으로 검색어와 가이드 ID를 Google에 보낸다. 명령 앞에 늘 `DISABLE_TELEMETRY=1`을 붙이고, 검색어에는 일반적인 UI 기능 이름만 쓰며 저장소 내용을 넣지 않는다.
+- **폐쇄망:** 이 도구는 외부(GitHub) 개발 환경에서만 쓰는 개발 도구다. 이미지·vendoring·런타임에 넣지 않는다. 폐쇄망 사내 브라우저 버전이 확인되지 않았으므로 Baseline Newly available 기능은 대체 코드 없이 쓰지 않는다.
