@@ -15,6 +15,8 @@ scripts/
 ├── test-all.sh                # 전체 테스트(pytest + node --test), make test가 호출
 ├── build_motion.py            # README 소개 그림·메뉴별 도움말(그림·글) 생성
 ├── motion/                    # build_motion.py의 그리기 도구와 메뉴별 단계 정의
+├── legacy-scan.sh             # Viewer 정적 파일의 옛 웹 패턴 검사(배포 전)
+├── legacy-scan-allow.txt      # legacy-scan 허용 목록(확인하고 일부러 둔 후보)
 ├── tests/                     # 스크립트 테스트
 │   ├── test_external_importer.py
 │   ├── test_helm_options.py   # Helm 서비스 옵션 렌더
@@ -25,6 +27,7 @@ scripts/
 │   ├── test_seed_cdn.py       # CDN 채우기
 │   ├── test_run_viewer.py     # run-viewer.sh의 로컬 설정 생성·묶음 앱
 │   ├── test_motion.py         # 생성한 그림·도움말이 최신인지, SVG·문서 링크 검사
+│   ├── test_legacy_scan.py    # legacy-scan 허용 목록 비교
 │   ├── test_prometheus_rules.py  # 렌더한 PrometheusRule을 promtool로 평가
 │   └── prometheus/            # Sync·Feedback Alert 평가 케이스 (*.test.yaml)
 ├── docker/                    # 단일 Viewer·Docker Compose 배포 (K8s 없는 서버)
@@ -152,6 +155,18 @@ python3 scripts/build_motion.py
 - 화면 문구는 Viewer의 실제 문구를 쓴다. Viewer 화면이 바뀌면 `motion/help_pages.py`를 고치고 다시 만든다. 생성된 파일은 직접 고치지 않는다.
 - 그림은 GitHub가 `<img>`로 보여 주므로 스크립트·외부 글꼴 없이 CSS 애니메이션만 쓰고, 동작 줄이기 설정이면 첫 장면에 멈춘다.
 - `tests/test_motion.py`가 커밋된 파일이 생성 결과와 같은지, SVG가 외부 자원 없이 40KB 이하인지, README·도움말·개발 문서의 상대 링크가 살아 있는지 확인한다.
+
+### legacy-scan.sh
+
+Viewer 정적 파일(`services/viewer/src/static/`)을 [Modern Web Guidance](https://github.com/GoogleChrome/modern-web-guidance)의 `legacy-scan`(버전 고정)으로 검사한다. 허용 목록(`legacy-scan-allow.txt`) 밖의 옛 패턴 후보가 있거나, 같은 규칙·파일의 후보 수가 허용 개수보다 많으면 실패한다. 정적 내보내기 워크플로(`.github/workflows/static-export.yml`)가 빌드 전에 돌리고, 릴리스 전에는 직접 돌린다.
+
+```bash
+scripts/legacy-scan.sh                    # npx로 스캔(인터넷·Node 22 이상·jq 필요)
+scripts/legacy-scan.sh --input scan.json  # 받아 둔 --json 결과로만 비교
+```
+
+- 텔레메트리는 끈다(`DISABLE_TELEMETRY=1`). 외부 개발 환경 전용이라 폐쇄망 배포 스크립트에는 넣지 않는다.
+- 새 후보는 규칙의 `keepWhen`/`dropWhen`으로 확인한다. 고칠 것은 고치고, 일부러 둔 코드는 이유를 적어 허용 목록에 올린다(형식: `<규칙 id> <파일> <최대 개수>  # 이유`).
 
 ## 경량 Markdown·회의 Viewer (루트 run.sh)
 

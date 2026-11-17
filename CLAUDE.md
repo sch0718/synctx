@@ -129,6 +129,8 @@ HTML·CSS·브라우저 JS를 만들거나 고칠 때는 Chrome·Edge·Firefox·
   DISABLE_TELEMETRY=1 npx -y modern-web-guidance@latest legacy-scan <경로> --json
   ```
 
+- **배포 전 검사:** `scripts/legacy-scan.sh`가 Viewer 정적 파일을 버전을 고정한 legacy-scan으로 검사하고, 허용 목록(`scripts/legacy-scan-allow.txt`) 밖의 후보가 있으면 실패한다. 정적 내보내기 워크플로가 빌드 전에 돌리고, 릴리스 전에는 직접 돌린다. 실패하면 새 후보를 위 「점검」대로 확인해 고치거나, 일부러 둔 코드면 이유와 함께 허용 목록에 올린다. 폐쇄망 배포 스크립트(Helm·Docker)에는 넣지 않는다(인터넷 필요).
+
 - **브라우저 지원:** Baseline Widely available 기능은 대체 코드 없이 쓴다. 그보다 새 기능은 가이드의 대체 방법을 따르되, 폴리필 패키지보다 기능 감지와 짧은 대체 코드를 먼저 고른다. Origin Trial·변동성 기능(`.mwgrc`의 `allowOriginTrials`·`allowVolatileFeatures`)은 켜지 않는다.
 - **한글 입력:** Enter로 저장·제출하는 입력은 IME 조합 중(`event.isComposing`)이면 무시한다(가이드 `ime-safe-enter-submit`). 조합 중 Enter를 처리하면 마지막 글자가 빠지거나 두 번 저장된다.
 - **텔레메트리:** 이 CLI는 기본으로 검색어와 가이드 ID를 Google에 보낸다. 명령 앞에 늘 `DISABLE_TELEMETRY=1`을 붙이고, 검색어에는 일반적인 UI 기능 이름만 쓰며 저장소 내용을 넣지 않는다.

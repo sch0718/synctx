@@ -1,0 +1,12 @@
+# scripts/legacy-scan.sh 허용 목록: 확인한 뒤 일부러 둔 옛 패턴 후보.
+# 형식: <규칙 id> <파일(services/viewer/src/static 기준)> <최대 개수>  # 이유
+# 같은 규칙·파일에서 개수가 늘면 다시 확인해야 하므로 실패한다.
+
+# 회의 문서 대시보드 탭의 활성 표시(밑줄이 아니라 탭 경계선). 규칙의 dropWhen 「Tab navigation component active state indicators」에 해당한다.
+custom-text-decorations viewer.css 1
+# 목차·안건의 보이는 절 표시. 대안인 CSS scroll-target-group·:target-current는 Baseline이 아니고 폐쇄망 사내 브라우저 버전도 확인되지 않아,
+# IntersectionObserver를 대체 코드로 둔다. 안건과 하위 절 소유(sectionOwners)까지 함께 다룬다.
+scrollspy/js viewer.js 1
+# 메모를 만든 시각 순으로 정렬. toSorted()는 Chrome·Edge 110 이상이 필요한데, 이 함수는 메모 저장과 메모 포함 HTML 내보내기에 쓰여
+# 폐쇄망 사내 브라우저가 그보다 오래되면 메모 기능 전체가 멈춘다. 사내 브라우저 버전을 확인하기 전까지 slice().sort()를 둔다.
+js/copying-array-methods meeting/memo-core.js 1
