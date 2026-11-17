@@ -455,6 +455,15 @@ test('렌더 프레임 해시는 안전한 문자만 넘긴다', () => {
   }
 });
 
+test('새 창으로 여는 HTML 은 탐색 틀 없는 단독 렌더 화면이다', () => {
+  assert.equal(core.renderDocHref('/view', 'work-wiki', '', '/references/html/a b.html', true),
+    '/view/work-wiki/references/html/a%20b.html?mode=render&layout=full');
+  assert.equal(core.renderDocHref('/view', 'work-wiki', 'feat/a', '/x.htm', true),
+    '/view/work-wiki/x.htm?mode=render&layout=full&ref=feat%2Fa');
+  assert.equal(core.renderDocHref('/view', 'work-wiki', '', '/doc.md', true), '/view/work-wiki/doc.md');
+  assert.equal(core.renderDocHref('/view', 'work-wiki', '', '/x.html', false), '/view/work-wiki/x.html?mode=render');
+});
+
 test('렌더 프레임이 연 문서 주소는 같은 저장소 안의 보기 주소다', () => {
   assert.equal(core.renderDocHref('/view', 'work-wiki', '', '/example-system/배포 Playbook.md'),
     '/view/work-wiki/example-system/%EB%B0%B0%ED%8F%AC%20Playbook.md');
