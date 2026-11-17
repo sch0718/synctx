@@ -1049,7 +1049,7 @@
       }
     }
     function open(e, reply) {
-      var href = core.renderDocHref(VIEW_PREFIX, ACTIVE_REPO, ACTIVE_REF, e.data.path);
+      var href = core.renderDocHref(VIEW_PREFIX, ACTIVE_REPO, ACTIVE_REF, e.data.path, !!e.data.newWindow);
       if (!href) { reply({ type: 'synctx:open-result', error: '열 수 없는 문서 경로입니다' }); return; }
       if (!activated()) { reply({ type: 'synctx:open-result', error: '문서는 누를 때만 열 수 있습니다' }); return; }
       if (!e.data.newWindow) {

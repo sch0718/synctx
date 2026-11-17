@@ -290,14 +290,17 @@
     return /^#[A-Za-z0-9\-._~!$&'()*+,;=:@\/?%]*$/.test(hash) ? hash : '';
   }
 
-  function renderDocHref(viewPrefix, repo, ref, path) {
+  function renderDocHref(viewPrefix, repo, ref, path, standalone) {
     if (typeof path !== 'string' || path.length > 1024 || path.charAt(0) !== '/') return null;
     var rel = path.slice(1);
     if (!rel || /[\u0000-\u001f\u007f\\?#]/.test(rel)) return null;
     var parts = rel.split('/');
     if (parts.some(function (part) { return part === '' || part === '.' || part === '..'; })) return null;
     var query = [];
-    if (/\.html?$/i.test(rel)) query.push('mode=render');
+    if (/\.html?$/i.test(rel)) {
+      query.push('mode=render');
+      if (standalone) query.push('layout=full');
+    }
     if (ref) query.push('ref=' + encodeURIComponent(ref));
     return viewPrefix + '/' + encodeURIComponent(repo) + '/' + parts.map(encodeURIComponent).join('/') +
       (query.length ? '?' + query.join('&') : '');

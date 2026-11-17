@@ -664,7 +664,7 @@ Chromium spike는 설계 근거이며 구현 후 수용 시험은 별도로 수�
 | 메시지 | 바깥 화면의 처리 | 응답 |
 |---|---|---|
 | `{type: "synctx:render-refresh", hash}` | `GET /api/repos/{repo_id}/head?ref=`로 선택 ref의 최신 SHA를 읽어 화면의 `data-render-sha`와 비교한다. 다르면 `hash`(허용 문자·512자 이하만, `renderFrameHash`)를 `sessionStorage`에 경로와 함께 두고 바깥 화면을 새로 고친다. 새 화면은 그 해시를 iframe 주소에 붙인다. 5초 안의 반복 요청은 확인하지 않고 `changed: false`로 답한다 | `{type: "synctx:render-refresh-result", changed}` 또는 `{…, error}` |
-| `{type: "synctx:open", path, newWindow}` | `path`가 저장소 루트 기준 `/…` 경로(빈·`.`·`..` 조각, `\`·`?`·`#`·제어 문자 없음, 1024자 이하, `renderDocHref`)이고 바깥 화면에 사용자 활성화(`navigator.userActivation.isActive`)가 있을 때만 같은 저장소·ref의 Viewer 보기 주소(`.html`은 `mode=render`)로 바깥 화면을 옮기거나 새 창을 연다(`opener` 끊음) | `{type: "synctx:open-result", ok}` 또는 `{…, error}` |
+| `{type: "synctx:open", path, newWindow}` | `path`가 저장소 루트 기준 `/…` 경로(빈·`.`·`..` 조각, `\`·`?`·`#`·제어 문자 없음, 1024자 이하, `renderDocHref`)이고 바깥 화면에 사용자 활성화(`navigator.userActivation.isActive`)가 있을 때만 같은 저장소·ref의 Viewer 보기 주소(`.html`은 `mode=render`, `newWindow`면 탐색 틀 없는 `layout=full`도 붙여 「새 탭」 버튼과 같은 단독 화면)로 바깥 화면을 옮기거나 새 창을 연다(`opener` 끊음) | `{type: "synctx:open-result", ok}` 또는 `{…, error}` |
 
 - 토큰 발급은 그대로 화면 생성 함수에서만 한다. `head` API는 SHA만 돌려주고 토큰을 발급하지 않는다. 최신 커밋이 있으면 원래 화면을 새로 고쳐 새 토큰을 받는다(만료 뒤 안내와 같은 절차).
 - 문서 열기는 iframe에 `allow-top-navigation`·`allow-popups`를 주는 대신 바깥 화면이 같은 저장소 문서 보기 주소로만 대신 이동한다. 외부 주소·다른 저장소·`/raw`·`/render`로는 이동하지 않는다. iframe 안의 클릭이 바깥 화면에도 사용자 활성화를 주는 브라우저(Chromium의 User Activation v2)에서 동작하며, 다른 브라우저는 미확인이다.

@@ -65,3 +65,14 @@ def test_open_request_new_window_and_rejects_bad_paths(viewer_server, page):
     frame.wait_for_function("() => window.replies.length > 0")
     assert frame.evaluate("window.replies")[0]["error"]
 
+
+
+def test_open_request_new_window_html_opens_standalone_render(viewer_server, page):
+    element, frame = _render(viewer_server, page)
+    frame.evaluate(INSTALL_BUTTON, ["synctx:open", {"path": "/motion/index.html", "newWindow": True}])
+    with page.context.expect_page() as opened:
+        frame.locator("#send").click()
+    popup = opened.value
+    popup.wait_for_load_state()
+    assert popup.url == f"{viewer_server.base_url}/view/{viewer_server.repo_id}/motion/index.html?mode=render&layout=full"
+    assert popup.get_attribute("[data-html-render]", "data-render-full") == "true"
