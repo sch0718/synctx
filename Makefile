@@ -1,7 +1,7 @@
 .PHONY: all build test lint helm-lint manifest clean smoke-test
 
 REGISTRY ?= registry.internal/synctx
-VERSION  ?= 0.8.2
+VERSION  ?= 0.8.3
 GIT_SHA  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 TAG      := $(VERSION)-$(GIT_SHA)
 

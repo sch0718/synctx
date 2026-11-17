@@ -1030,7 +1030,7 @@ helm/synctx/
 
 ### 10.2 values.yaml 핵심 설정
 
-`helm/synctx/values.yaml`의 기본값에서 핵심만 줄여 옮긴다(`pullPolicy`·`resources` 일부 생략). 이미지 태그 기본값은 `"0.8.2"`이고 아래 예시는 배포할 때 고정하는 `"0.8.2-<git-sha>"` 형식으로 적었다. 운영 레지스트리 주소는 `values-production.yaml`이 `repository`에 접두사(`registry.internal/...`)로 붙인다.
+`helm/synctx/values.yaml`의 기본값에서 핵심만 줄여 옮긴다(`pullPolicy`·`resources` 일부 생략). 이미지 태그 기본값은 `"0.8.3"`이고 아래 예시는 배포할 때 고정하는 `"0.8.3-<git-sha>"` 형식으로 적었다. 운영 레지스트리 주소는 `values-production.yaml`이 `repository`에 접두사(`registry.internal/...`)로 붙인다.
 
 ```yaml
 podSecurityContext:
@@ -1057,7 +1057,7 @@ viewer:
     previous: ""
   image:
     repository: synctx/viewer
-    tag: "0.8.2-<git-sha>"
+    tag: "0.8.3-<git-sha>"
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 1000m, memory: 1Gi }
@@ -1067,7 +1067,7 @@ cdn:
   replicaCount: 1
   image:
     repository: synctx/cdn
-    tag: "0.8.2-<git-sha>"
+    tag: "0.8.3-<git-sha>"
   persistence:
     enabled: true
     size: 10Gi
@@ -1079,7 +1079,7 @@ sync:
   schedule: "*/5 * * * *"
   image:
     repository: synctx/sync
-    tag: "0.8.2-<git-sha>"
+    tag: "0.8.3-<git-sha>"
   persistence:                      # sync-state PVC (state.json, 메트릭 누적값)
     enabled: true
     size: 1Gi
@@ -1091,7 +1091,7 @@ feedback:
   schedule: "*/5 * * * *"
   image:
     repository: synctx/feedback
-    tag: "0.8.2-<git-sha>"
+    tag: "0.8.3-<git-sha>"
   secrets:                          # HMAC·salt·SMTP + OpenProject·XWiki 자격 증명 (Sync도 사용)
     create: false
     existingSecret: ""
@@ -1101,7 +1101,7 @@ marp:
   replicaCount: 1
   image:
     repository: synctx/marp
-    tag: "0.8.2-<git-sha>"
+    tag: "0.8.3-<git-sha>"
   resources:
     requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: 1000m, memory: 2Gi }  # Chromium 사용으로 리소스 다소 필요
@@ -1265,7 +1265,7 @@ helm upgrade synctx ./helm/synctx \
 helm upgrade synctx ./helm/synctx \
   --namespace synctx \
   -f values-production.yaml \
-  --set marp.image.tag=0.8.2-<git-sha>
+  --set marp.image.tag=0.8.3-<git-sha>
 
 # 서비스 끄기 (예: Draw.io 제외)
 helm upgrade synctx ./helm/synctx \
@@ -1338,13 +1338,13 @@ flowchart LR
 
 ### 10.7 경량 Markdown·회의 Viewer
 
-기존 Viewer의 추가 실행 방식이며 새 서비스나 Phase가 아니다. `./run.sh --repo https://git.example/team/docs.git`는 `uv`·Git이 있는 체크아웃에서 Viewer만 실행하고, `./run.sh --docker --build --repo https://git.example/team/docs.git`는 기존 Viewer 이미지를 빌드해 컨테이너 하나로 실행한다. 사전 빌드 이미지는 `--image synctx/viewer:0.8.2-abcdef0`으로 선택한다. `--docker`는 첫 인자이며 `--build`와 `--image`는 함께 쓰지 않는다.
+기존 Viewer의 추가 실행 방식이며 새 서비스나 Phase가 아니다. `./run.sh --repo https://git.example/team/docs.git`는 `uv`·Git이 있는 체크아웃에서 Viewer만 실행하고, `./run.sh --docker --build --repo https://git.example/team/docs.git`는 기존 Viewer 이미지를 빌드해 컨테이너 하나로 실행한다. 사전 빌드 이미지는 `--image synctx/viewer:0.8.3-abcdef0`으로 선택한다. `--docker`는 첫 인자이며 `--build`와 `--image`는 함께 쓰지 않는다.
 
 - `standalone.py`가 기존 Viewer를 `/view`에 마운트하고 `asset_source: bundled`, `SYNCTX_ENABLED_SERVICES=viewer`로 실행한다. Marp 앱·CDN 서비스·게이트웨이를 시작하지 않고, 기존 vendor 파일을 재사용한다. 기본 Helm·Compose의 `asset_source`는 `cdn`이다.
 - `--repo` 반복 또는 `--config` 중 하나를 받는다. 생성 프로필은 `collab.enabled: true`, `authz.enabled: false`이며, 명시한 설정 파일의 authz·collab 정책은 유지한다. `--ref`는 `--repo` 전용이며 `--config`와 함께 주면 거부한다. Git URL에 인증정보를 넣지 않고 `GIT_READ_TOKEN`을 참조한다. 로컬 경로는 캐시 ID를 만들기 전에 실제 경로로 정규화한다.
 - 시작 시 clone/fetch 후 기본 60초마다 기존 async Git 메서드로 갱신한다(`--refresh-interval`, 0이면 주기 갱신 끔). 생성 YAML에는 토큰 대신 환경변수 이름만 남긴다.
 - Docker는 기본 `127.0.0.1:18000`을 컨테이너 `0.0.0.0:8000`으로 공개하고, 이름 있는 `synctx-viewer-cache` 볼륨을 `/data/viewer`에 연결한다. `--bind`·`--port`·`--name`·`--volume`으로 바꾼다. 설정 파일과 명시적 로컬 `--repo` 디렉터리만 읽기 전용으로 마운트한다. 로컬 file URL(빈 호스트 또는 `localhost`)은 URL 이스케이프를 해석해 같은 실제 경로로 바꾼다. 다른 file URL 호스트와 `.git` 파일이 있는 linked worktree·submodule은 Docker 실행 전에 거부하고 원격 Git URL을 안내한다. Git 관리 경로를 추가로 마운트하지 않는다. 컨테이너는 root로 돌기 때문에 마운트한 디렉터리마다 `GIT_CONFIG_*`로 `safe.directory`를 등록한다. `docker run --rm`을 `exec`하므로 Ctrl-C로 종료하고 캐시는 남는다.
-- 이미지 기본값은 `${DOCKER_REGISTRY:-synctx}/viewer:0.8.2-<git-sha>`다. `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag <태그>`로만 빌드한다. `--image`도 SemVer-SHA 태그를 요구하고 `latest`는 거부한다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓴다(Docker Hub에서 받지 않음). Python 베이스 이미지는 바꾸지 않는다.
+- 이미지 기본값은 `${DOCKER_REGISTRY:-synctx}/viewer:0.8.3-<git-sha>`다. `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag <태그>`로만 빌드한다. `--image`도 SemVer-SHA 태그를 요구하고 `latest`는 거부한다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓴다(Docker Hub에서 받지 않음). Python 베이스 이미지는 바꾸지 않는다.
 - Docker는 `GIT_READ_TOKEN`·`SYNCTX_SERVICE_TOKEN`·`SYNCTX_RENDER_SECRET`·`SYNCTX_RENDER_SECRET_PREVIOUS`와 추가 `--env NAME`을 값 없이 이름으로 전달하고, `_FILE` 변형은 해당 파일을 읽기 전용으로 마운트한다(직접 값과 함께 지정하면 거부). 공개 URL 우선순위는 CLI → 명시적 설정 → `SYNCTX_VIEWER_PUBLIC_BASE_URL` → 로컬 바인딩 주소다. Docker는 환경변수가 비어 있으면 호스트 공개 주소를 넣는다. 외부 공개 시 인증 프록시·접근 제한과 실제 `--public-base-url`을 구성한다.
 - 회의 플랫폼은 일반 HTTPS Markdown 링크로 연다. `meeting.channel` 등 필수 메타데이터와 브라우저 localStorage 메모는 유지한다. 일반 HTML 다운로드와 vendor·로컬 메모를 포함하는 회의 내보내기를 구분한다. PDF·Marp 출판은 이 실행 방식에서 제공하지 않는다.
 

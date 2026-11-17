@@ -863,7 +863,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 | `GET /healthz` | 프로세스 생존 확인 |
 | `GET /readyz` | 트래픽 받을 준비 확인. 준비 전에는 503(Viewer는 시작 때 저장소 clone·fetch가 끝나야 ready) |
 | `GET /metrics` | Prometheus metrics |
-| `GET /version` | 서비스 버전(`{"version": "0.8.2"}`) |
+| `GET /version` | 서비스 버전(`{"version": "0.8.3"}`) |
 
 ### 7.2 Viewer Service
 
@@ -1227,7 +1227,7 @@ K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성�
 - Docker Compose v2.17 이상(`up --wait --wait-timeout` 사용), amd64
 - 운영 서버는 폐쇄망 레지스트리(`registry.local:5000`)에서 이미지를 받는다. 반입 절차는 기존 `pull-and-save-images.sh` 흐름(외부에서 pull → tar 저장 → 폐쇄망 반입 → registry push)을 따른다.
 - 서버에는 저장소 체크아웃(또는 아래 디렉터리 묶음)이 같은 상대 위치로 있어야 한다. `compose.yaml`이 `../../helm/synctx/files`(Slides nginx 설정·스크립트)와 `../../cdn-data`(CDN vendor 파일)를 마운트하고, 배포는 `scripts/docker/*.sh`로 한다. 폐쇄망에는 이미지와 함께 `deploy/docker`, `scripts/docker`, `helm/synctx/files`, `cdn-data`를 저장소와 같은 구조로 묶어(예: `git archive HEAD deploy/docker scripts/docker helm/synctx/files cdn-data`) 반입한다. 이미지 태그의 `<git-sha>`와 같은 커밋에서 묶는다.
-- 레지스트리에 있어야 하는 이미지(켠 서비스만 필요하다. synctx 이미지 태그는 `0.8.2-<git-sha>`)
+- 레지스트리에 있어야 하는 이미지(켠 서비스만 필요하다. synctx 이미지 태그는 `0.8.3-<git-sha>`)
 
 | 이미지 | 용도 |
 |--------|------|
@@ -1254,7 +1254,7 @@ K8s 클러스터가 없는 Docker 서버를 위한 배포 방식이다. 구성�
 |------|--------|------|
 | `SYNCTX_SERVICES` | `viewer,cdn,marp,slides` | 켤 서비스(필수) |
 | `SYNCTX_IMAGE_PREFIX` | `registry.local:5000/` | 이미지 접두사. 로컬에서는 빈 값 |
-| `SYNCTX_IMAGE_TAG` | 없음(필수) | `0.8.2-<git-sha>`. `latest`는 거부 |
+| `SYNCTX_IMAGE_TAG` | 없음(필수) | `0.8.3-<git-sha>`. `latest`는 거부 |
 | `SYNCTX_CONFIG_FILE` | `./synctx.yaml` | 모든 서비스가 읽는 `.synctx.yaml` |
 | `SYNCTX_SLIDES_REPO_URL` | 없음 | Slides 게시 저장소(slides를 켜면 필수) |
 | `SYNCTX_SLIDES_BRANCH` / `SYNCTX_SLIDES_POLL_SECONDS` | `main` / `60` | 게시 브랜치, 폴링 간격 |
@@ -1305,13 +1305,13 @@ scripts/docker/deploy.sh [--env-file 경로] [--secrets-file 경로] [--check]
 # Docker Engine. 기존 빌드 스크립트로 Viewer만 빌드
 ./run.sh --docker --build --repo https://git.example/team/docs.git
 # 폐쇄망에 반입한 사전 빌드 Viewer 이미지
-./run.sh --docker --image registry.local:5000/synctx/viewer:0.8.2-abcdef0 --config ./viewer.yaml
+./run.sh --docker --image registry.local:5000/synctx/viewer:0.8.3-abcdef0 --config ./viewer.yaml
 ```
 
 | 항목 | 동작 |
 |------|------|
 | 실행·의존성 | `standalone.py`에서 기존 Viewer만 `/view`로 제공. 번들 vendor 사용, 외부 CDN·Marp·Compose·게이트웨이 불필요 |
-| 기본 이미지·빌드 | `${DOCKER_REGISTRY:-synctx}/viewer:0.8.2-<git-sha>`. `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag <태그>`에 위임. `--image`와 상호 배타적. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓰고, 없으면 실행 전에 `--build`·`--image`를 안내(Docker Hub에서 받지 않음). `DOCKER_REGISTRY`나 `--image`를 주면 Docker 기본 pull 정책 |
+| 기본 이미지·빌드 | `${DOCKER_REGISTRY:-synctx}/viewer:0.8.3-<git-sha>`. `--build`는 `scripts/local/steps/build.sh --only viewer --no-load --tag <태그>`에 위임. `--image`와 상호 배타적. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓰고, 없으면 실행 전에 `--build`·`--image`를 안내(Docker Hub에서 받지 않음). `DOCKER_REGISTRY`나 `--image`를 주면 Docker 기본 pull 정책 |
 | 반입 | 같은 커밋의 Viewer 이미지·루트 `run.sh`·`scripts/docker/run-viewer.sh`를 함께 준비. `--image`면 호스트 Python·uv·Git 없이 실행. SemVer-SHA 태그 필수, `latest` 거부 |
 | 포트·캐시 | 호스트 `127.0.0.1:18000`, 컨테이너 `0.0.0.0:8000`. 기본 named volume `synctx-viewer-cache:/data/viewer`. `--bind`·`--port`·`--name`·`--volume`으로 변경 |
 | 설정 | `--repo` 반복 또는 `--config`. 파일은 호출 위치 기준으로 해결하고 읽기 전용으로 마운트. 기존 설정의 명시적 authz·collab 정책 유지. `--ref`는 `--repo` 전용이며 `--config`와 함께 주면 거부(설정의 `default_ref` 사용) |
@@ -1800,7 +1800,7 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 서비스 옵션, Docker Compose와 경량 Viewer 실행(8.7)은 새 Phase가 아니다. Phase 번호 체계(1-9)는 그대로다.
 
 - [ ] 옵션 검사: `scripts/docker/deploy.sh --check`가 통과하고 켜진 서비스가 의도와 같다
-- [ ] 이미지 반입: 켠 서비스의 이미지가 `registry.local:5000`에 있고 `SYNCTX_IMAGE_TAG`가 `0.8.2-<git-sha>` 형식이다(`latest` 아님)
+- [ ] 이미지 반입: 켠 서비스의 이미지가 `registry.local:5000`에 있고 `SYNCTX_IMAGE_TAG`가 `0.8.3-<git-sha>` 형식이다(`latest` 아님)
 - [ ] `.synctx.yaml` 준비: 인증 프록시가 없으면 `authz.enabled: false`, CDN을 끄면 `viewer.cdn_base_url`이 절대 주소다
 - [ ] TLS: 인증서를 `tls/`에 두고 HTTPS 200, HTTP 301을 확인한다
 - [ ] 헤더 제거 확인: 위조한 `X-Forwarded-Groups`로 직접 요청해도 권한이 올라가지 않는다(신뢰 모드면 허용 목록 밖 출발지는 403)

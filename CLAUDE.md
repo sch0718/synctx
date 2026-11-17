@@ -40,7 +40,7 @@ synctx(sync + context)는 폐쇄망 금융 환경에서 AI 기반 개발 컨텍�
 
 - **단방향 동기화**: Git이 source of truth, XWiki/OpenProject는 파생 데이터
 - **폐쇄망 독립**: 모든 외부 의존성 vendoring, 런타임에 외부 네트워크 접근 없음
-- **이미지 태그**: SemVer `"0.8.2-<git-sha>"` 형식, `latest` 태그 사용 금지
+- **이미지 태그**: SemVer `"0.8.3-<git-sha>"` 형식, `latest` 태그 사용 금지
 - **Outbound Feedback**: Phase 7 선택 기능, 양방향 동기화가 아니라 서명된 메일 이벤트 반출 + 외부 PR 생성
 
 ## 서비스 목록 (6+1+2)
