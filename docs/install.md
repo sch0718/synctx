@@ -72,7 +72,7 @@ flowchart TD
 helm upgrade --install synctx ./helm/synctx --namespace synctx -f values-production.yaml -f helm/synctx/values-profile-present.yaml
 ```
 
-- 이미지 태그는 SemVer `0.8.2-<git-sha>` 형식을 쓰고 `latest`는 쓰지 않는다. 프리셋은 이미지 태그를 바꾸지 않으므로 운영 값 파일에서 지정한다.
+- 이미지 태그는 SemVer `0.8.3-<git-sha>` 형식을 쓰고 `latest`는 쓰지 않는다. 프리셋은 이미지 태그를 바꾸지 않으므로 운영 값 파일에서 지정한다.
 - `helm upgrade`에는 `--reuse-values`를 쓰지 않는다.
 - 서비스를 끄면 Deployment·Service·Ingress 경로는 사라지지만 PVC는 남는다.
 - 전체 프리셋의 Feedback은 미리 만든 Secret `synctx-feedback`을 참조한다. Secret 키는 `helm/synctx/values.yaml`의 `feedback.secrets` 설명을 따른다. 이름을 바꾸려면 값 파일에서 `feedback.secrets.existingSecret`을 덮어쓴다.
@@ -86,7 +86,7 @@ Compose는 viewer·cdn·marp·slides·drawio만 지원한다. **Sync·Feedback·
 cp deploy/docker/profiles/present.env deploy/docker/synctx.env
 ```
 
-프리셋 파일은 `synctx.env.example`에서 `SYNCTX_SERVICES`만 바꾼 완성본이다. 복사한 뒤 `SYNCTX_IMAGE_TAG`(`latest` 불가, `0.8.2-<git-sha>` 형식), `SYNCTX_IMAGE_PREFIX`, `SYNCTX_CONFIG_FILE`, Slides를 켜는 경우 `SYNCTX_SLIDES_REPO_URL`을 채운다. 시크릿은 `secrets.env.example`을 복사해 쓴다.
+프리셋 파일은 `synctx.env.example`에서 `SYNCTX_SERVICES`만 바꾼 완성본이다. 복사한 뒤 `SYNCTX_IMAGE_TAG`(`latest` 불가, `0.8.3-<git-sha>` 형식), `SYNCTX_IMAGE_PREFIX`, `SYNCTX_CONFIG_FILE`, Slides를 켜는 경우 `SYNCTX_SLIDES_REPO_URL`을 채운다. 시크릿은 `secrets.env.example`을 복사해 쓴다.
 
 ```bash
 scripts/docker/deploy.sh --check

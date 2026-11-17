@@ -13,7 +13,7 @@
 </p>
 
 <p align="center"><b>sync + context — 외부에서 AI와 쓴 문서를 폐쇄망 안에서 읽고, 회의하고, 동기화합니다</b><br>
-현재 버전 <b>0.8.2</b> · <a href="https://github.com/sch0718/synctx/releases">릴리스</a> · 외부 CDN·인터넷 없이 사내 브라우저에서</p>
+현재 버전 <b>0.8.3</b> · <a href="https://github.com/sch0718/synctx/releases">릴리스</a> · 외부 CDN·인터넷 없이 사내 브라우저에서</p>
 
 금융권 폐쇄망의 현업 팀은 외부망에 접근할 수 없어서, 외부에서 AI 도구(Claude Code·Codex·Cursor)로 만든 요건 문서·회의 자료·이슈를 바로 쓰기 어렵습니다. synctx는 이미 자동화된 **외부 → 내부 Git 동기화** 경로를 그대로 써서, Git에 올린 Markdown을 폐쇄망 안에서 웹으로 읽고, 회의와 발표에 쓰고, 팀이 쓰는 XWiki·OpenProject에 맞춰 넣습니다. Git이 원본이고 내부 도구의 내용은 거기서 만든 파생 데이터입니다.
 
@@ -96,6 +96,7 @@
 
 | 버전 | 날짜 | 주요 변경 |
 |------|------|-----------|
+| [0.8.3](https://github.com/sch0718/synctx/releases/tag/v0.8.3) | 2026-11-17 | **파일 트리 너비 조절과 HTML 실행 화면 연동.** 파일 트리 너비를 끌기·키보드로 바꾸고 브라우저에 기억, HTML 실행 화면이 안쪽 HTML의 요청으로 최신 커밋 반영 새로 고침·같은 저장소 문서 열기·HTML 원본과 GitHub 주소 새 창 열기를 지원, Viewer 새 버전 배포 뒤 예전 스크립트가 캐시에 남지 않게 정적 파일 재확인 |
 | [0.8.2](https://github.com/sch0718/synctx/releases/tag/v0.8.2) | 2026-11-17 | **라이선스와 공개 준비.** PolyForm Noncommercial 1.0.0 라이선스(`LICENSE`)와 서드파티 고지(`THIRD_PARTY_NOTICES.md`) 추가, 패키지에 라이선스 표기, 문서·예시 설정에서 특정 사내 환경 정보를 일반 예시로 정리 |
 | [0.8.1](https://github.com/sch0718/synctx/releases/tag/v0.8.1) | 2026-11-16 | **로고와 사용 데모 영상.** 로고·마크(SVG, 밝은·어두운 판 PNG)를 `docs/brand/`에 추가하고 README 머리에 표시, CDN·Slides 목록 화면의 머리 마크를 같은 모양으로 맞추고 브라우저 탭 아이콘 추가, README에 사용 데모 영상(한국어 자막) 링크와 챕터 추가 |
 | [0.8.0](https://github.com/sch0718/synctx/releases/tag/v0.8.0) | 2026-11-09 | **정적 Viewer 내보내기와 로그인·열람 제한.** Viewer를 정적 사이트로 내보내 Cloudflare Pages에 배포(Access·공개 모드), 로그인 모드의 저장소별 열람 제한·`/admin`·`/settings`, 브라우저 탭 아이콘, 회의 대시보드·Collab Gateway의 Mattermost 알림과 `/synctx` 명령·Jitsi 내장(Phase 8), Phase 9 Chromium 시험, 알림·Alert·Jitsi 프록시·로컬 배포 수정 |

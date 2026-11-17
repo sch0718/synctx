@@ -158,14 +158,14 @@ python3 scripts/build_motion.py
 ```bash
 ./run.sh --repo https://git.example/team/docs.git
 ./run.sh --docker --build --repo https://git.example/team/docs.git
-./run.sh --docker --image synctx/viewer:0.8.2-abcdef0 --config "./my configs/viewer.yaml"
+./run.sh --docker --image synctx/viewer:0.8.3-abcdef0 --config "./my configs/viewer.yaml"
 ./run.sh --docker --repo https://git.example/team/docs.git --port 18100 --volume docs-cache
 ```
 
 루트 `run.sh`는 첫 인자가 `--docker`면 `docker/run-viewer.sh`, 그 밖에는 `local/run-lite.sh`를 호출한다. 두 방식 모두 기존 `services/viewer/src/standalone.py`의 Markdown·회의 Viewer를 실행한다. 소스 실행은 체크아웃·uv·Git·Python 3.13 이상, Docker 실행은 Bash·Docker Engine과 standalone 코드가 들어 있는 Viewer 이미지가 필요하다. 준비된 `--image` 실행은 호스트 uv·Python·Git 없이 가능하다.
 
 - 기본 접속은 http://127.0.0.1:18000/view/ 이다. Docker는 `--bind`·`--port`로 호스트 공개 주소, `--name`으로 컨테이너 이름, `--volume`으로 이름 있는 캐시 볼륨을 바꾼다. 기본값은 `127.0.0.1`, `18000`, `synctx-viewer`, `synctx-viewer-cache`다. 컨테이너 내부는 `0.0.0.0:8000`, 캐시는 `/data/viewer` 고정이다. Ctrl-C로 종료하면 컨테이너만 지워지고 캐시는 남는다.
-- 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.8.2-<git-sha>`. `--build`는 `local/steps/build.sh --only viewer --no-load --tag <태그>`만 호출한다. `--image`와 함께 쓸 수 없고 SemVer-SHA 태그만 허용한다(`latest` 불가). 빌드·실행은 같은 레지스트리 접두사를 쓴다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓰고, 없으면 실행 전에 `--build`·`--image`를 안내한다.
+- 기본 이미지는 `${DOCKER_REGISTRY:-synctx}/viewer:0.8.3-<git-sha>`. `--build`는 `local/steps/build.sh --only viewer --no-load --tag <태그>`만 호출한다. `--image`와 함께 쓸 수 없고 SemVer-SHA 태그만 허용한다(`latest` 불가). 빌드·실행은 같은 레지스트리 접두사를 쓴다. `DOCKER_REGISTRY` 없이 기본 이미지를 쓰면 `--pull never`로 로컬 이미지만 쓰고, 없으면 실행 전에 `--build`·`--image`를 안내한다.
 - `--repo` 반복 또는 `--config` 중 하나를 지정한다. 상대 경로는 호출 디렉터리 기준이다. 명시적 로컬 저장소는 실제 경로로 정규화해 읽기 전용 마운트하며 상위 디렉터리는 노출하지 않는다. `file:///path/to/repo`·`file://localhost/path/to/repo`도 URL 이스케이프를 해석해 실제 디렉터리로 바꾼다. 다른 file URL 호스트와 `.git`이 파일인 linked worktree·submodule은 실행 전에 거부하므로 원격 Git URL을 대신 사용한다. Git 관리 디렉터리를 추가로 노출하지 않는다. 설정 파일도 읽기 전용이며, Docker 설정 파일의 저장소는 컨테이너에서 접근 가능한 URL을 쓴다. `--ref`·`--public-base-url`·`--refresh-interval`은 앱으로 전달한다. `--ref`는 `--repo` 전용이라 `--config`와 함께 주면 실행 전에 거부한다.
 - Docker는 `GIT_READ_TOKEN`·`SYNCTX_SERVICE_TOKEN`·`SYNCTX_RENDER_SECRET`(·`_PREVIOUS`)을 변수 이름으로 전달하고 `*_FILE`은 파일을 읽기 전용 마운트하며, 추가 credential은 `--env MY_GIT_TOKEN`으로 전달한다. 값을 인자·YAML에 넣지 않는다. `--repo`는 로컬 열람용 인증 해제·회의 활성화 프로필을 만들고, `--config`의 명시적 authz·collab은 보존한다. 외부 공개는 인증 프록시·접근 제한과 실제 공개 URL을 먼저 구성한다.
 - 경량 모드는 기존 vendor 자산을 `bundled`로 직접 제공하고 Marp·외부 CDN·Compose·게이트웨이를 띄우지 않는다. 회의 입장은 일반 HTTPS Markdown 링크, 메모는 브라우저 localStorage 그대로다. 일반 HTML 다운로드는 기본 렌더 HTML이며 회의 내보내기가 vendor·로컬 메모를 포함한 자체 완결형 사본이다. 기존 `meeting.channel` 필수 조건도 유지한다.
@@ -260,8 +260,8 @@ minikube 기반 로컬 개발 환경을 구성한다. 도메인은 `*.synctx.loc
 ./scripts/local/steps/build.sh                        # 전체 빌드
 ./scripts/local/steps/build.sh --only viewer,cdn,marp # 특정 서비스만
 ./scripts/local/steps/build.sh --skip feedback        # 특정 서비스 제외
-./scripts/local/steps/build.sh --tag 0.8.2-$(git rev-parse --short HEAD)  # 태그 지정 (기본 latest)
-./scripts/local/steps/build.sh --no-load --tag 0.8.2-$(git rev-parse --short HEAD)  # minikube에 올리지 않고 호스트 Docker에만 (Docker 배포 확인용)
+./scripts/local/steps/build.sh --tag 0.8.3-$(git rev-parse --short HEAD)  # 태그 지정 (기본 latest)
+./scripts/local/steps/build.sh --no-load --tag 0.8.3-$(git rev-parse --short HEAD)  # minikube에 올리지 않고 호스트 Docker에만 (Docker 배포 확인용)
 
 # 의존성 배포만 (XWiki, OpenProject, Mailpit)
 ./scripts/local/steps/deploy-deps.sh
