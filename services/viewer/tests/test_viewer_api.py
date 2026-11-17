@@ -677,6 +677,17 @@ class TestPathEscaping:
 
 
 class TestShellPages:
+    @pytest.mark.parametrize("url,count", [("/", 0), ("/test-repo", 1), ("/test-repo/docs/a.md", 1)])
+    def test_nav_resizer_only_appears_with_file_tree(self, client, mock_repo_manager, url, count):
+        mock_repo_manager.list_tree.return_value = []
+        mock_repo_manager.read_file_text.return_value = "# Hello"
+        response = client.get(url)
+        assert response.status_code == 200
+        text = response.text
+        assert text.count('class="nav-resizer"') == count
+        if count:
+            assert text.index('</nav>') < text.index('class="nav-resizer"') < text.index('class="nav-backdrop"')
+
     def test_index_uses_shell_and_korean_copy(self, client):
         text = client.get("/").text
         assert 'class="skip-link" href="#main"' in text

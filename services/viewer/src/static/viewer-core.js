@@ -3,6 +3,22 @@
   'use strict';
 
   var RECENT_LIMIT = 8;
+  var NAV_WIDTH = { min: 200, max: 600, default: 280, minMain: 400 };
+
+  function navWidthMax(viewportWidth, tocVisible) {
+    return Math.max(NAV_WIDTH.min, Math.min(NAV_WIDTH.max, viewportWidth - NAV_WIDTH.minMain - (tocVisible ? 220 : 0)));
+  }
+
+  function clampNavWidth(value, viewportWidth, tocVisible) {
+    if (typeof value !== 'number' || !isFinite(value)) value = NAV_WIDTH.default;
+    return Math.max(NAV_WIDTH.min, Math.min(navWidthMax(viewportWidth, tocVisible), Math.round(value)));
+  }
+
+  function parseNavWidth(raw) {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    var value = Number(raw);
+    return isFinite(value) && value >= NAV_WIDTH.min && value <= NAV_WIDTH.max ? value : null;
+  }
 
   function matchFiles(paths, query, limit) {
     var terms = String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -271,6 +287,10 @@
 
   root.SynctxViewerCore = {
     RECENT_LIMIT: RECENT_LIMIT,
+    NAV_WIDTH: NAV_WIDTH,
+    navWidthMax: navWidthMax,
+    clampNavWidth: clampNavWidth,
+    parseNavWidth: parseNavWidth,
     matchFiles: matchFiles,
     addRecent: addRecent,
     parseRecent: parseRecent,

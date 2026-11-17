@@ -46,10 +46,13 @@ body { margin: 0; background: var(--bg-default); color: var(--text-primary); fon
 .finder-results li[role="group"]:hover { background: none; box-shadow: none; }
 .finder-results .finder-group { display: block; padding: 6px 12px 2px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: default; }
 
-.layout { display: grid; grid-template-columns: var(--shell-nav-w) minmax(0, 1fr); min-height: calc(100vh - var(--shell-header-h)); }
+.layout { position: relative; display: grid; grid-template-columns: var(--shell-nav-w) minmax(0, 1fr); min-height: calc(100vh - var(--shell-header-h)); }
 .layout-doc { grid-template-columns: var(--shell-nav-w) minmax(0, 1fr) var(--shell-toc-w); }
 .layout-home { grid-template-columns: minmax(0, 1fr); }
 .shell-nav { position: sticky; top: var(--shell-header-h); height: calc(100vh - var(--shell-header-h)); display: flex; flex-direction: column; gap: 12px; padding: 14px 12px; overflow-y: auto; border-right: 1px solid var(--border-color); background: var(--bg-neutral); }
+.nav-resizer { position: absolute; top: 0; bottom: 0; left: calc(var(--shell-nav-w) - 3px); width: 6px; cursor: col-resize; touch-action: none; z-index: 5; }
+.nav-resizer:hover, .nav-resizer:focus-visible, .nav-resizer.is-dragging { background: var(--primary); }
+body.nav-resizing { user-select: none; cursor: col-resize; }
 .nav-controls { display: none; flex-direction: column; gap: 8px; }
 .nav-controls .shell-field select { flex: 1; max-width: none; }
 .nav-tabs { display: none; gap: 4px; padding: 3px; border: 1px solid var(--border-color); border-radius: var(--radius-ui); background: var(--bg-default); }
@@ -217,6 +220,7 @@ dialog dd { margin: 0; word-break: break-all; }
 
 .page-present .shell-header, .page-present .shell-nav, .page-present .nav-backdrop, .page-present .shell-toc, .page-present .toc-fab, .page-present .meeting-info, .page-present .doc-head, .page-present .meeting-toggle { display: none; }
 .page-present .layout-doc { grid-template-columns: minmax(0, 1fr); min-height: 100vh; }
+.page-present .nav-resizer { display: none; }
 .page-present .markdown-body > [hidden] { display: none !important; }
 .page-present .meeting-panel { top: var(--present-top-h, 52px); bottom: var(--present-nav-h, 64px); max-width: 100vw; }
 .page-present .viewer-content { padding: 72px 24px 128px; }
@@ -260,6 +264,7 @@ body.embed-scroll-lock { overflow: hidden; }
 }
 @media (max-width: 767px) {
   .layout, .layout-doc { grid-template-columns: minmax(0, 1fr); }
+  .nav-resizer { display: none; }
   .shell-menu { display: inline-flex; }
   .shell-header .shell-link, .shell-header .shell-controls, .shell-header .finder kbd, .shell-header .shell-spacer, .shell-header .shell-status, .shell-header [data-action="shortcuts"] { display: none; }
   .shell-header .finder { flex: 1; min-width: 0; }

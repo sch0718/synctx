@@ -141,6 +141,25 @@ def test_page_theme_via_query_mode():
     assert "searchParams.has('theme')" in html
 
 
+@pytest.mark.parametrize("theme_via_query", [False, True])
+def test_page_restores_nav_width_before_stylesheet(theme_via_query):
+    html = ui.page(view_prefix="/view", title="t", theme="github-light", header="", body="",
+                   theme_via_query=theme_via_query)
+    boot = next(script for script in re.findall(r"<script>(.*?)</script>", html, re.S)
+                if "synctx-nav-width" in script)
+    assert "try{" in boot and "catch(e)" in boot
+    assert "isFinite(v)" in boot and "v>=200" in boot and "v<=600" in boot
+    assert "setProperty('--shell-nav-w',v+'px')" in boot
+    assert html.index(boot) < html.index('href="/view/static/viewer.css"')
+
+
+def test_nav_resizer_has_accessible_separator_controls():
+    assert 'class="nav-resizer"' in ui.NAV_RESIZER
+    for attr in ('role="separator"', 'aria-orientation="vertical"', 'aria-label="파일 트리 너비 조절"',
+                 'aria-controls="shell-nav"', 'tabindex="0"', 'data-action="nav-resize"'):
+        assert attr in ui.NAV_RESIZER
+
+
 @pytest.mark.parametrize("kind", ["repo_missing", "file_missing", "too_large", "unsupported", "failed"])
 def test_error_body_uses_copy_and_main_landmark(kind):
     html = ui.error_body(kind, view_prefix="/view", repo_id="r1", path="docs/a.md",

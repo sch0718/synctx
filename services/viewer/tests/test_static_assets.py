@@ -48,8 +48,9 @@ def test_nav_close_hidden_outside_drawer_and_drawer_above_meeting_ui():
 
 def test_storage_access_is_guarded():
     js = (STATIC / "viewer.js").read_text(encoding="utf-8")
-    assert js.count("localStorage") == 2
-    assert "function storageGet(" in js and "function storageSet(" in js
+    assert js.count("localStorage") == 3
+    for name in ("storageGet", "storageSet", "storageRemove"):
+        assert re.search(r"function " + name + r"\([^)]*\) \{ try \{ (?:return )?window\.localStorage\..*?catch \(e\)", js)
 
 
 def test_css_uses_text_disabled_only_for_icons():
@@ -77,6 +78,20 @@ def _rule(css, selector):
     match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
     assert match is not None, selector
     return match.group(1)
+
+
+def test_nav_resizer_tracks_nav_width_and_hides_in_drawer_and_present_mode():
+    css = (STATIC / "viewer.css").read_text(encoding="utf-8")
+    assert "position: relative" in _rule(css, ".layout")
+    resizer = _rule(css, ".nav-resizer")
+    for declaration in ("position: absolute", "left: calc(var(--shell-nav-w) - 3px)", "width: 6px",
+                        "top: 0", "bottom: 0", "cursor: col-resize", "touch-action: none", "z-index: 5"):
+        assert declaration in resizer
+    mobile = css.split("@media (max-width: 767px)")[1]
+    assert "display: none" in _rule(mobile, ".nav-resizer")
+    assert "display: none" in _rule(css, ".page-present .nav-resizer")
+    assert "user-select: none" in _rule(css, "body.nav-resizing")
+    assert "cursor: col-resize" in _rule(css, "body.nav-resizing")
 
 
 def test_anchor_targets_clear_the_sticky_header():
