@@ -73,6 +73,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v5.4.2
+      # Viewer 정적 파일에 허용 목록 밖의 옛 웹 패턴 후보가 있으면 빌드 전에 멈춘다(Modern Web Guidance legacy-scan).
+      # 비밀은 쓰지 않는다. 텔레메트리는 스크립트가 끈다.
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "24"
+      - name: 옛 웹 패턴 검사(legacy-scan)
+        run: scripts/legacy-scan.sh
       # build.sh는 빌드 끝에서 산출물 검사(토큰·.git·한도·깨진 링크)를 돌리고 실패하면 비정상 종료한다.
       # 그러면 이 job이 실패해 deploy가 실행되지 않는다.
       - name: 빌드와 산출물 검사
