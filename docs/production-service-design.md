@@ -871,6 +871,7 @@ validation error는 운영자가 수정할 수 있도록 run report와 metrics�
 |--------|------|------|------|
 | GET | `/api/repos` | viewer | 접근 가능한 repo 목록 |
 | GET | `/api/repos/{repo_id}/branches` | viewer | 브랜치 목록과 기본 브랜치(`{"branches", "default"}`) |
+| GET | `/api/repos/{repo_id}/head?ref=` | viewer | 선택 ref(생략 시 기본 브랜치)의 최신 커밋 SHA(`{"sha"}`, `no-store`). 실행 화면 갱신 확인용이며 토큰을 발급하지 않는다. 모르는 ref 404 |
 | GET | `/api/repos/{repo_id}/tree?ref=&path=` | viewer | Git tree 조회 |
 | GET | `/api/repos/{repo_id}/files?ref=` | viewer | 볼 수 있는 파일 경로 목록(`{"files": [...]}`, 파일 찾기용). 조회 실패 502 |
 | GET | `/api/search?q=&repo=&ref=&collab_only=` | viewer 또는 서비스 토큰 | 본문 검색(`{"query", "repos": [{"id", "name", "status", "truncated", "matches": [{"path", "line", "before", "match", "after"}]}]}`). `repo`가 없으면 모든 저장소. 검색어 2~100글자·줄바꿈 없음, `ref`는 `repo`와 함께만 쓰며 어기면 400, 모르는 저장소 404. `collab_only=true`는 협업 저장소만 검색한다. 서비스 토큰이면 이 필터를 강제하고 `ref`를 지정하면 400(빈 값 포함), 기본 브랜치만 검색한다. 지정한 `repo`가 없거나 비협업 저장소이면 404이며, `matches`는 `{"path"}`만 반환해 줄 번호·본문 발췌를 제외한다. 일반 Viewer 권한의 기존 전체 저장소·ref·발췌 응답은 유지한다. |

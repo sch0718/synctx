@@ -1745,6 +1745,27 @@ class TestHtmlRenderScreen:
         _assert_render_headers(frame)
         assert screen.headers["X-Frame-Options"] == "DENY"
 
+    def test_render_screen_exposes_path_and_sha_for_frame_messages(self, html_render):
+        response = html_render.client.get("/test-repo/docs/index.html?mode=render")
+        assert 'data-render-path="docs/index.html"' in response.text
+        assert f'data-render-sha="{RENDER_SHA}"' in response.text
+
+    def test_head_api_returns_latest_sha_without_issuing_token(self, html_render, monkeypatch):
+        env = html_render
+        monkeypatch.setattr(env.app, "issue_render_token", MagicMock(side_effect=AssertionError("must not issue")))
+        env.manager.resolve_commit_sha.return_value = "b" * 40
+        response = env.client.get("/api/repos/test-repo/head")
+        assert response.status_code == 200
+        assert response.json() == {"sha": "b" * 40}
+        assert response.headers["Cache-Control"] == "no-store"
+        env.manager.resolve_commit_sha.assert_called_with("main")
+        env.client.get("/api/repos/test-repo/head", params={"ref": "feat/a"})
+        env.manager.resolve_commit_sha.assert_called_with("feat/a")
+
+    def test_head_api_unknown_ref_is_404(self, html_render):
+        html_render.manager.resolve_commit_sha.side_effect = ValueError("bad")
+        assert html_render.client.get("/api/repos/test-repo/head", params={"ref": "nope"}).status_code == 404
+
     def test_render_path_text_in_source_does_not_trigger_header_exception(self, html_render):
         response = html_render.client.get("/test-repo/docs/render/index.html")
         assert response.status_code == 200

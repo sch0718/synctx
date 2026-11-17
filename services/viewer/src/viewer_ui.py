@@ -226,12 +226,12 @@ def render_html_links(*, view_prefix, repo_id, path, ref_param) -> str:
             'target="_blank" rel="noopener noreferrer">새 탭</a>')
 
 
-def render_html_view(*, frame_url, view_prefix, repo_id, path, ref_param, full=False) -> str:
+def render_html_view(*, frame_url, view_prefix, repo_id, path, ref_param, full=False, sha="") -> str:
     href = f"{view_prefix}/{quote(repo_id, safe='')}/{quote(path)}"
     source = href + ("?" + ref_param.lstrip("&") if ref_param else "")
     new_tab = href + "?mode=render&layout=full" + ref_param
     full_attr = ' data-render-full="true"' if full else ""
-    return f'''<main id="main" class="html-render" tabindex="-1" data-html-render data-render-layout="fit" data-render-aspect="16/9"{full_attr}>
+    return f'''<main id="main" class="html-render" tabindex="-1" data-html-render data-render-layout="fit" data-render-aspect="16/9" data-render-path="{esc(path)}" data-render-sha="{esc(sha)}"{full_attr}>
   <div data-render-bars>
     <p class="render-warning" role="note">저장소의 HTML과 스크립트를 실행합니다. 유효 시간이 지나면 원래 Viewer 화면을 새로 고치세요.</p>
     <div class="render-toolbar" role="toolbar" aria-label="HTML 보기">

@@ -919,6 +919,7 @@
       bars.forEach(function (bar) { observer.observe(bar); });
     }
     document.addEventListener('fullscreenchange', syncFullscreen);
+    initRenderMessages(root);
     root.addEventListener('click', async function (e) {
       var el = e.target.closest('[data-action]');
       var action = el && el.getAttribute('data-action');
@@ -939,6 +940,63 @@
           window.synctxToast({ kind: 'error', title: '전체 화면을 전환할 수 없습니다', body: '브라우저의 전체 화면 지원과 권한을 확인하세요.' });
         }
       }
+    });
+  }
+
+  var RENDER_HASH_KEY = 'synctx:render-frame-hash';
+
+  function initRenderMessages(root) {
+    var frame = $('[data-render-frame]', root);
+    var path = root.getAttribute('data-render-path');
+    if (!frame || !path) return;
+    try {
+      var saved = JSON.parse(sessionStorage.getItem(RENDER_HASH_KEY) || 'null');
+      sessionStorage.removeItem(RENDER_HASH_KEY);
+      var hash = saved && saved.path === path ? core.renderFrameHash(saved.hash) : '';
+      if (hash) frame.src = frame.getAttribute('src').split('#')[0] + hash;
+    } catch (err) { /* 저장소를 쓸 수 없으면 처음 화면 */ }
+    var lastRefresh = 0;
+    function activated() {
+      return !navigator.userActivation || navigator.userActivation.isActive;
+    }
+    async function refresh(e, reply) {
+      if (Date.now() - lastRefresh < 5000) { reply({ type: 'synctx:render-refresh-result', changed: false }); return; }
+      lastRefresh = Date.now();
+      try {
+        var res = await fetch(VIEW_PREFIX + '/api/repos/' + encodeURIComponent(ACTIVE_REPO) + '/head' + _refParam('?'), { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        var head = await res.json();
+        var changed = !!head.sha && head.sha !== root.getAttribute('data-render-sha');
+        reply({ type: 'synctx:render-refresh-result', changed: changed });
+        if (!changed) return;
+        try {
+          sessionStorage.setItem(RENDER_HASH_KEY, JSON.stringify({ path: path, hash: core.renderFrameHash(e.data.hash) }));
+        } catch (err) { /* 해시 없이 다시 연다 */ }
+        window.location.reload();
+      } catch (err) {
+        reply({ type: 'synctx:render-refresh-result', error: '최신 커밋을 확인하지 못했습니다' });
+      }
+    }
+    function open(e, reply) {
+      var href = core.renderDocHref(VIEW_PREFIX, ACTIVE_REPO, ACTIVE_REF, e.data.path);
+      if (!href) { reply({ type: 'synctx:open-result', error: '열 수 없는 문서 경로입니다' }); return; }
+      if (!activated()) { reply({ type: 'synctx:open-result', error: '문서는 누를 때만 열 수 있습니다' }); return; }
+      if (!e.data.newWindow) {
+        reply({ type: 'synctx:open-result', ok: true });
+        window.location.assign(href);
+        return;
+      }
+      var win = window.open(href, '_blank');
+      if (!win) { reply({ type: 'synctx:open-result', error: '브라우저가 새 창을 막았습니다. 이 사이트의 팝업을 허용해 주세요' }); return; }
+      win.opener = null;
+      reply({ type: 'synctx:open-result', ok: true });
+    }
+    window.addEventListener('message', function (e) {
+      if (e.source !== frame.contentWindow || !e.data || typeof e.data !== 'object') return;
+      var source = e.source;
+      function reply(message) { try { source.postMessage(message, '*'); } catch (err) { /* 프레임이 이미 바뀜 */ } }
+      if (e.data.type === 'synctx:render-refresh') refresh(e, reply);
+      else if (e.data.type === 'synctx:open') open(e, reply);
     });
   }
 

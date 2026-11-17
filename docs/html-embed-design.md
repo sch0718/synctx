@@ -357,7 +357,7 @@ repositories:
 | 신뢰 해제 후에도 전용 계정이 작성자로 남은 페이지 | 문서별 게시자 기록이 현재 계정과 다르면 블록이 없는 md까지 설정과 무관하게 다시 게시한다. 본문이 같으면 `force_author`로 임시 내용을 한 번 저장해 작성자를 실제로 바꾼다. 계정이 바뀌는 쓰기는 직전에 게시자를 모름으로 저장해, 임시 저장만 성공하거나 뒤 단계(OpenProject)가 실패해도 다시 처리한다(8.2) |
 | md에서 더 이상 게시하지 않는 XWiki 페이지 | md 삭제(`sync.on_delete`가 `mark`(기본값)·`ignore`)나 대상의 `openproject` 변경으로 페이지가 남는다. 게시자가 기본 계정이 아니면 기록을 `xwiki_orphan: true`로 남기고, 그 게시자가 기본 계정도 현재 계정도 아니게 되면(신뢰 해제·계정 교체) 페이지의 현재 내용을 기본 계정으로 다시 저장해 작성자를 회수한다(8.2) |
 | 큰 합본으로 페이지·DB 부하 | `max_bundle_bytes` 상한 |
-| 상단 페이지 이동·팝업 | sandbox에 `allow-top-navigation`·`allow-popups`를 주지 않는다 |
+| 상단 페이지 이동·팝업 | sandbox에 `allow-top-navigation`·`allow-popups`를 주지 않는다. 실행 화면의 문서 열기는 바깥 화면이 같은 저장소 문서 보기로만 대신 이동한다(14.13) |
 | 동기화 계정 권한 남용 | 스크립트 권한은 신뢰 저장소 전용 계정에만, 공간에 한정해 준다. 이 계정으로 작성되는 페이지 내용은 Git 원본에서만 나온다 |
 | 비신뢰 저장소가 본문에 `{{html}}`·`{{velocity}}`를 직접 씀 | 비신뢰 저장소는 스크립트 권한 없는 기본 계정으로 게시하므로 XWiki가 걸러 낸다. 신뢰 저장소 전용 계정은 설정 검사로 기본 계정과 분리한다 |
 
@@ -656,3 +656,16 @@ Chromium spike는 설계 근거이며 구현 후 수용 시험은 별도로 수�
 | Ingress 인증에서 `/view/render/` 예외 + 토큰 capability | 중첩 요청의 SSO 쿠키 의존을 없앰 | 토큰 소지만으로 허용하는 권한 증표가 되어 유출 영향이 커짐. "토큰은 인증을 대체하지 않는다" 원칙과 `/render` authz 계약을 수정하고, 위조 가능한 전달 헤더를 신뢰하지 않도록 앱 권한 처리도 함께 설계해야 함. Ingress 예외만 추가해서는 현재 authz 검사를 통과하지 못함 |
 
 선택 전에는 14.3의 authz 검사를 유지한다. 운영 적용의 완료 조건은 사전 시험 통과 또는 선택한 대안의 보안 계약·배포·시험 반영이다.
+
+### 14.13 실행 화면 메시지(갱신·문서 열기)
+
+실행 화면(`mode=render`)의 바깥 Viewer 화면은 그 iframe이 보낸 `postMessage` 두 가지를 받는다. sandbox 속성(`allow-scripts`만)과 렌더 응답 CSP는 바꾸지 않는다. 바깥 화면은 `event.source`가 자기 iframe의 `contentWindow`인 메시지만 처리하고, 응답은 그 창에 `"*"`로 보낸다(sandbox 문서의 출처가 `null`이라 대상 출처를 지정할 수 없다).
+
+| 메시지 | 바깥 화면의 처리 | 응답 |
+|---|---|---|
+| `{type: "synctx:render-refresh", hash}` | `GET /api/repos/{repo_id}/head?ref=`로 선택 ref의 최신 SHA를 읽어 화면의 `data-render-sha`와 비교한다. 다르면 `hash`(허용 문자·512자 이하만, `renderFrameHash`)를 `sessionStorage`에 경로와 함께 두고 바깥 화면을 새로 고친다. 새 화면은 그 해시를 iframe 주소에 붙인다. 5초 안의 반복 요청은 확인하지 않고 `changed: false`로 답한다 | `{type: "synctx:render-refresh-result", changed}` 또는 `{…, error}` |
+| `{type: "synctx:open", path, newWindow}` | `path`가 저장소 루트 기준 `/…` 경로(빈·`.`·`..` 조각, `\`·`?`·`#`·제어 문자 없음, 1024자 이하, `renderDocHref`)이고 바깥 화면에 사용자 활성화(`navigator.userActivation.isActive`)가 있을 때만 같은 저장소·ref의 Viewer 보기 주소(`.html`은 `mode=render`)로 바깥 화면을 옮기거나 새 창을 연다(`opener` 끊음) | `{type: "synctx:open-result", ok}` 또는 `{…, error}` |
+
+- 토큰 발급은 그대로 화면 생성 함수에서만 한다. `head` API는 SHA만 돌려주고 토큰을 발급하지 않는다. 최신 커밋이 있으면 원래 화면을 새로 고쳐 새 토큰을 받는다(만료 뒤 안내와 같은 절차).
+- 문서 열기는 iframe에 `allow-top-navigation`·`allow-popups`를 주는 대신 바깥 화면이 같은 저장소 문서 보기 주소로만 대신 이동한다. 외부 주소·다른 저장소·`/raw`·`/render`로는 이동하지 않는다. iframe 안의 클릭이 바깥 화면에도 사용자 활성화를 주는 브라우저(Chromium의 User Activation v2)에서 동작하며, 다른 브라우저는 미확인이다.
+- 시험: `tests/test_viewer_api.py`(`head` API·화면의 `data-render-path`·`data-render-sha`), `tests/js/viewer-core.test.mjs`(해시·문서 주소 검사), `tests/browser/test_render_messages.py`(같은 커밋 응답, 새 커밋에서 새로 고침과 해시 유지, 문서 이동·새 창·잘못된 경로 거부).

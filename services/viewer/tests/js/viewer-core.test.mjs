@@ -414,3 +414,22 @@ test('잘못된 렌더 비율과 0으로 나누기는 16/9로 복구한다', () 
     assert.equal(core.renderAspectRatio(value), 16 / 9);
   }
 });
+
+test('렌더 프레임 해시는 안전한 문자만 넘긴다', () => {
+  assert.equal(core.renderFrameHash('#board?l=%EB%B0%B0%ED%8F%AC&s=due'), '#board?l=%EB%B0%B0%ED%8F%AC&s=due');
+  assert.equal(core.renderFrameHash('#pr'), '#pr');
+  for (const value of [undefined, null, 1, '', 'board', '#a b', '#<x>', '#"x"', '#' + 'a'.repeat(512), '#\n']) {
+    assert.equal(core.renderFrameHash(value), '', String(value));
+  }
+});
+
+test('렌더 프레임이 연 문서 주소는 같은 저장소 안의 보기 주소다', () => {
+  assert.equal(core.renderDocHref('/view', 'work-wiki', '', '/example-system/배포 Playbook.md'),
+    '/view/work-wiki/example-system/%EB%B0%B0%ED%8F%AC%20Playbook.md');
+  assert.equal(core.renderDocHref('/view', 'work-wiki', 'feat/a', '/html/work/대시보드.html'),
+    '/view/work-wiki/html/work/%EB%8C%80%EC%8B%9C%EB%B3%B4%EB%93%9C.html?mode=render&ref=feat%2Fa');
+  for (const value of [undefined, 3, '', '/', 'a.md', '//evil.com/x.md', '/a/../b.md', '/./a.md', '/a//b.md',
+    '/a\\b.md', '/a.md?x=1', '/a.md#x', '/a\u0000.md', 'https://evil.com/a.md', '/' + 'a'.repeat(1024)]) {
+    assert.equal(core.renderDocHref('/view', 'r', '', value), null, String(value));
+  }
+});
