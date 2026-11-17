@@ -269,6 +269,24 @@
     return isFinite(width) && isFinite(height) && isFinite(ratio) && width > 0 && height > 0 && ratio > 0 ? ratio : fallback;
   }
 
+  function renderFrameHash(hash) {
+    if (typeof hash !== 'string' || hash.length > 512) return '';
+    return /^#[A-Za-z0-9\-._~!$&'()*+,;=:@\/?%]*$/.test(hash) ? hash : '';
+  }
+
+  function renderDocHref(viewPrefix, repo, ref, path) {
+    if (typeof path !== 'string' || path.length > 1024 || path.charAt(0) !== '/') return null;
+    var rel = path.slice(1);
+    if (!rel || /[\u0000-\u001f\u007f\\?#]/.test(rel)) return null;
+    var parts = rel.split('/');
+    if (parts.some(function (part) { return part === '' || part === '.' || part === '..'; })) return null;
+    var query = [];
+    if (/\.html?$/i.test(rel)) query.push('mode=render');
+    if (ref) query.push('ref=' + encodeURIComponent(ref));
+    return viewPrefix + '/' + encodeURIComponent(repo) + '/' + parts.map(encodeURIComponent).join('/') +
+      (query.length ? '?' + query.join('&') : '');
+  }
+
   root.SynctxViewerCore = {
     RECENT_LIMIT: RECENT_LIMIT,
     matchFiles: matchFiles,
@@ -291,5 +309,7 @@
     meetingGuideAutoOpen: meetingGuideAutoOpen,
     renderViewportHeight: renderViewportHeight,
     renderAspectRatio: renderAspectRatio,
+    renderFrameHash: renderFrameHash,
+    renderDocHref: renderDocHref,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

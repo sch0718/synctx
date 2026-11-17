@@ -264,6 +264,17 @@ def list_branches(repo_id: str):
         raise HTTPException(status_code=400, detail="Failed to list branches")
 
 
+@app.get("/api/repos/{repo_id}/head", dependencies=[Depends(verify_viewer_access)])
+def head_commit(repo_id: str, ref: str | None = None):
+    manager = get_repo_manager(repo_id)
+    try:
+        sha = manager.resolve_commit_sha(ref or manager.profile.default_ref)
+    except Exception as e:
+        logger.warning("head_commit_failed repo_id=%s error=%s", repo_id, type(e).__name__)
+        raise HTTPException(status_code=404, detail="Ref not found")
+    return JSONResponse({"sha": sha}, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/repos/{repo_id}/tree", dependencies=[Depends(verify_viewer_access)])
 def get_tree(repo_id: str, path: str = "", ref: str | None = None):
     manager = get_repo_manager(repo_id)
@@ -1162,7 +1173,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
                 theme = "github-light"
             full = layout == "full"
             body = ui.render_html_view(frame_url=frame_url, view_prefix=VIEW_PREFIX, repo_id=repo_id,
-                                       path=path, ref_param=ref_param, full=full)
+                                       path=path, ref_param=ref_param, full=full, sha=sha)
             if not full:
                 body = ui.render_mobile_nav(controls=_nav_controls(repo_id, ref, theme)) + body
             html = ui.page(
