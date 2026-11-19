@@ -370,8 +370,8 @@ synctx는 단순한 동기화 도구를 넘어, **AI와 사람이 지식을 공�
 ```
 synctx/
 ├── README.md                          # 서비스 소개 (개발 문서는 docs/development.md)
-├── AGENTS.md                          # AI 도구용 프로젝트 지침 (Codex 등)
-├── CLAUDE.md                          # Claude Code용 프로젝트 지침
+├── AGENTS.md                          # 프로젝트 지침 원본 (Claude Code·Codex 공통)
+├── CLAUDE.md                          # AGENTS.md를 가리키는 심볼릭 링크(Claude Code용)
 ├── Makefile                           # 빌드/테스트/배포 자동화
 ├── run.sh                             # Markdown·회의 Viewer 실행 (--docker 선택)
 ├── pyproject.toml                     # uv workspace (shared·services 묶음)
