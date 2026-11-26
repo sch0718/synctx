@@ -152,9 +152,9 @@ def test_download_pdf_replaces_block(monkeypatch):
     assert "> 인터랙티브 콘텐츠: [Viewer에서 보기](https://synctx.synctx.local/view/test-repo/docs/reconfig.md)" in sent["markdown"]
 
 
-@pytest.mark.parametrize("fmt,helper", [("html", "_render_download_html"), ("pdf", "_prepare_pdf_markdown")])
+@pytest.mark.parametrize("fmt,helper", [("raw", "read_file"), ("html", "_render_download_html"), ("pdf", "_prepare_pdf_markdown")])
 def test_download_work_runs_off_event_loop(monkeypatch, fmt, helper):
-    import threading
+    import asyncio
 
     import httpx
     import app as viewer_app
@@ -173,18 +173,31 @@ def test_download_work_runs_off_event_loop(monkeypatch, fmt, helper):
             return type("R", (), {"status_code": 200, "content": b"%PDF"})()
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    manager = _manager()
+    owner = manager if fmt == "raw" else viewer_app
     seen = {}
-    original = getattr(viewer_app, helper)
 
-    def spy(*args, **kwargs):
-        seen["thread"] = threading.current_thread().name
-        return original(*args, **kwargs)
+    def spy(owner, name):
+        original = getattr(owner, name)
 
-    monkeypatch.setattr(viewer_app, helper, spy)
-    client = _client(monkeypatch, **{"test-repo": _manager()})
-    resp = client.get("/api/repos/test-repo/download", params={"path": "docs/reconfig.md", "format": fmt})
+        def run(*args, **kwargs):
+            try:
+                seen[name] = asyncio.get_running_loop()
+            except RuntimeError:
+                seen[name] = None
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(owner, name, run)
+
+    spy(owner, helper)
+    if fmt != "raw":
+        spy(manager, "file_size")
+    client = _client(monkeypatch, **{"test-repo": manager})
+    path = "docs/motion/index.html" if fmt == "raw" else "docs/reconfig.md"
+    resp = client.get("/api/repos/test-repo/download", params={"path": path, "format": fmt})
     assert resp.status_code == 200
-    assert seen["thread"].startswith("asyncio")
+    assert set(seen) == ({helper} if fmt == "raw" else {helper, "file_size"})
+    assert all(loop is None for loop in seen.values())
 
 
 def test_metric_counts_results(monkeypatch):

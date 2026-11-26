@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .kit import at, esc, fit, motion_css, rect, svg_document, text, text_width
+from .kit import at, esc, fit, motion_css, rect, svg_document, text
 
 W, H = 960, 520
 STEP = 3.8  # 단계 하나의 길이(초)
@@ -165,7 +165,3 @@ Viewer의 메뉴마다 실제 화면 흐름을 움직이는 그림으로 보여 
 
 그림과 글은 `python3 scripts/build_motion.py`가 `scripts/motion/help_pages.py`로 만듭니다. 화면 문구가 바뀌면 그 파일을 고치고 다시 만드세요.
 """
-
-
-def label_width(label: str, size: float) -> float:
-    return text_width(label, size)

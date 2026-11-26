@@ -5,12 +5,11 @@ set +e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"
 
-ALL=false
 KEEP_MINIKUBE=true
 
 for arg in "$@"; do
     case "$arg" in
-        --all)            ALL=true; KEEP_MINIKUBE=false ;;
+        --all)            KEEP_MINIKUBE=false ;;
         --delete-cluster) KEEP_MINIKUBE=false ;;
         -h|--help)
             cat <<EOF

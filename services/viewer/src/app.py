@@ -1,14 +1,15 @@
 import os
 import asyncio
 import difflib
-import functools
 import hmac
 import json
 import html as html_lib
+import re
 import logging
 import subprocess
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from pathlib import PurePosixPath
 from urllib.parse import quote, unquote, urlsplit
 
@@ -326,7 +327,7 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
         filename_base = PurePosixPath(path).stem or "download"
 
         if format == "raw":
-            content = manager.read_file(path, ref=ref)
+            content = await asyncio.to_thread(manager.read_file, path, ref=ref)
             filename = os.path.basename(path.strip("/")) or "download"
             return Response(
                 content=content,
@@ -339,7 +340,7 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
 
         if format in ("html", "pdf"):
             try:
-                blob_size = manager.file_size(path, ref=ref)
+                blob_size = await asyncio.to_thread(manager.file_size, path, ref=ref)
             except Exception:
                 blob_size = 0
             if blob_size > config.viewer.max_render_size_bytes:
@@ -349,10 +350,7 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
                 )
 
         if format == "html":
-            loop = asyncio.get_event_loop()
-            html_doc = await loop.run_in_executor(
-                None, functools.partial(_render_download_html, manager, repo_id, path, ref, filename_base)
-            )
+            html_doc = await asyncio.to_thread(_render_download_html, manager, repo_id, path, ref, filename_base)
             return Response(
                 content=html_doc.encode("utf-8"),
                 media_type="text/html",
@@ -360,10 +358,7 @@ async def download_file(repo_id: str, path: str, format: str = "raw", ref: str |
             )
 
         if format == "pdf":
-            loop = asyncio.get_event_loop()
-            text_content = await loop.run_in_executor(
-                None, functools.partial(_prepare_pdf_markdown, manager, repo_id, path, ref)
-            )
+            text_content = await asyncio.to_thread(_prepare_pdf_markdown, manager, repo_id, path, ref)
             import httpx
             marp_url = config.viewer.marp_service_url.rstrip("/")
             try:
@@ -426,7 +421,7 @@ def _verify_service_token(request: Request):
     if not expected:
         return
     token = request.headers.get("X-Service-Token", "")
-    if token != expected:
+    if not hmac.compare_digest(token.encode(), expected.encode()):
         raise HTTPException(status_code=401, detail="Invalid or missing service token")
 
 
@@ -434,10 +429,8 @@ def _verify_service_token(request: Request):
 async def repo_webhook(repo_id: str, request: Request):
     _verify_service_token(request)
     manager = get_repo_manager(repo_id)
-    payload = await request.json()
-    source = payload.get("after") or payload.get("checkout_sha") or "webhook"
     try:
-        head_sha = await manager.fetch(source=f"webhook:{source}")
+        head_sha = await manager.fetch()
         return {"status": "ok", "repo_id": repo_id, "head_sha": head_sha}
     except Exception as e:
         logger.warning("webhook_refresh_failed repo_id=%s error=%s", repo_id, type(e).__name__)
@@ -549,18 +542,14 @@ def _build_path_trail(repo_id, path, ref, separator):
     return separator.join(items)
 
 
-def _active_branches(manager, ref: str | None) -> list[str]:
-    """화면을 그릴 때는 원격을 조회하지 않고 현재 브랜치만 담는다. 전체 목록은 화면이 뜬 뒤 viewer.js가 채운다."""
-    return [ref or manager.profile.default_ref]
-
-
 def _shell_header(repo_id: str | None, ref: str | None, theme: str) -> str:
     default_ref = status = branches = None
     if repo_id:
         manager = get_repo_manager(repo_id)
         default_ref = manager.profile.default_ref
         status = manager.status
-        branches = _active_branches(manager, ref)
+        # 전체 브랜치 목록은 화면이 뜬 뒤 viewer.js가 채운다.
+        branches = [ref or default_ref]
     return ui.render_header(
         view_prefix=VIEW_PREFIX, repos=config.repositories, theme=theme, active_repo=repo_id,
         branches=branches, active_ref=ref, default_ref=default_ref, repo_status=status,
@@ -573,7 +562,7 @@ def _nav_controls(repo_id: str | None, ref: str | None, theme: str) -> str:
     if repo_id:
         manager = get_repo_manager(repo_id)
         default_ref = manager.profile.default_ref
-        branches = _active_branches(manager, ref)
+        branches = [ref or default_ref]
     return ui.render_nav_controls(
         repos=config.repositories, theme=theme, active_repo=repo_id, branches=branches,
         active_ref=ref, default_ref=default_ref,
@@ -676,12 +665,7 @@ SEARCH_QUERY_ERROR = "검색어는 두 글자 이상, 100글자 이하로 한 �
 
 
 def _searchable_path(path: str) -> bool:
-    # 문서 주소 규칙이 제어 문자를 받지 않고, 파일 트리가 숨기는 점 경로는 검색에서도 뺀다
-    if any(ord(char) < 32 or ord(char) == 127 for char in path):
-        return False
-    if any(part.startswith(".") for part in path.split("/")):
-        return False
-    return is_viewable(path)
+    return search_mod.is_discoverable_path(path) and is_viewable(path)
 
 
 async def _run_search(query: str, repo_id: str | None, ref: str | None, collab_only: bool = False) -> list[dict]:
@@ -1003,22 +987,60 @@ def view_repo(repo_id: str, ref: str | None = None, path: str | None = None):
     return HTMLResponse(content=html)
 
 
-_encode_for_script = meeting_mode.encode_for_script
+_DROPPED_TAGS = ("script", "iframe")
+_RAW_TEXT_TAGS = ("style", "xmp", "iframe", "noembed", "noframes", "plaintext")
+
+
+class _HandlerStripper(HTMLParser):
+    """표준 HTML 파서로 다시 써서 on* 속성과 script·iframe을 지운다(코드·본문 글자는 그대로).
+
+    여는 태그는 늘 파싱한 속성으로 다시 쓰고(값은 따옴표·이스케이프), 태그가 아닌 `<`는 &lt;로,
+    주석·선언·처리 지시는 버린다. 출력이 정규화되므로 이 파서와 브라우저가 noscript·svg 안 style처럼
+    경계를 다르게 읽는 곳에서도 열린 따옴표나 살아 있는 핸들러가 남지 않는다.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out: list[str] = []
+
+    def _start(self, tag, attrs, closing):
+        if tag in _DROPPED_TAGS:
+            return
+        kept = "".join(f" {k}" if v is None else f' {k}="{html_lib.escape(v)}"'
+                       for k, v in attrs if not k.startswith("on"))
+        self.out.append(f"<{tag}{kept}{closing}>")
+
+    def handle_starttag(self, tag, attrs):
+        self._start(tag, attrs, "")
+
+    def handle_startendtag(self, tag, attrs):
+        self._start(tag, attrs, " /")
+
+    def handle_endtag(self, tag):
+        if tag not in _DROPPED_TAGS:
+            self.out.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if self.cdata_elem == "script":
+            return
+        if self.cdata_elem in _RAW_TEXT_TAGS:  # style 등은 엔티티를 풀지 않으므로 `<`만 막고 CSS 글자는 지킨다
+            self.out.append(data.replace("<", "&lt;"))
+        else:  # 보통 글과 title·textarea: 파서가 푼 글자를 다시 이스케이프한다
+            self.out.append(html_lib.escape(data, quote=False))
 
 
 def _sanitize_html(html_str: str) -> str:
-    """사용자 생성 HTML에서 위험한 태그를 제거."""
-    import re
-    # 중첩 태그 우회 방지를 위해 루프를 돌며 <script> 및 <iframe> 제거
+    """사용자 생성 HTML에서 script·iframe과 on* 이벤트 핸들러를 지운다(코드·본문 글자는 그대로)."""
+    # 중첩 태그 우회 방지를 위해 루프를 돌며 <script> 및 <iframe> 블록을 먼저 지운다
     prev = ""
     while prev != html_str:
         prev = html_str
         html_str = re.sub(r'<script\b[^>]*>.*?</script>', '', html_str, flags=re.DOTALL | re.IGNORECASE)
         html_str = re.sub(r'<iframe\b[^>]*>.*?</iframe>', '', html_str, flags=re.DOTALL | re.IGNORECASE)
-        
-    html_str = re.sub(r'\bon\w+\s*=\s*["\'][^"\']*["\']', '', html_str, flags=re.IGNORECASE)
-    html_str = re.sub(r'\bon\w+\s*=\s*\S+', '', html_str, flags=re.IGNORECASE)
-    return html_str
+    parser = _HandlerStripper()
+    parser.feed(html_str)
+    parser.close()
+    return "".join(parser.out)
 
 
 def _build_toolbar(repo_id: str, path: str, is_md: bool, front_matter: dict, ref_param: str,
@@ -1234,7 +1256,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
             rendered["html"] = embed_view.fill(
                 rendered["html"], prepared,
                 md_path=path,
-                policy=_html_embed_policy(repo_id),
+                policy=policy,
                 read=repo_reader(manager, effective_ref),
                 repo_id=repo_id,
                 source_href=lambda src: f"{VIEW_PREFIX}/{repo_id}/{quote(src)}{ref_param_first}",
@@ -1387,7 +1409,7 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
         head_extra = (f"<style>{theme_css}</style>\n"
                       f'<link rel="stylesheet" href="{highlight_css_url}">\n'
                       f"{meeting_head}{evidence_head}")
-        body_extra = (f'<script type="application/json" id="raw-markdown-json">{_encode_for_script({"markdown": content})}</script>\n'
+        body_extra = (f'<script type="application/json" id="raw-markdown-json">{meeting_mode.encode_for_script({"markdown": content})}</script>\n'
                       f'<script src="{highlight_url}"></script>\n'
                       f"<script>hljs.highlightAll();</script>\n"
                       f"{mermaid_scripts}\n{meeting_body}{evidence_body}")

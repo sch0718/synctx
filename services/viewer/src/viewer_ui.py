@@ -180,9 +180,9 @@ def render_nav_controls(*, repos, theme, active_repo, branches, active_ref, defa
 NAV_CLOSE = '<button type="button" class="btn nav-close" data-action="close-nav">메뉴 닫기</button>'
 
 
-def render_mobile_nav(*, controls: str, extra: str = "") -> str:
+def render_mobile_nav(*, controls: str) -> str:
     return (f'<nav id="shell-nav" class="shell-nav shell-nav-mobile-only" aria-label="메뉴">'
-            f'{NAV_CLOSE}{controls}{extra}</nav>'
+            f'{NAV_CLOSE}{controls}</nav>'
             '<div class="nav-backdrop" data-action="close-nav" hidden></div>')
 
 
@@ -578,14 +578,10 @@ def render_present_bar(*, title: str, exit_href: str, memo: bool, jitsi: dict | 
             '<div class="visually-hidden" aria-live="polite" data-present-live></div>')
 
 
-EVIDENCE_IDS = {"list": "evidence-list", "title": "evidence-title", "data": "evidence-data"}
-
-
-def render_evidence_list(entries, *, ids=None, href_for=None) -> str:
+def render_evidence_list(entries, *, ids, href_for=None) -> str:
     """근거 모음. 문서별 묶음(처음 나온 순서) 안에 항목을 둔다. 발췌 html은 이미 정화된 것을 그대로 넣는다."""
     if not entries:
         return ""
-    ids = ids or EVIDENCE_IDS
     groups: dict[tuple[str, str], tuple[str, list[str]]] = {}
     for e in entries:
         cites = " · ".join(f'<a href="#{esc(cid)}">{esc(label)}</a>' for cid, label in e.cites)
@@ -604,8 +600,7 @@ def render_evidence_list(entries, *, ids=None, href_for=None) -> str:
             f'{docs}</section>')
 
 
-def render_evidence_data(entries, *, ids=None) -> str:
-    ids = ids or EVIDENCE_IDS
+def render_evidence_data(entries, *, ids) -> str:
     data = {"schema": 1, "entries": [{"id": e.id, "doc": e.doc, "loc": e.loc, "html": e.html} for e in entries]}
     return (f'<script type="application/json" id="{esc(ids["data"])}" data-synctx-evidence>'
             f"{encode_for_script(data)}</script>")

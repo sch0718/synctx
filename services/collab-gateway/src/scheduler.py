@@ -5,12 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Optional
 
+from messages import KST
 from models import Meeting
 
-KST = timezone(timedelta(hours=9))
 SUMMARY_WINDOW = timedelta(days=7)
 
 

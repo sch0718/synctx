@@ -150,14 +150,6 @@ test('exportPayload: 삭제 표시 제외, 런타임 키 제외', () => {
   assert.equal(p.memos.some(m => '_lost' in m), false);
 });
 
-test('serialize: created_at 순 정렬, 런타임 키 제외', () => {
-  const a = memo({ id: 'm_later01', created_at: '2026-10-08T06:00:00.000Z', _x: 1 });
-  const b = memo({ id: 'm_early01', created_at: '2026-10-08T04:00:00.000Z' });
-  const out = JSON.parse(core.serialize({ doc: DOC, memos: [a, b] }));
-  assert.deepEqual(out.memos.map(m => m.id), ['m_early01', 'm_later01']);
-  assert.equal('_x' in out.memos[1], false);
-});
-
 test('toMarkdown: 사람이 읽는 부분과 데이터 주석', () => {
   const md = core.toMarkdown({ doc: DOC, memos: sampleMemos() }, {
     exported_at: '2026-10-08T07:00:00.000Z', starts_at: '2026-10-08T14:00:00+09:00',

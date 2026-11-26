@@ -81,6 +81,29 @@ class TestHTTPInstrumentation:
         )._value.get()
         assert after == before + 1
 
+    def test_requests_use_bounded_path_labels(self, app, client):
+        @app.get("/docs/{path:path}")
+        def docs(path: str):
+            return {"path": path}
+
+        matched = http_requests_total.labels(service="test", method="GET", path="/docs/{path:path}", status=200)
+        unmatched = http_requests_total.labels(service="test", method="GET", path="unmatched", status=404)
+        before = matched._value.get(), unmatched._value.get()
+        for name in ("one", "two"):
+            assert client.get(f"/docs/{name}.md").status_code == 200
+            assert client.get(f"/missing/{name}").status_code == 404
+        assert (matched._value.get(), unmatched._value.get()) == (before[0] + 2, before[1] + 2)
+
+    def test_mounted_app_is_not_labelled_unmatched(self, app, client, tmp_path):
+        from starlette.staticfiles import StaticFiles
+
+        (tmp_path / "a.txt").write_text("x")
+        app.mount("/static", StaticFiles(directory=tmp_path))
+        mount = http_requests_total.labels(service="test", method="GET", path="mount", status=200)
+        before = mount._value.get()
+        assert client.get("/static/a.txt").status_code == 200
+        assert mount._value.get() == before + 1
+
     def test_request_records_duration(self, client):
         client.get("/api/hello")
         resp = client.get("/metrics")
@@ -130,11 +153,11 @@ def test_render_path_normalization_uses_route_instead_of_url():
     from types import SimpleNamespace
     from synctx_common.observability import _normalize_path
 
-    assert _normalize_path("/unrelated", SimpleNamespace(path="/render/{token}/{repo_id}/{path:path}")) == "/render/{token}/{repo_id}/{path}"
-    assert _normalize_path("/unrelated", SimpleNamespace(path="/view/render/{token}/{repo_id}/{path:path}")) == "/render/{token}/{repo_id}/{path}"
-    assert _normalize_path("/render/help", SimpleNamespace(path="/{repo_id}/{path:path}")) == "/render/help"
-    assert _normalize_path("/x", SimpleNamespace(path="/open/{token}/{repo_id}/{path:path}")) == "/open/{token}/{repo_id}/{path}"
-    assert _normalize_path("/x", SimpleNamespace(path="/view/open/{token}/{repo_id}/{path:path}")) == "/open/{token}/{repo_id}/{path}"
+    assert _normalize_path(SimpleNamespace(path="/render/{token}/{repo_id}/{path:path}")) == "/render/{token}/{repo_id}/{path}"
+    assert _normalize_path(SimpleNamespace(path="/view/render/{token}/{repo_id}/{path:path}")) == "/render/{token}/{repo_id}/{path}"
+    assert _normalize_path(SimpleNamespace(path="/{repo_id}/{path:path}")) == "/{repo_id}/{path:path}"
+    assert _normalize_path(SimpleNamespace(path="/open/{token}/{repo_id}/{path:path}")) == "/open/{token}/{repo_id}/{path}"
+    assert _normalize_path(SimpleNamespace(path="/view/open/{token}/{repo_id}/{path:path}")) == "/open/{token}/{repo_id}/{path}"
 
 
 def test_html_render_metric_has_only_bounded_result_and_repo_labels():

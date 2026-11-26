@@ -806,8 +806,8 @@ sequenceDiagram
 
 | 분류 | 예 | 재시도 | state advance |
 |------|----|--------|---------------|
-| `validation_error` | front matter invalid | 아니오 | 가능, 파일은 skipped로 기록 |
-| `transient_error` | 429, 5xx, timeout | 예 | 불가 |
+| `validation_error` | front matter invalid (HTTP 상태 오류는 해당 없음) | 아니오 | 가능, 파일은 skipped로 기록 |
+| `transient_error` | 429, 5xx, timeout, 404 등 401·403·409 밖의 HTTP 상태 오류 | 예 | 불가 |
 | `auth_error` | 401, 403 | 아니오 | 불가 |
 | `mapping_error` | unknown status/type | 아니오 | 불가 |
 | `conflict_error` | duplicate external key | 아니오 | 불가 |
@@ -1410,7 +1410,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `synctx_http_request_duration_seconds`
 - `synctx_render_requests_total` (정의만 있고 아직 올리는 곳이 없다)
 - `synctx_marp_convert_total` (정의만 있고 아직 올리는 곳이 없다)
-- `synctx_marp_publish_total` (정의만 있고 아직 올리는 곳이 없다)
+- `synctx_marp_publish_total` (게시 성공 result="ok", Git 게시 실패 result="error")
 - `synctx_sync_runs_total`
 - `synctx_sync_items_total`
 - `synctx_sync_failures_total`
@@ -1428,7 +1428,7 @@ Secret, token, Basic Auth, signed URL은 마스킹한다.
 - `synctx_collab_last_success_timestamp` (Viewer에서 회의를 읽는 데 성공한 주기의 시각)
 - `synctx_html_bundle_total` (synctx-html 블록 처리 결과. `result`: `ok`, `disabled`, `missing_file`, `outside_repo`, `disallowed_host`, `too_large`, `invalid_block`, `unsupported`)
 
-HTTP 메트릭은 `scope["route"]`로 렌더 경로를 식별해 standalone `/view/render`·K8s `/render` 모두 `/render/{token}/{repo_id}/{path}` 고정 라벨로 정규화한다(`_normalize_path`). authz·경로 거부·파일 조회 실패는 기존 HTTP 상태별 메트릭으로 확인한다. 신규 렌더 Alert 임계값은 운영 확인 뒤 정한다.
+HTTP 메트릭의 `path` 라벨은 매치된 라우트의 경로 패턴을 쓴다. 매치된 라우트가 없으면 `unmatched`로 센다. `/render`와 `/open`은 standalone·K8s 모두 각각 `/render/{token}/{repo_id}/{path}`와 `/open/{token}/{repo_id}/{path}`로 센다. authz·경로 거부·파일 조회 실패는 HTTP 상태별 메트릭으로 확인한다. 신규 렌더 Alert 임계값은 운영 확인 뒤 정한다.
 
 수집 경로:
 
@@ -1466,7 +1466,7 @@ Outbound Feedback CronJob도 실행마다 새 프로세스이므로 같은 방�
 - Sync가 30분 이상 성공하지 못함 (`SynctxSyncNoSuccess`)
 - Sync 항목 실패율이 최근 15분 10% 초과 (`SynctxSyncHighFailureRate`)
 - XWiki/OpenProject auth error 발생 (`SynctxSyncAuthError`)
-- Marp publish push 실패 (`SynctxMarpPublishFailed`. `synctx_marp_publish_total`을 아직 올리지 않아 지금은 울리지 않는다)
+- Marp Git 게시 실패 (`SynctxMarpPublishFailed`, `synctx_marp_publish_total{result="error"}`의 증가 감지)
 - Slides Server sidecar 컨테이너 재시작 3회 초과 (`SynctxSlidesSidecarFailed`)
 - Outbound Feedback mail send failure 30분 안에 3회 이상 (`SynctxFeedbackMailFailure`)
 - Outbound Feedback redaction failure 발생 (`SynctxFeedbackRedactionFailure`)
@@ -1608,9 +1608,8 @@ Sync Alert(성공 없음, 실패율, 인증 오류, 합본 거부)와 Outbound F
 - [x] protected fields 정책 구현 (_apply_protected_fields)
 - [x] version/sprint 매핑 구현 (get_version_by_name)
 - [x] mapping error와 SyncReport 구현 (unknown mapping 로깅 + 실패 리포트)
-- [x] user 조회 구현 (get_user_by_login)
 - [x] Work Package 삭제/마킹 구현 (mark_deleted)
-- [x] OpenProject 단위 테스트 (CRUD + protected fields + mark_deleted, 12 tests)
+- [x] OpenProject 단위 테스트 (CRUD + protected fields + mark_deleted)
 
 완료 기준:
 

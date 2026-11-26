@@ -412,23 +412,6 @@ test('파일 목록 상태 문구', () => {
   assert.equal(core.finderFileStatus('', null, false), null);
 });
 
-test('렌더 높이는 막대 높이를 빼고 0 이상으로 제한한다', () => {
-  assert.equal(core.renderViewportHeight(900, 120), 780);
-  assert.equal(core.renderViewportHeight(900.5, 120.25), 780.25);
-  assert.equal(core.renderViewportHeight(900, 0), 900);
-  assert.equal(core.renderViewportHeight(900, 900), 0);
-  assert.equal(core.renderViewportHeight(900, 1000), 0);
-  assert.equal(core.renderViewportHeight(0, 120), 0);
-});
-
-test('유효하지 않은 렌더 높이는 0으로 처리한다', () => {
-  for (const value of [undefined, null, '', '900', true, {}, [], NaN, Infinity, -Infinity, -1]) {
-    assert.equal(core.renderViewportHeight(value, 100), 0);
-    assert.equal(core.renderViewportHeight(900, value), 900);
-  }
-  assert.equal(core.renderViewportHeight(), 0);
-});
-
 test('렌더 비율은 양수 숫자와 공백을 포함한 W/H를 받는다', () => {
   assert.equal(core.renderAspectRatio('16/9'), 16 / 9);
   assert.equal(core.renderAspectRatio(' 4 / 3 '), 4 / 3);

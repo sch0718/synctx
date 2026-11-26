@@ -35,10 +35,9 @@ def text(x, y, value, *, size=14, weight=400, fill, anchor="start", cls="", styl
         style = f"font-family:{MONO.replace(chr(39), '')};{style}"
         value = str(value).replace(" ", "\u00a0")
     extra = (f' class="{cls}"' if cls else "") + (f' style="{style}"' if style else "")
-    family = ""
     # 기본값(굵기 400, 왼쪽 정렬)은 적지 않아 파일을 줄인다.
     attrs = (f' font-weight="{weight}"' if weight != 400 else "") + (f' text-anchor="{anchor}"' if anchor != "start" else "")
-    return f'<text x="{num(x)}" y="{num(y)}" font-size="{num(size)}" fill="{fill}"{attrs}{family}{extra}>{esc(value)}</text>'
+    return f'<text x="{num(x)}" y="{num(y)}" font-size="{num(size)}" fill="{fill}"{attrs}{extra}>{esc(value)}</text>'
 
 
 def text_width(label, size: float) -> float:

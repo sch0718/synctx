@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from synctx_common.config import load_config, RepoAuthConfig, RepoProfile
 from synctx_common.git_manager import GitRepoManager
 from synctx_common.logging import configure_logging
-from synctx_common.observability import register_observability_routes
+from synctx_common.observability import marp_publish_total, register_observability_routes
 
 __version__ = "0.8.3"
 configure_logging(service_name="marp")
@@ -26,6 +26,8 @@ app = FastAPI(title="synctx-marp", description="Marp Service for synctx", versio
 
 config = load_config()
 register_observability_routes(app, version=__version__, service_name="marp")
+marp_publish_total.labels(result="ok")
+marp_publish_total.labels(result="error")
 
 class ConvertRequest(BaseModel):
     markdown: str
@@ -322,12 +324,17 @@ async def publish_html(req: PublishRequest):
             cleanup_file(f)
     
     with publish_lock():
-        manager = get_publish_manager()
-        await manager.ensure()
+        try:
+            manager = get_publish_manager()
+            await manager.ensure()
+        except Exception:
+            marp_publish_total.labels(result="error").inc()
+            raise
         name = req.filename if req.filename.endswith(".html") else f"{req.filename}.html"
         target_path = f"{config.marp.publish_base_path.strip('/')}/{name}"
         try:
-            manager.commit_and_push(
+            await asyncio.to_thread(
+                manager.commit_and_push,
                 file_path=target_path,
                 content=html_content,
                 message=f"docs(slides): publish {name}",
@@ -335,9 +342,11 @@ async def publish_html(req: PublishRequest):
                 author_email=req.author_email
             )
         except Exception as e:
+            marp_publish_total.labels(result="error").inc()
             logger.error(f"Failed to publish to git: {e}")
             raise HTTPException(status_code=500, detail="Failed to publish to git repository")
-        
+        marp_publish_total.labels(result="ok").inc()
+
     return {
         "status": "success",
         "path": target_path,

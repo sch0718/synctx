@@ -61,7 +61,6 @@ class _Locator(HTMLParser):
         self.has_static_hide = False
         self.edits: list[tuple[int, int, str]] = []
         self._open: tuple[str, int, dict, list[str]] | None = None
-        self.theme_link_replaced = False
         self.feed(source)
         self.close()
 

@@ -325,8 +325,6 @@ setup_common_infra() {
     print_header "${step}. CA Secret 및 Issuer 생성"
     setup_ca_and_issuer
     ((step++))
-
-    NEXT_STEP=$step
 }
 
 # ============================================================
@@ -427,28 +425,4 @@ safe_uninstall() {
     local namespace="$2"
     helm uninstall "$release" -n "$namespace" 2>/dev/null && \
         print_success "${release} 삭제 완료 (${namespace})" || true
-}
-
-# ============================================================
-# kubectl 리소스 삭제 헬퍼 (not-found 무시)
-# ============================================================
-safe_delete() {
-    kubectl delete "$@" --ignore-not-found 2>/dev/null || true
-}
-
-# ============================================================
-# Pod Ready 대기
-# ============================================================
-wait_for_pods() {
-    local ns="$1"
-    local label="$2"
-    local timeout="${3:-120}"
-
-    print_info "${label} Pod 준비 대기 중... (timeout: ${timeout}s)"
-    if kubectl wait --for=condition=ready pod -l "${label}" -n "${ns}" --timeout="${timeout}s" 2>/dev/null; then
-        print_success "${label} Pod 준비 완료"
-    else
-        print_warning "${label} Pod가 ${timeout}s 내에 준비되지 않았습니다"
-        kubectl get pods -l "${label}" -n "${ns}" 2>/dev/null
-    fi
 }

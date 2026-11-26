@@ -211,7 +211,7 @@ async def refresh_repositories(viewer, interval: float) -> None:
             await asyncio.shield(startup)
         for repo in viewer.config.repositories:
             try:
-                await viewer.get_repo_manager(repo.id).fetch(source="standalone")
+                await viewer.get_repo_manager(repo.id).fetch()
             except Exception as exc:
                 # Exception strings can contain URLs/credentials from third-party transports.
                 logger.warning("standalone_refresh_failed repo_id=%s error=%s", repo.id, type(exc).__name__)

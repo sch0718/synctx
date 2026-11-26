@@ -116,7 +116,7 @@ async def test_refresh_failure_does_not_stop_other_repositories():
         def __init__(self, repo_id):
             self.repo_id = repo_id
 
-        async def fetch(self, source):
+        async def fetch(self):
             called.append(self.repo_id)
             if self.repo_id == "broken":
                 raise RuntimeError("unavailable")

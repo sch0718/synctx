@@ -452,9 +452,12 @@ class TestMeetingExport:
         assert "<script>alert(1)</script>" not in head
         assert "<title>&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>" in head
 
-    def test_marker_in_body_fails_assembly(self, client, manager):
+    def test_marker_comment_in_body_is_dropped(self, client, manager):
+        # 본문 HTML 주석은 정리 단계에서 지워지므로 메모 자리표시와 겹치지 않는다
         manager.read_file_text.return_value = meeting_doc(body="# 회의\n\n<!--synctx-meeting-embed-->\n")
-        assert self._get(client).status_code == 500
+        resp = self._get(client)
+        assert resp.status_code == 200
+        assert resp.text.count("<!--synctx-meeting-embed-->") == 1
 
 
 class TestRenderDownloadHtml:

@@ -925,7 +925,6 @@ marp/src/
 sync/src/
 ├── sync_cli.py         # CLI 엔트리포인트 (synctx-sync)
 ├── sync_engine.py      # 동기화 오케스트레이션(run_sync 중심)
-├── harness_validator.py # synctx validate-harness (synctx_common.harness 위임)
 ├── state.py            # state.json atomic read/write
 ├── embed_sync.py       # synctx-html 분석·합본 반영 해시·XWiki 매크로 변환
 ├── lease.py            # 저장소별 실행 잠금 (K8s Lease, 클러스터 밖에서는 /tmp 파일 O_CREAT|O_EXCL)

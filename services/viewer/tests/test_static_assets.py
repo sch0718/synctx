@@ -127,7 +127,7 @@ def test_wide_layout_always_shows_file_tree_and_hides_drawer_toc():
 
 def test_toasts_have_close_button_and_success_times_out():
     js = (STATIC / "viewer.js").read_text(encoding="utf-8")
-    toast = js.split("function synctxToast(")[1].split("window.synctxToast")[0]
+    toast = js.split("function synctxToast(")[1].split("\n  }", 1)[0]
     assert "toast-close" in toast and "'닫기'" in toast and "setAttribute('aria-label', '닫기')" in toast
     assert "opts.kind === 'success'" in toast
     css = (STATIC / "viewer.css").read_text(encoding="utf-8")
@@ -376,7 +376,7 @@ def test_render_fullscreen_is_requested_by_click_and_failures_use_toast():
     assert "await root.requestFullscreen()" in click and "await document.exitFullscreen()" in click
     assert "typeof root.requestFullscreen !== 'function'" in click
     assert "typeof document.exitFullscreen !== 'function'" in click
-    assert re.search(r"catch\s*\([^)]*\)\s*\{\s*window\.synctxToast\(", click)
+    assert re.search(r"catch\s*\([^)]*\)\s*\{\s*synctxToast\(", click)
     failure = click.split("catch (err)")[1]
     assert "setLayout(" not in failure
     assert "'fullscreenchange', syncFullscreen" in render

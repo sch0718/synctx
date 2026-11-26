@@ -134,10 +134,6 @@
     };
   }
 
-  function serialize(store) {
-    return JSON.stringify({ schema: SCHEMA, doc: store.doc, memos: sortByCreated(store.memos).map(stripRuntime) });
-  }
-
   // 사람이 읽는 부분에 HTML 주석 구분자가 들어가면 데이터 주석과 섞이고 렌더링에서 글이 숨는다
   function readable(value) {
     return String(value == null ? '' : value).replace(/<!-{2}/g, '&lt;!--').replace(/-{2}>/g, '--&gt;');
@@ -444,7 +440,6 @@
     liveMemos: liveMemos,
     summarize: summarize,
     exportPayload: exportPayload,
-    serialize: serialize,
     toMarkdown: toMarkdown,
     validateMemo: validateMemo,
     parseImport: parseImport,

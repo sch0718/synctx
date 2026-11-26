@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-SLIDES_DIR = Path(__file__).resolve().parent.parent
+SLIDES_DIR = Path(__file__).resolve().parents[3] / "helm" / "synctx" / "files"
 SIDECAR = SLIDES_DIR / "sync-sidecar.sh"
 GENERATE_INDEX = SLIDES_DIR / "generate-index.sh"
 

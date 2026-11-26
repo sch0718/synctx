@@ -1,10 +1,11 @@
 """OpenProject API Client."""
 
 import logging
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
 import httpx
 from synctx_common.config import OpenProjectTargetConfig
+from sync_errors import SyncError
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +34,19 @@ class OpenProjectClient:
         url = "/api/v3/work_packages"
         params = {"filters": f'[{{"{self.config.external_key_custom_field}":{{"operator":"=","values":["{external_key}"]}}}}]'}
         
+        response = await self.client.get(url, params=params)
+        response.raise_for_status()
         try:
-            response = await self.client.get(url, params=params)
-            response.raise_for_status()
             data = response.json()
-            elements = data.get("_embedded", {}).get("elements", [])
-            if elements:
-                return elements[0]
-        except Exception as e:
-            logger.error(f"Failed to query OpenProject by external key: {e}")
-            
-        return None
+        except ValueError as e:
+            raise SyncError("Invalid JSON in OpenProject lookup response", "transient_error") from e
+        embedded = data.get("_embedded") if isinstance(data, dict) else None
+        elements = embedded.get("elements") if isinstance(embedded, dict) else None
+        if not isinstance(elements, list) or any(not isinstance(item, dict) for item in elements):
+            raise SyncError("Invalid elements in OpenProject lookup response", "transient_error")
+        if len(elements) > 1:
+            raise SyncError(f"Duplicate OpenProject external key: {external_key}", "conflict_error")
+        return elements[0] if elements else None
 
     async def get_version_by_name(self, project_id: str, version_name: str) -> Optional[int]:
         """프로젝트 내에서 이름으로 Version ID 조회."""
@@ -60,38 +63,21 @@ class OpenProjectClient:
             logger.error(f"Failed to query OpenProject version {version_name}: {e}")
         return None
 
-    def _apply_protected_fields(self, existing: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
-        """기존 WP가 있을 때 protected fields 정책을 적용하여 payload에서 제외한다."""
-        # 예: status, priority 등은 외부에서 변경하면 안 덮어쓰도록 설정 가능
-        # config.protected_fields 리스트에 있는 필드는 existing에 값이 있으면 payload에서 제거
-        protected_fields = getattr(self.config, "protected_fields", [])
-        
-        filtered_payload = dict(payload)
-        for field in protected_fields:
-            if field in filtered_payload and existing.get(field) is not None:
-                # 이미 값이 존재하면 덮어쓰지 않음
-                del filtered_payload[field]
-                
-        return filtered_payload
-
-    async def get_user_by_login(self, login: str) -> Optional[int]:
-        """로그인 이름으로 사용자 ID 조회."""
-        url = "/api/v3/users"
-        params = {"filters": f'[{{"login":{{"operator":"=","values":["{login}"]}}}}]'}
-        try:
-            response = await self.client.get(url, params=params)
-            response.raise_for_status()
-            elements = response.json().get("_embedded", {}).get("elements", [])
-            if elements:
-                return elements[0].get("id")
-        except Exception as e:
-            logger.error(f"Failed to query user by login '{login}': {e}")
-        return None
+    def _apply_protected_fields(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """기존 WP를 갱신할 때 생성 전용 필드를 제외한다."""
+        filtered = dict(payload)
+        links = dict(filtered.pop("_links", {}))
+        for field in self.config.protected_fields:
+            filtered.pop(field, None)
+            links.pop(field, None)
+        if links:
+            filtered["_links"] = links
+        return filtered
 
     async def mark_deleted(self, project_id: str, external_key: str) -> bool:
         """삭제된 파일에 대해 on_delete 정책에 따라 처리."""
         existing = await self.get_work_package_by_external_key(external_key)
-        if not existing:
+        if existing is None:
             return False
 
         closed_status_id = self.config.status_map.get("closed")
@@ -124,13 +110,13 @@ class OpenProjectClient:
         # payload에 external_key 세팅
         payload[self.config.external_key_custom_field] = external_key
         
-        if existing:
+        if existing is not None:
             wp_id = existing["id"]
             url = f"/api/v3/work_packages/{wp_id}"
             
             payload["lockVersion"] = existing.get("lockVersion", 0)
             
-            payload = self._apply_protected_fields(existing, payload)
+            payload = self._apply_protected_fields(payload)
             
             response = await self.client.patch(url, json=payload)
             response.raise_for_status()

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import logging
 import os
 from pathlib import Path
@@ -71,8 +70,6 @@ class GitRepoManager:
         self.base_dir = Path(base_dir)
         self.repo_dir = self.base_dir / profile.id
         self._status: RepoState = "cloning"
-        self._last_sync_at: datetime | None = None
-        self._last_sync_source: str | None = None
         self._head_sha = ""
         self._last_error: str | None = None
         # executor 스레드에서 도는 clone·fetch가 같은 저장소 디렉터리를 동시에 건드리지 않게 한다
@@ -81,14 +78,6 @@ class GitRepoManager:
     @property
     def status(self) -> RepoState:
         return self._status
-
-    @property
-    def last_sync_at(self) -> datetime | None:
-        return self._last_sync_at
-
-    @property
-    def last_sync_source(self) -> str | None:
-        return self._last_sync_source
 
     @property
     def head_sha_value(self) -> str:
@@ -273,17 +262,15 @@ class GitRepoManager:
                     )
                 self._head_sha = self.head_sha()
                 self._status = "ready"
-                self._last_sync_at = datetime.now(timezone.utc)
-                self._last_sync_source = "startup"
                 self._last_error = None
             except subprocess.CalledProcessError:
                 self._status = "error"
                 self._last_error = "startup sync failed"
 
-    async def fetch(self, source: str = "manual") -> str:
-        return await asyncio.get_running_loop().run_in_executor(None, self._fetch_sync, source)
+    async def fetch(self) -> str:
+        return await asyncio.get_running_loop().run_in_executor(None, self._fetch_sync)
 
-    def _fetch_sync(self, source: str) -> str:
+    def _fetch_sync(self) -> str:
         with self._sync_lock:
             try:
                 # 잠금 순서가 보장되지 않아 첫 clone보다 먼저 올 수 있다
@@ -295,17 +282,12 @@ class GitRepoManager:
                 )
                 self._head_sha = self.head_sha()
                 self._status = "ready"
-                self._last_sync_at = datetime.now(timezone.utc)
-                self._last_sync_source = source
                 self._last_error = None
                 return self._head_sha
             except subprocess.CalledProcessError:
                 self._status = "error"
                 self._last_error = "fetch failed"
                 raise
-
-    def invalidate_cache(self) -> None:
-        return
 
     def list_branches(self) -> list[str]:
         """원격 브랜치 목록을 반환한다."""
