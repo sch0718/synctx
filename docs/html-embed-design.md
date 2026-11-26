@@ -235,7 +235,7 @@ def to_iframe(result: BundleResult, aspect: str = "16/9", height: int | None = N
 |---|---|---|
 | `last_successful_sha == head_sha`면 바로 종료 | `run_sync` | 플랫폼 설정(`html_embed`)만 바뀌면 처리하지 않는다 |
 | `_should_process`가 `.md`만 통과 | `run_sync` 반복문 | `motion.js`만 바뀌면 처리 대상이 없다 |
-| `is_file_changed(path, content_sha)` | `run_sync` 반복문 | md를 대상에 넣어도 md 본문 SHA가 같으면 건너뛴다 |
+| `run_sync`의 `synced_files` 비교 | `run_sync` 반복문 | 파일의 동기화 SHA가 같으면 건너뛴다 |
 
 세 관문을 다음과 같이 바꾼다.
 
@@ -448,11 +448,10 @@ def _render_file_response(repo_id: str, path: str, theme: str = "github-light", 
 WP3는 `viewer-core.js`의 `SynctxViewerCore`에 다음 순수 함수를 추가하는 설계다. DOM 초기화와 이벤트는 기존 `viewer.js`의 즉시 실행 함수 안에 둔다.
 
 ```text
-renderViewportHeight(viewportHeight, barsHeight) -> number
 renderAspectRatio(aspect) -> number
 ```
 
-`renderViewportHeight`는 0 이상 높이(px), `renderAspectRatio`는 양수 비율을 반환한다(잘못된 비율은 `16/9`).
+`renderAspectRatio`는 양수 비율을 반환한다(잘못된 비율은 `16/9`).
 
 WP4의 기존 생성 함수 시그니처는 `build_local_config(values_file: Path, port: int, cache_dir: Path) -> dict`(`scripts/local/run_viewer.py`), `prepare_config(args: argparse.Namespace) -> Path`(`services/viewer/src/standalone.py`)다. 두 함수는 인자를 유지하고 TTL 기본값·명시값을 반영한다. `run-lite.sh`는 후자로 위임한다. Helm·Docker 공개 계약은 14.7을 따른다.
 

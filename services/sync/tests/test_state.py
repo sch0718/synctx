@@ -8,39 +8,21 @@ from state import StateManager, RepoState, SyncedFileState, PendingFailure
 class TestStateManager:
     def test_initial_state(self, tmp_path):
         sm = StateManager(str(tmp_path / "state"))
-        assert sm.get_last_successful_sha("repo-a") is None
-
-    def test_update_and_get(self, tmp_path):
-        sm = StateManager(str(tmp_path / "state"))
-        sm.update_last_successful_sha("repo-a", "abc123")
-        assert sm.get_last_successful_sha("repo-a") == "abc123"
+        assert sm.get_state("repo-a").last_successful_sha is None
 
     def test_persistence(self, tmp_path):
         state_dir = str(tmp_path / "state")
         sm1 = StateManager(state_dir)
-        sm1.update_last_successful_sha("repo-a", "sha1")
+        sm1.save_state("repo-a", RepoState(repo_id="repo-a", last_successful_sha="sha1"))
 
         sm2 = StateManager(state_dir)
-        assert sm2.get_last_successful_sha("repo-a") == "sha1"
-
-    def test_multiple_repos(self, tmp_path):
-        sm = StateManager(str(tmp_path / "state"))
-        sm.update_last_successful_sha("repo-a", "sha-a")
-        sm.update_last_successful_sha("repo-b", "sha-b")
-        assert sm.get_last_successful_sha("repo-a") == "sha-a"
-        assert sm.get_last_successful_sha("repo-b") == "sha-b"
-
-    def test_overwrite(self, tmp_path):
-        sm = StateManager(str(tmp_path / "state"))
-        sm.update_last_successful_sha("repo-a", "sha1")
-        sm.update_last_successful_sha("repo-a", "sha2")
-        assert sm.get_last_successful_sha("repo-a") == "sha2"
+        assert sm2.get_state("repo-a").last_successful_sha == "sha1"
 
     def test_backup_file_created(self, tmp_path):
         state_dir = tmp_path / "state"
         sm = StateManager(str(state_dir))
-        sm.update_last_successful_sha("repo-a", "sha1")
-        sm.update_last_successful_sha("repo-a", "sha2")
+        sm.save_state("repo-a", RepoState(repo_id="repo-a", last_successful_sha="sha1"))
+        sm.save_state("repo-a", RepoState(repo_id="repo-a", last_successful_sha="sha2"))
         bak = state_dir / "repo-a.bak"
         assert bak.exists()
         data = json.loads(bak.read_text())
@@ -59,7 +41,7 @@ class TestStateManager:
             "pending_failures": [],
         }))
         sm = StateManager(str(state_dir))
-        assert sm.get_last_successful_sha("repo-a") == "sha-bak"
+        assert sm.get_state("repo-a").last_successful_sha == "sha-bak"
 
     def test_corrupt_both_returns_none(self, tmp_path):
         state_dir = tmp_path / "state"
@@ -67,34 +49,10 @@ class TestStateManager:
         (state_dir / "repo-a.json").write_text("invalid")
         (state_dir / "repo-a.bak").write_text("also invalid")
         sm = StateManager(str(state_dir))
-        assert sm.get_last_successful_sha("repo-a") is None
+        assert sm.get_state("repo-a").last_successful_sha is None
 
 
 class TestPerFileTracking:
-    def test_file_changed_new_file(self, tmp_path):
-        sm = StateManager(str(tmp_path / "state"))
-        assert sm.is_file_changed("repo-a", "docs/test.md", "sha256abc") is True
-
-    def test_file_not_changed(self, tmp_path):
-        sm = StateManager(str(tmp_path / "state"))
-        state = sm.get_state("repo-a")
-        sm.record_file_synced(
-            state, "docs/test.md", "sha256abc", "xwiki",
-            "repo-a:docs/test.md", "xwiki:docs.test", "commit1", "2026-01-01T00:00:00Z",
-        )
-        sm.save_state("repo-a", state)
-        assert sm.is_file_changed("repo-a", "docs/test.md", "sha256abc") is False
-
-    def test_file_changed_after_content_update(self, tmp_path):
-        sm = StateManager(str(tmp_path / "state"))
-        state = sm.get_state("repo-a")
-        sm.record_file_synced(
-            state, "docs/test.md", "sha256abc", "xwiki",
-            "repo-a:docs/test.md", "xwiki:docs.test", "commit1", "2026-01-01T00:00:00Z",
-        )
-        sm.save_state("repo-a", state)
-        assert sm.is_file_changed("repo-a", "docs/test.md", "sha256xyz") is True
-
     def test_record_file_deleted(self, tmp_path):
         sm = StateManager(str(tmp_path / "state"))
         state = sm.get_state("repo-a")

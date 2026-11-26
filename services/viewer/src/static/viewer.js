@@ -22,8 +22,6 @@
   }
   function encodePath(path) { return String(path).split('/').map(encodeURIComponent).join('/'); }
   function _refParam(sep) { return ACTIVE_REF ? sep + 'ref=' + encodeURIComponent(ACTIVE_REF) : ''; }
-  window.escapeHtml = escapeHtml;
-  window.encodePath = encodePath;
 
   /* ── 알림 ── */
   function synctxToast(opts) {
@@ -78,7 +76,6 @@
     function close() { window.clearInterval(timer); window.clearTimeout(timer); el.remove(); }
     return { close: close };
   }
-  window.synctxToast = synctxToast;
 
   /* ── 테마·저장소·브랜치 ── */
   function applyTheme(theme) {
@@ -1008,7 +1005,7 @@
             await root.requestFullscreen();
           }
         } catch (err) {
-          window.synctxToast({ kind: 'error', title: '전체 화면을 전환할 수 없습니다', body: '브라우저의 전체 화면 지원과 권한을 확인하세요.' });
+          synctxToast({ kind: 'error', title: '전체 화면을 전환할 수 없습니다', body: '브라우저의 전체 화면 지원과 권한을 확인하세요.' });
         }
       }
     });

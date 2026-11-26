@@ -12,6 +12,7 @@ from typing import Any, Optional, Sequence
 from synctx_common.frontmatter import parse_frontmatter, validate_meeting
 
 from meeting_card import KST
+from search import _PARTIAL_CLONE_MODES, is_discoverable_path
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,6 @@ MEMO_QUOTE_MAX = 1000
 MEMO_SCHEMA = 1
 
 STATUSES = ("upcoming", "ongoing", "ended", "cancelled")
-_PARTIAL_CLONE_MODES = {"blobless", "treeless"}
 _MEMO_MARKER = "synctx-" + "memo-data"
 _MEMO_OPEN = "<!" + "--"
 _MEMO_CLOSE = "-->"
@@ -95,11 +95,7 @@ def clear_cache() -> None:
 
 
 def _candidate_path(path: str) -> bool:
-    if path.lower().endswith(MEMO_SUFFIX):
-        return False
-    if any(ord(char) < 32 or ord(char) == 127 for char in path):
-        return False
-    return not any(part.startswith(".") for part in path.split("/"))
+    return not path.lower().endswith(MEMO_SUFFIX) and is_discoverable_path(path)
 
 
 def memo_path_for(path: str) -> str:
@@ -187,7 +183,7 @@ def _entry_from_document(repo_id: str, repo_name: str, path: str, text: str):
                         cancelled=meeting.cancelled), None
 
 
-def _build(repo_id: str, repo_name: str, manager: Any, sha: str) -> RepoMeetings:
+def _build(repo_id: str, repo_name: str, manager: Any) -> RepoMeetings:
     resolved = manager.resolve_ref()
     grep = manager.grep(CANDIDATE_QUERY, None, pathspecs=CANDIDATE_PATHSPECS, path_filter=_candidate_path,
                         limit=CANDIDATE_MATCH_LIMIT, timeout=GREP_TIMEOUT_SECONDS)
@@ -246,7 +242,7 @@ def collect(repo_id: str, repo_name: str, manager: Any) -> RepoMeetings:
         cached = _cache.get(repo_id)
         if cached is not None and cached[0] == sha:
             return cached[1]
-        result = _build(repo_id, repo_name, manager, sha)
+        result = _build(repo_id, repo_name, manager)
     except Exception as exc:
         logger.warning("meeting_index_failed repo_id=%s error=%s", repo_id, type(exc).__name__)
         return RepoMeetings(repo_id, repo_name, "failed")

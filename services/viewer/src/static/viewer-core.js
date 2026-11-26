@@ -267,12 +267,6 @@
   var MEETING_GUIDE_HIDDEN = 'hidden';
   function meetingGuideAutoOpen(stored) { return stored !== MEETING_GUIDE_HIDDEN; }
 
-  function renderViewportHeight(viewportHeight, barsHeight) {
-    if (typeof viewportHeight !== 'number' || !isFinite(viewportHeight) || viewportHeight < 0) return 0;
-    if (typeof barsHeight !== 'number' || !isFinite(barsHeight) || barsHeight < 0) barsHeight = 0;
-    return Math.max(0, viewportHeight - barsHeight);
-  }
-
   function renderAspectRatio(aspect) {
     var fallback = 16 / 9;
     if (typeof aspect === 'number') return isFinite(aspect) && aspect > 0 ? aspect : fallback;
@@ -356,7 +350,6 @@
     presentKeyAction: presentKeyAction,
     MEETING_GUIDE_HIDDEN: MEETING_GUIDE_HIDDEN,
     meetingGuideAutoOpen: meetingGuideAutoOpen,
-    renderViewportHeight: renderViewportHeight,
     renderAspectRatio: renderAspectRatio,
     renderFrameHash: renderFrameHash,
     renderDocHref: renderDocHref,

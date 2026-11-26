@@ -102,7 +102,7 @@ def test_header_without_repo_has_no_branch_but_keeps_menu():
 
 
 def test_mobile_nav_holds_controls_and_close():
-    html = ui.render_mobile_nav(controls='<div class="nav-controls"></div>', extra="<p>x</p>")
+    html = ui.render_mobile_nav(controls='<div class="nav-controls"></div>')
     assert html.startswith('<nav id="shell-nav" class="shell-nav shell-nav-mobile-only"')
     assert ui.NAV_CLOSE in html and '<div class="nav-controls"></div>' in html
     assert 'class="nav-backdrop" data-action="close-nav" hidden' in html
@@ -338,12 +338,13 @@ def test_search_page_without_query_is_not_an_alert():
 def test_evidence_list_escapes_and_links():
     from evidence import Entry
     e = Entry("evidence-1", "r", "a.md", "c1", "<문서>", "위치&", "<p>본문</p>", (("s1", "<절>"),))
-    html = ui.render_evidence_list([e], href_for=lambda x: "/view/r/a.md#c1")
+    ids = {"list": "evidence-list", "title": "evidence-title", "data": "evidence-data"}
+    html = ui.render_evidence_list([e], ids=ids, href_for=lambda x: "/view/r/a.md#c1")
     assert "&lt;문서&gt;" in html and "위치&amp;" in html and "<p>본문</p>" in html
     assert 'href="#s1">&lt;절&gt;</a>' in html and '<a href="/view/r/a.md#c1">원문 열기</a>' in html and "근거 1건" in html
-    assert "원문 열기" not in ui.render_evidence_list([e])
-    assert ui.render_evidence_list([]) == ""
-    assert '"id": "evidence-1"' in ui.render_evidence_data([e]).replace("\\u003c", "<") or '"id":"evidence-1"' in ui.render_evidence_data([e])
+    assert "원문 열기" not in ui.render_evidence_list([e], ids=ids)
+    assert ui.render_evidence_list([], ids=ids) == ""
+    assert '"id": "evidence-1"' in ui.render_evidence_data([e], ids=ids).replace("\\u003c", "<") or '"id":"evidence-1"' in ui.render_evidence_data([e], ids=ids)
 
 
 @pytest.mark.parametrize('reason', ['', '취소된 회의입니다', '회의 시작 15분 전부터 참여할 수 있습니다', '영상 회의가 꺼져 있습니다'])

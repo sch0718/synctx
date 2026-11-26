@@ -36,6 +36,13 @@ def normalize_query(raw: str | None) -> str | None:
     return query
 
 
+def is_discoverable_path(path: str) -> bool:
+    # 문서 주소에서 제어 문자를 거부하고 파일 트리는 점 경로를 숨긴다.
+    if any(ord(char) < 32 or ord(char) == 127 for char in path):
+        return False
+    return not any(part.startswith(".") for part in path.split("/"))
+
+
 def viewable_pathspecs(
     markdown_extensions: Iterable[str],
     code_extensions: Iterable[str],

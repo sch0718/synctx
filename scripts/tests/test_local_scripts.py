@@ -38,6 +38,18 @@ def _fake_bin(tmp_path, *names):
     return env
 
 
+def test_verify_reports_summary_when_kubectl_fails(tmp_path):
+    env = _fake_bin(tmp_path, "minikube", "kubectl", "curl")
+    (tmp_path / "bin" / "kubectl").write_text("#!/bin/sh\nexit 2\n")
+    (tmp_path / "bin" / "curl").write_text("#!/bin/sh\nprintf 200\n")
+    result = subprocess.run(
+        ["bash", str(LOCAL / "verify.sh")], capture_output=True, text=True, env=env, timeout=10,
+    )
+    assert result.returncode == 1
+    assert "검증 결과" in result.stdout
+    assert "항목에서 문제 발견" in result.stdout
+
+
 def _mailpit_manifests():
     text = DEPLOY_DEPS.read_text()
     body = text.split("<<'MAIL_EOF'\n", 1)[1].split("\nMAIL_EOF", 1)[0]

@@ -445,7 +445,6 @@ synctx/
 │   │   │   ├── sync_cli.py            # CLI 엔트리포인트 (synctx-sync)
 │   │   │   ├── sync_engine.py         # 동기화 오케스트레이션 + retry
 │   │   │   ├── embed_sync.py          # synctx-html 블록 합본·XWiki/OpenProject 본문 변환
-│   │   │   ├── harness_validator.py   # 하네스 검증 (synctx_common.harness 위임)
 │   │   │   ├── state.py               # state.json atomic read/write
 │   │   │   ├── lease.py               # 저장소별 실행 잠금 (K8s Lease, 클러스터 밖에서는 O_CREAT|O_EXCL 파일 잠금)
 │   │   │   ├── metrics_push.py        # 저장소별 메트릭 누적 보존 + Pushgateway push
@@ -483,9 +482,6 @@ synctx/
 │   │       └── test_feedback_metrics.py
 │   │
 │   └── slides/                        # Slides Server (Nginx). Draw.io는 외부 이미지라 디렉터리가 없다
-│       ├── nginx.conf
-│       ├── sync-sidecar.sh            # 출판 저장소 git pull
-│       ├── generate-index.sh          # 출판 HTML 목록 index.html 생성
 │       ├── refresh-server.sh          # 즉시 pull 요청을 받는 refresh 서버
 │       └── tests/
 │           └── test_slides_scripts.py

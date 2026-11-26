@@ -4,11 +4,12 @@ import asyncio
 import logging
 
 from synctx_common.config import load_config
+from synctx_common.logging import configure_logging
 
 from exporter import FeedbackExporter
 
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+configure_logging(service_name="feedback")
 logger = logging.getLogger(__name__)
 
 

@@ -1,6 +1,5 @@
 #!/bin/bash
 # verify.sh - synctx 로컬 환경 검증
-set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_common.sh"

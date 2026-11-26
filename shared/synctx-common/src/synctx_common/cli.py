@@ -5,8 +5,9 @@ from pathlib import Path
 
 from .config import load_config
 from .harness import HarnessValidator
+from .logging import configure_logging
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+configure_logging(service_name="synctx")
 logger = logging.getLogger(__name__)
 
 def main():

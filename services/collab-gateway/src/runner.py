@@ -11,6 +11,7 @@ from typing import Optional
 
 from adapters.base import ChannelRef, MessengerAdapter, SendError
 import messages
+from messages import KST
 from models import EvidenceResult, Meeting, SearchResult
 from scheduler import Notification, plan_meeting
 from gateway_state import StateStore
@@ -29,7 +30,6 @@ MAX_FAILURES = 10
 FETCH_WINDOW = timedelta(days=8)
 KINDS = ("reminder", "changed", "cancelled", "summary")
 RESULTS = ("sent", "failed", "gave_up")
-KST = timezone(timedelta(hours=9))
 
 for _kind in KINDS:
     for _result in RESULTS:

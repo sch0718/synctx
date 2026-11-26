@@ -1,6 +1,10 @@
 """SyncEngine 통합 테스트 (외부 의존성 mock)."""
 
+from contextlib import nullcontext
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
 
 import pytest
 
@@ -78,6 +82,16 @@ class TestSyncReport:
 
 
 class TestErrorClassification:
+    @pytest.mark.parametrize("status,expected", [
+        (503, "transient_error"), (404, "transient_error"),
+        (401, "auth_error"), (409, "conflict_error"),
+    ])
+    def test_http_status_takes_precedence_over_url(self, status, expected):
+        error = httpx.Response(status, request=httpx.Request("GET", "https://op.internal/invalid"))
+        with pytest.raises(httpx.HTTPStatusError) as raised:
+            error.raise_for_status()
+        assert classify_error(raised.value) == expected
+
     def test_auth_error_401(self):
         assert classify_error(Exception("HTTP 401 Unauthorized")) == "auth_error"
 
@@ -114,6 +128,51 @@ class TestErrorClassification:
         assert can_advance_state("transient_error") is False
         assert can_advance_state("auth_error") is False
         assert can_advance_state("mapping_error") is False
+
+
+@pytest.mark.asyncio
+async def test_openproject_lookup_failure_is_reprocessed_next_run(tmp_path, monkeypatch):
+    config = _make_config(
+        targets=TargetsConfig(openproject=_op_config()),
+        sync=SyncConfig(state_path=str(tmp_path)),
+        mappings=[MappingRule(
+            match=TargetMatchConfig(path_prefix="issues/", extensions=[".md"]),
+            target="openproject",
+            openproject=OpenProjectTargetMapping(project="42"),
+        )],
+    )
+    engine = SyncEngine(config)
+    path = "issues/invalid.md"
+    git = MagicMock(status="ready", head_sha_value="new-head", ensure=AsyncMock())
+    git.list_tree.return_value = [SimpleNamespace(type="file", name="invalid.md", path=path)]
+    git.file_paths.return_value = {path}
+    git.read_file_text.return_value = "# Task"
+    monkeypatch.setattr("sync_engine.GitRepoManager", lambda *_: git)
+    monkeypatch.setattr("sync_engine.repo_lock", lambda *_: nullcontext(MagicMock()))
+    monkeypatch.setattr(engine, "_get_retry_config", lambda _: TargetRetryConfig(max_attempts=1))
+    request = httpx.Request("GET", "https://op.internal/api/v3/work_packages?filters=invalid")
+    engine.op_client.client.get = AsyncMock(side_effect=[
+        httpx.Response(503, request=request),
+        httpx.Response(200, request=request, json={"_embedded": {"elements": []}}),
+    ])
+    engine.op_client.client.post = AsyncMock(return_value=MagicMock())
+    repo = _make_repo()
+
+    try:
+        first = await engine.run_sync(repo)
+        engine.op_client.client.post.assert_not_awaited()
+        assert first.failed[0]["error_type"] == "transient_error"
+        state = engine.state_manager.get_state(repo.id)
+        assert state.last_successful_sha is None
+        assert state.pending_failures[0].path == path
+
+        second = await engine.run_sync(repo)
+        assert second.success == [path]
+        engine.op_client.client.post.assert_awaited_once()
+        state = engine.state_manager.get_state(repo.id)
+        assert state.last_successful_sha == "new-head" and not state.pending_failures
+    finally:
+        await engine.close()
 
 
 class TestResolveTarget:

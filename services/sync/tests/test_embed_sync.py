@@ -390,6 +390,18 @@ async def test_unchanged_head_and_policy_does_nothing(tmp_path, monkeypatch, rep
 
 
 @pytest.mark.asyncio
+async def test_changed_path_with_identical_content_is_skipped(tmp_path, monkeypatch, repo):
+    eng = engine(tmp_path, monkeypatch)
+    await eng.run_sync(profile())
+    assert len(published(eng)) == 1
+
+    repo.head, repo.diff = "h2", [("M", MD)]
+    report = await eng.run_sync(profile())
+    assert report.skipped == [MD]
+    assert published(eng) == []
+
+
+@pytest.mark.asyncio
 async def test_state_without_index_triggers_full_scan(tmp_path, monkeypatch, repo):
     from state import RepoState
     StateManager(str(tmp_path)).save_state("r", RepoState(repo_id="r", last_successful_sha="h1"))

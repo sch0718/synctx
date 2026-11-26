@@ -144,21 +144,6 @@ class StateManager:
             except Exception as e:
                 logger.warning(f"Directory fsync failed: {e}")
 
-    def get_last_successful_sha(self, repo_id: str) -> Optional[str]:
-        return self.get_state(repo_id).last_successful_sha
-
-    def update_last_successful_sha(self, repo_id: str, sha: str) -> None:
-        state = self.get_state(repo_id)
-        state.last_successful_sha = sha
-        self.save_state(repo_id, state)
-
-    def is_file_changed(self, repo_id: str, path: str, content_sha: str) -> bool:
-        """파일의 content SHA가 마지막 동기화 시점과 달라졌는지 확인."""
-        state = self.get_state(repo_id)
-        if path not in state.synced_files:
-            return True
-        return state.synced_files[path].content_sha != content_sha
-
     def record_file_synced(
         self, state: RepoState, path: str, content_sha: str, target: str,
         external_key: str, resource_id: str, commit_sha: str, synced_at: str,

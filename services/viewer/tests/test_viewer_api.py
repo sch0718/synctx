@@ -1,5 +1,6 @@
 """Viewer API 단위 테스트."""
 
+import hmac
 import json
 from unittest.mock import MagicMock, patch
 from pathlib import Path, PurePosixPath
@@ -162,9 +163,58 @@ class TestHTMLSanitization:
 
     def test_sanitize_function_removes_event_handlers(self):
         from app import _sanitize_html
-        result = _sanitize_html('<div onload="evil()">content</div>')
-        assert "onload" not in result
-        assert "content" in result
+        text = '<pre><code>x.onclick = y;\nconst one = 1;</code></pre><p>online=true.</p>'
+        assert _sanitize_html(text) == text
+        slot = '<div class="synctx-html-slot" data-slot="ab-0"></div>'
+        assert _sanitize_html(slot) == slot
+        cleaned = _sanitize_html(
+            '<div onload="e()"></div><img src=x onerror=alert(1)><a href="x"onclick="e()">'
+            '<div\nonclick=e()><a title="a>b" onclick="e()"><div onclick class="keep">'
+            '<div title="keep onclick=example"><a href=https://example.test/onboarding>'
+        )
+        assert "onload" not in cleaned and "onerror" not in cleaned
+        assert "onclick=" not in cleaned.replace('title="keep onclick=example"', "")
+        assert '<img src="x">' in cleaned and '<a href="x">' in cleaned
+        assert 'title="a&gt;b"' in cleaned and '<div class="keep">' in cleaned
+        assert '<a href="https://example.test/onboarding">' in cleaned
+
+    @pytest.mark.parametrize("hidden", [
+        '<!-- <a title=" -->\n<img src=x onerror=alert(1)>\n<p class="x">hi</p>',
+        '<!-- <a title=" -->\n<img title="a>b" src=x onerror=alert(1)>',
+        '<style><a title="</style><img src=x onerror=alert(1)>"></style>',
+        '<?x <a title="?> <img src=x onerror=alert(1)> "x">',
+        '<!--> <img src=x onerror=alert(1)> -->',
+        '<p>a</p><script>alert(1)',
+        '<noscript><p title="</noscript><img src=x alt=\'"></p></noscript>\' onerror=alert(1) >',
+        '<div><svg><style><img src=x alt="</style><b title=" onerror=alert(1)">x</b></svg></div>',
+    ])
+    def test_sanitize_parses_like_a_browser(self, hidden):
+        import inspect
+        from html.parser import HTMLParser
+        from app import _sanitize_html
+
+        class Live(HTMLParser):
+            found: list = []
+
+            def handle_starttag(self, tag, attrs):
+                self.found += [tag] if tag == "script" else [k for k, _ in attrs if k.startswith("on")]
+
+        result = _sanitize_html(hidden)
+        # 브라우저처럼 scripting을 켠 파서로도 다시 읽어, 살아 있는 핸들러·script가 없는지 본다
+        modes = [{}, {"scripting": True}] if "scripting" in inspect.signature(HTMLParser).parameters else [{}]
+        for mode in modes:
+            parser = Live(**mode)
+            parser.found = []
+            parser.feed(result)
+            parser.close()
+            assert parser.found == [], (mode, result)
+
+    def test_sanitize_unclosed_tags_stay_linear(self):
+        import time
+        from app import _sanitize_html
+        started = time.perf_counter()
+        _sanitize_html("<a b " * 20000)
+        assert time.perf_counter() - started < 1.0
 
     def test_sanitize_function_removes_script(self):
         from app import _sanitize_html
@@ -214,9 +264,9 @@ class TestRawMarkdownScript:
         assert json.loads(payload) == {"markdown": markdown}
 
     def test_encode_for_script_escapes_unsafe_chars(self):
-        from app import _encode_for_script
+        from meeting import encode_for_script
         value = {"markdown": "a<b>c&d" + chr(0x2028) + chr(0x2029) + "한글"}
-        encoded = _encode_for_script(value)
+        encoded = encode_for_script(value)
         for ch in ("<", ">", "&", chr(0x2028), chr(0x2029)):
             assert ch not in encoded
         assert json.loads(encoded) == value
@@ -1180,6 +1230,13 @@ class TestWebhookToken:
             headers={"X-Service-Token": "wrong-token"},
         )
         assert resp.status_code == 401
+
+    def test_webhook_compares_non_ascii_token_as_bytes(self, client, monkeypatch):
+        monkeypatch.setenv("SYNCTX_SERVICE_TOKEN", "토큰")
+        with patch("app.hmac.compare_digest", wraps=hmac.compare_digest) as compare:
+            resp = client.post("/api/repos/test-repo/webhook", headers={"X-Service-Token": "wrong-token"})
+        assert resp.status_code == 401
+        compare.assert_called_once_with(b"wrong-token", "토큰".encode())
 
     def test_webhook_accepts_correct_token(self, client, mock_repo_manager, monkeypatch):
         from unittest.mock import AsyncMock

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Iterable, Sequence
 
 import messages
+from messages import KST, _CONTROL_RE
 from models import DocumentLink, EvidenceResult, Meeting, SearchResult
 
-KST = timezone(timedelta(hours=9))
 LINE_LIMIT = 20
 CANDIDATE_LIMIT = 5
 MAX_ARG_CHARS = 200
@@ -30,7 +30,6 @@ _ALIASES = {
     "근거": "evidence", "evidence": "evidence",
     "도움말": "help", "help": "help", "?": "help", "": "help",
 }
-_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f  ]+")
 _DAYS_RE = re.compile(r"(\d{1,3})\s*일?")
 
 HELP_TEXT = (

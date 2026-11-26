@@ -8,15 +8,19 @@ import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+import httpx
+
 from synctx_common.config import SynctxConfig, RepoProfile, TargetRetryConfig
 from synctx_common.git_manager import GitRepoManager
 from synctx_common.observability import (
+    html_bundle_total,
     sync_runs_total,
     sync_items_total,
     sync_failures_total,
     sync_last_success_timestamp,
 )
 from state import StateManager, RepoState, SyncedFileState
+from sync_errors import SyncError
 from lease import LeaseLock, LeaseLostError, repo_lock
 from metrics_push import PUSHGATEWAY_URL_ENV, RepoMetrics, push_totals
 from targets.xwiki import XWikiClient
@@ -24,7 +28,6 @@ from targets.openproject import OpenProjectClient
 from urllib.parse import quote
 
 from synctx_common.html_bundle import repo_reader
-from synctx_common.observability import html_bundle_total
 from embed_sync import (
     MarkdownAnalysis,
     analyze,
@@ -36,14 +39,6 @@ from embed_sync import (
 from synctx_common.frontmatter import parse_frontmatter
 
 logger = logging.getLogger(__name__)
-
-
-class SyncError(Exception):
-    """Sync Engine 에러 with 분류."""
-
-    def __init__(self, message: str, error_type: str):
-        super().__init__(message)
-        self.error_type = error_type
 
 
 class SyncReport:
@@ -87,11 +82,18 @@ class SyncReport:
 
 def classify_error(e: Exception) -> str:
     """에러를 설계 문서 5가지 분류로 구분."""
-    msg = str(e).lower()
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code
+        if status in (401, 403):
+            return "auth_error"
+        if status == 409:
+            return "conflict_error"
+        return "transient_error"
 
     if isinstance(e, SyncError):
         return e.error_type
 
+    msg = str(e).lower()
     if "401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg:
         return "auth_error"
     if "429" in msg or "5" in msg[:1] and msg[1:4].isdigit() or "timeout" in msg or "connection" in msg:
@@ -264,7 +266,8 @@ class SyncEngine:
 
                 content_sha = self._compute_content_sha(git_manager, status, path, repo, state)
                 forced = path in stale or path in retry
-                if status != "D" and not forced and not self.state_manager.is_file_changed(repo.id, path, content_sha):
+                synced = state.synced_files.get(path)
+                if status != "D" and not forced and synced is not None and synced.content_sha == content_sha:
                     report.record_skip(path)
                     continue
 
@@ -350,7 +353,7 @@ class SyncEngine:
         git_manager: GitRepoManager,
         status: str,
         path: str,
-        repo: Optional[RepoProfile] = None,
+        repo: RepoProfile,
         state: Optional[RepoState] = None,
     ) -> str:
         if status == "D":
@@ -361,7 +364,7 @@ class SyncEngine:
             content = git_manager.read_file_text(path)
         except Exception:
             return ""
-        if repo is None or not path.endswith(".md"):
+        if not path.endswith(".md"):
             return hashlib.sha256(content.encode()).hexdigest()
         _, body = parse_frontmatter(content)
         analysis = self._html_analysis(repo, git_manager, path, body)
@@ -632,7 +635,6 @@ class SyncEngine:
             return None
 
         content = git_manager.read_file_text(path)
-        from synctx_common.frontmatter import parse_frontmatter
         fm, body = parse_frontmatter(content)
 
         if fm:

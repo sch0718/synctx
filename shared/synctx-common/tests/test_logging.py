@@ -1,9 +1,27 @@
 import json
 import logging
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from synctx_common.logging import configure_logging, SynctxJsonFormatter
+
+
+@pytest.mark.parametrize("module,service", [("feedback_cli", "feedback"), ("synctx_common.cli", "synctx")])
+def test_cli_logs_are_structured_and_mask_secrets(monkeypatch, module, service):
+    root = Path(__file__).resolve().parents[3]
+    monkeypatch.setenv("PYTHONPATH", str(root / "services" / "feedback" / "src"))
+    monkeypatch.setenv("SYNCTX_LOG_FORMAT", "json")
+    monkeypatch.setenv("SYNCTX_LOG_LEVEL", "INFO")
+    result = subprocess.run(
+        [sys.executable, "-c", f"import {module}; import logging; logging.info('token=example')"],
+        capture_output=True, text=True, check=True,
+    )
+    record = json.loads(result.stderr)
+    assert record["service"] == service
+    assert record["message"] == "token=***"
 
 
 class TestConfigureLogging:

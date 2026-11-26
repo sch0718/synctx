@@ -93,7 +93,16 @@ class TestPreviewHtml:
 
 
 class TestPublish:
-    def test_publish_success(self, client, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("git_fails", [False, True])
+    def test_publish_result(self, client, tmp_path, monkeypatch, git_fails):
+        from synctx_common.observability import marp_publish_total
+
+        # Both series must be exported before the first publish.
+        metrics = client.get("/metrics").text
+        for result in ("ok", "error"):
+            assert f'synctx_marp_publish_total{{result="{result}"}}' in metrics
+        counter = marp_publish_total.labels(result="error" if git_fails else "ok")
+        before = counter._value.get()
         monkeypatch.setenv("MARP_WORK_DIR", str(tmp_path))
         monkeypatch.setattr("app.config.marp.publish_repo", "https://git.internal/slides.git")
         monkeypatch.setattr("app.config.marp.worktree_path", str(tmp_path / "worktree"))
@@ -105,7 +114,7 @@ class TestPublish:
 
         mock_manager = MagicMock()
         mock_manager.ensure = AsyncMock()
-        mock_manager.commit_and_push = MagicMock()
+        mock_manager.commit_and_push = MagicMock(side_effect=RuntimeError("git failed") if git_fails else None)
 
         with patch("app.subprocess.run", side_effect=fake_run), \
              patch("app.get_publish_manager", return_value=mock_manager):
@@ -114,11 +123,16 @@ class TestPublish:
                 "filename": "my-deck",
             })
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "success"
-        assert data["url"] == "/slides/my-deck.html"
-        assert data["path"].endswith("/my-deck.html")
+        assert counter._value.get() == before + 1
+        if git_fails:
+            assert resp.status_code == 500
+            assert resp.json()["detail"] == "Failed to publish to git repository"
+        else:
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "success"
+            assert data["url"] == "/slides/my-deck.html"
+            assert data["path"].endswith("/my-deck.html")
         assert mock_manager.commit_and_push.call_args.kwargs["message"] == "docs(slides): publish my-deck.html"
         mock_manager.commit_and_push.assert_called_once()
 

@@ -175,26 +175,20 @@ collab_last_success_timestamp = Gauge(
 )
 
 
-def _normalize_path(path: str, route=None) -> str:
-    """Collapse path parameters to reduce cardinality."""
-    if getattr(route, "path", None) in (
+def _normalize_path(route) -> str:
+    """Group requests by route without putting URL parameters in labels."""
+    path = getattr(route, "path", "unmatched")
+    if path in (
         "/render/{token}/{repo_id}/{path:path}",
         "/view/render/{token}/{repo_id}/{path:path}",
     ):
         return "/render/{token}/{repo_id}/{path}"
-    if getattr(route, "path", None) in (
+    if path in (
         "/open/{token}/{repo_id}/{path:path}",
         "/view/open/{token}/{repo_id}/{path:path}",
     ):
         return "/open/{token}/{repo_id}/{path}"
-    parts = path.strip("/").split("/")
-    normalized = []
-    for i, part in enumerate(parts):
-        if i > 0 and normalized and normalized[-1] in ("repos", "cdn", "list"):
-            normalized.append("{id}")
-        else:
-            normalized.append(part)
-    return "/" + "/".join(normalized) if normalized else "/"
+    return path
 
 
 def register_observability_routes(
@@ -213,7 +207,9 @@ def register_observability_routes(
         response = await call_next(request)
         duration = time.perf_counter() - start
 
-        path = _normalize_path(request.url.path, request.scope.get("route"))
+        route = request.scope.get("route")
+        # Starlette Mount sets no scope["route"] but does set "endpoint": keep it apart from a real 404.
+        path = "mount" if route is None and request.scope.get("endpoint") else _normalize_path(route)
         http_requests_total.labels(
             service=svc, method=request.method, path=path, status=response.status_code
         ).inc()

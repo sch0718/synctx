@@ -1,4 +1,4 @@
-.PHONY: all build test lint helm-lint manifest clean smoke-test
+.PHONY: all build test helm-lint manifest clean smoke-test
 
 REGISTRY ?= registry.internal/synctx
 VERSION  ?= 0.8.3

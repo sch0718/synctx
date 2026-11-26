@@ -76,17 +76,7 @@
 ### 1.4 mermaid_to_svg.py → Sync Engine `sync_converters/mermaid.py`
 
 - **소스**: `example-infra/10. 문서/문서변환/mermaid_to_svg.py`
-- **기능**: Mermaid 코드 블록 → SVG 일괄 변환
-- **포함 내용**:
-  - `find_mmdc()` — mmdc CLI 자동 감지
-  - `convert_block_to_svg()` — 단일 블록 변환
-  - `read_svg_inline()` — SVG를 인라인 삽입용 문자열로 변환
-  - `process_file()` — 파일 내 모든 Mermaid 블록 처리
-- **대상 서비스**: Sync Engine
-- **수정 필요 사항**:
-  - CLI argparse 제거, 함수형 API로 리팩토링
-  - `extract_mermaid_blocks(md_text) → list[MermaidBlock]` 형태로 단순화
-- **상태**: `services/sync/src/sync_converters/mermaid.py`에 함수형 API `convert_mermaid_to_svg(code) → bytes`를 더해 Sync Engine(`_process_mermaid_blocks`)이 쓴다. `extract_mermaid_blocks`는 만들지 않았고 CLI(`parse_args`·`main`)는 남아 있다
+- **상태**: Sync Engine의 `_process_mermaid_blocks`가 `convert_mermaid_to_svg(code)`를 호출해 Mermaid 코드 블록을 SVG 첨부 파일로 변환한다.
 
 ### 1.5 convert_md_to_html.py (참고)
 
@@ -154,7 +144,7 @@
   - `20. Helm/docs-site/` — Helm Chart (deployment, service, ingress)
 - **대상 서비스**: Slides Server (Nginx 설정, Dockerfile 참고), Helm Chart 전체 구조 참고
 - **수정 필요 사항**: Docsify 전용 설정을 synctx Slides Server에 맞게 수정
-- **상태**: `services/slides/nginx.conf`로 반입했다. 별도 Dockerfile은 만들지 않고 공식 `nginx` 이미지에 ConfigMap으로 설정을 마운트하며(`helm/synctx/templates/slides-deployment.yaml`), Git 동기화는 `sync-sidecar.sh` 사이드카가 맡는다
+- **상태**: `helm/synctx/files/nginx.conf`로 반입했다. 별도 Dockerfile은 만들지 않고 공식 `nginx` 이미지에 ConfigMap으로 설정을 마운트하며(`helm/synctx/templates/slides-deployment.yaml`), Git 동기화는 `sync-sidecar.sh` 사이드카가 맡는다
 
 ---
 
@@ -263,16 +253,13 @@ cp markdown_converter/src/md_preview/config.py     synctx/shared/synctx-common/s
 # Viewer Service로
 cp markdown_converter/src/md_preview/renderer.py   synctx/services/viewer/src/renderer.py
 
-# Sync Engine으로
-cp "example-infra/10. 문서/문서변환/mermaid_to_svg.py"  synctx/services/sync/src/sync_converters/mermaid.py
-
 # CDN 초기 데이터 (docsify 브랜치에서)
 # feature/docsify 브랜치의 docs/cdn/ → synctx/cdn-data/
 # ※ mermaid/chart.js만 선별 반입, docsify 제외, highlight.js 추가 다운로드 및 {library}/{version}/ 구조에 맞게 재배치 필요
 
 # Helm Chart / Nginx 참고 (docsify 브랜치에서)
 # 20. Helm/docs-site/ → synctx/helm/synctx/ 구조 참고
-# docs/nginx.conf → synctx/services/slides/nginx.conf 참고
+# docs/nginx.conf → synctx/helm/synctx/files/nginx.conf 참고
 
 # 벤더 다운로드 스크립트
 cp "example-infra/20. Helm/scripts/download-cdn-vendor.sh"  synctx/scripts/download-cdn-vendor.sh
