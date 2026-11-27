@@ -69,8 +69,10 @@ sha256sum -c manifest.sha256
 
 ### backup-restore.sh
 
-K8s PVC 데이터(CDN 파일, Sync 상태, Slides 출판물)를 백업하고 복구한다.
-K8s 환경에서는 임시 Pod를 통해, 로컬에서는 직접 tar로 처리한다.
+K8s PVC 데이터(CDN 파일, Sync 상태, Slides 출판물, Collab Gateway 상태)를 백업하고 복구한다.
+K8s 환경에서는 PVC를 붙인 임시 Pod를 띄워 `kubectl exec`로 tar를 주고받고, 로컬에서는 직접 tar로 처리한다.
+PVC 이름은 Helm 차트와 같은 `<SYNCTX_RELEASE>-cdn-data` 식이다(기본 `synctx`). 폐쇄망이면 `SYNCTX_HELPER_IMAGE`에 내부 레지스트리의 busybox를 준다.
+받은 파일이 tar.gz로 읽히지 않으면 `[FAIL]`로 표시하고 종료 코드 1로 끝난다.
 
 ```bash
 bash scripts/backup-restore.sh backup                 # 기본 경로에 백업 (/data/backups/YYYYMMDD-HHMMSS)

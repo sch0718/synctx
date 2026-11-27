@@ -27,7 +27,7 @@ def _reset_state(tmp_path, monkeypatch):
 def _sign(payload: dict) -> str:
     return hmac.new(
         b"test-secret-key",
-        json.dumps(payload, sort_keys=True).encode(),
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
         hashlib.sha256,
     ).hexdigest()
 
@@ -40,6 +40,16 @@ class TestVerifyHmac:
 
     def test_invalid_signature(self):
         assert ei.verify_hmac({"event_id": "e1"}, "bad") is False
+
+    def test_accepts_exporter_signature(self):
+        # Exporter가 보낸 메일 본문을 그대로 받아 검증한다(직렬화가 달라 늘 실패하던 회귀 방지)
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "services", "feedback", "src"))
+        from signer import FeedbackSigner
+
+        payload = {"event_id": "op_1_abc", "external_key": "docs/task.md", "changes": {"status": "closed"}}
+        signed = FeedbackSigner(key="test-secret-key", key_id="active").sign(payload)
+        body = json.loads(json.dumps({"payload": payload, **signed}, indent=2))
+        assert ei.verify_hmac(body["payload"], body["signature"]) is True
 
 
 class TestValidateRepoPath:

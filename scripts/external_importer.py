@@ -46,7 +46,8 @@ def save_processed_events(events):
     os.replace(tmp_path, PROCESSED_EVENTS_FILE)
 
 def verify_hmac(payload: dict, signature: str) -> bool:
-    payload_str = json.dumps(payload, sort_keys=True)
+    # services/feedback/src/signer.py의 canonical_payload와 같아야 한다(구분자 공백 없음).
+    payload_str = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     expected = hmac.new(HMAC_KEY, payload_str.encode(), hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
 
