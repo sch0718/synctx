@@ -600,7 +600,8 @@ synctx/
     ├── test-all.sh                    # 전체 테스트(pytest + node --test), make test가 호출
     ├── README.md                      # 스크립트 사용법
     └── tests/
-        ├── test_external_importer.py  # Importer 단위 테스트
+        ├── test_external_importer.py  # Importer 단위 테스트·Exporter 서명 계약
+        ├── test_backup_restore.py     # backup-restore.sh PVC 이름·tar 전달(가짜 kubectl)
         ├── test_helm_options.py       # Helm 서비스 옵션 렌더
         ├── test_docker_deploy.py      # Docker 배포 검사·게이트웨이 설정
         ├── test_run_viewer_docker.py  # 단일 Viewer 실행 인자·볼륨·토큰·빌드 위임
