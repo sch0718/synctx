@@ -1008,6 +1008,7 @@ Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전
 - `allowed_fields` 외 변경은 event summary에 `ignored_fields`로만 기록하고 값은 제거한다.
 - 메일 제목은 고정 prefix와 `event_id`만 포함한다.
 - 메일 본문은 JSON payload와 detached HMAC signature만 포함한다.
+- 서명 대상은 payload를 키 정렬·공백 없는 구분자로 직렬화한 문자열이다(`json.dumps(payload, sort_keys=True, separators=(",", ":"))`, 기본 `ensure_ascii`). Exporter `services/feedback/src/signer.py`의 `canonical_payload`와 외부 Importer `scripts/external_importer.py`의 `verify_hmac`이 같은 규칙을 써야 하며, 두 쪽이 어긋나지 않는지는 `scripts/tests/test_external_importer.py`의 계약 시험이 지킨다. 메일 본문의 들여쓰기는 서명과 무관하다(받는 쪽이 payload를 파싱한 뒤 다시 직렬화한다).
 - 동일 `event_id`는 한 번만 처리한다. 외부 Importer는 처리한 `event_id`를 저장해 replay를 차단한다.
 - 외부 Importer는 Markdown 수정 branch와 PR을 생성하고, PR 본문에 원본 메일 event id와 검증 결과를 기록한다.
 - HMAC key는 `key_id`로 식별한다. Exporter와 외부 Importer는 active key와 previous key를 동시에 보관하며, key rotation 기간에는 previous key로 서명된 이벤트도 검증만 허용한다.
@@ -1015,42 +1016,30 @@ Outbound Feedback Exporter는 OpenProject 변경 중 외부 개발 흐름에 전
 - 외부 Importer 쪽 HMAC secret은 운영자가 승인된 외부 secret store에 수동 주입한다. 메일 본문이나 Git 저장소에는 key material을 절대 포함하지 않는다.
 - `changed_by`는 OpenProject 사용자 ID 또는 login을 그대로 보내지 않고, `OUTBOUND_FEEDBACK_HMAC_KEY`와 별도의 `OUTBOUND_FEEDBACK_HASH_SALT`로 HMAC-SHA256 처리한 pseudonymous identifier로 기록한다. salt 없이 단순 SHA-256을 사용하지 않는다.
 
-이벤트 payload 예시:
+메일 본문 예시(Exporter가 보내는 그대로, `signature`는 서명 대상 문자열의 HMAC-SHA256 hex):
 
 ```json
 {
-  "schema_version": 1,
-  "event_id": "op-feedback-20260619-000123",
-  "repo_id": "project-docs",
-  "external_key": "project-docs:issues/TASK-001.md",
-  "source": "openproject",
-  "event_type": "work_package.updated",
-  "changed_at": "2026-06-19T10:30:00+09:00",
-  "changed_by": "sha256:...",
-  "allowed_changes": {
-    "status": {
-      "from": "in_progress",
-      "to": "done"
+  "payload": {
+    "event_id": "op_123_3f2a9c1d",
+    "timestamp": "2026-06-19T01:30:00+00:00",
+    "source": "openproject",
+    "work_package_id": 123,
+    "external_key": "project-docs:issues/TASK-001.md",
+    "changes": {
+      "status": "done",
+      "due_date": "2026-06-30"
     },
-    "priority": {
-      "from": "normal",
-      "to": "high"
-    }
+    "ignored_fields": ["description"],
+    "changed_by_hash": "9b1c0e4f7a2d5e61"
   },
-  "ignored_fields": ["description", "comments"],
-  "redaction": {
-    "subject_included": false,
-    "description_included": false,
-    "comments_included": false,
-    "attachments_included": false
-  },
-  "signature": {
-    "alg": "HMAC-SHA256",
-    "key_id": "feedback-key-2026-06",
-    "value": "base64url:..."
-  }
+  "key_id": "feedback-key-2026-06",
+  "signature": "5d41402abc4b2a76b9719d911017c592..."
 }
 ```
+
+- `event_id`는 `op_{Work Package ID}_{digest}` 형식이고, `changed_by_hash`는 `OUTBOUND_FEEDBACK_HASH_SALT`로 만든 HMAC-SHA256 앞 16 hex다.
+- `changes`에는 `allowed_fields`에 든 필드의 현재 값만 싣는다. 값이 `{"name": ...}` 객체면 Importer가 `name`을 front matter에 쓴다.
 
 외부 Importer의 Markdown 반영 규칙:
 
